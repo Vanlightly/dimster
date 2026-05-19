@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benchmark-coordinator
+  namespace: dimster
+  labels:
+    app: benchmark-coordinator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: benchmark-coordinator
+  template:
+    metadata:
+      labels:
+        app: benchmark-coordinator
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: coordinator
+          image: dimster:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cd /benchmark
+              # Ensure the persistent log directory exists on the PVC. Lives
+              # outside the per-run timestamped subdirectories so the log file
+              # accumulates across runs and survives container restarts (which
+              # is exactly when `kubectl logs` would otherwise lose history).
+              mkdir -p /benchmark/results/.dimster-logs
+              bin/benchmark-coordinator --port 8080
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: HEAP_OPTS
+              value: "-Xms512M -Xmx1G"
+            - name: DIMSTER_LOG_FILE
+              value: "/benchmark/results/.dimster-logs/coordinator.log"
+          volumeMounts:
+            - name: results
+              mountPath: /benchmark/results
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "500m"
+              memory: "2Gi"
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: benchmark-results

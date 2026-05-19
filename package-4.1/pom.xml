@@ -1,0 +1,63 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>package-4.1</artifactId>
+	<name>Dimster Packaging (Kafka 4.1)</name>
+	<packaging>pom</packaging>
+
+	<!--
+	Per-flavor packaging module: produces dimster-${project.version}-kafka4.1-bin.tar.gz,
+	a binary tarball bundling dimster-core + dimster-kafka-4.1.
+
+	See package-3.x/pom.xml for the design rationale; this module differs only
+	in the dimster-kafka-X dep and the finalName suffix.
+	-->
+
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>3.1.0</version>
+				<executions>
+					<execution>
+						<id>distro-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+						<configuration>
+							<attach>true</attach>
+							<tarLongFileMode>posix</tarLongFileMode>
+							<finalName>dimster-${project.version}-kafka4.1</finalName>
+							<descriptors>
+								<descriptor>../package-common/src/assemble/bin.xml</descriptor>
+							</descriptors>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<dependencies>
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>dimster-core</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>dimster-kafka-4.1</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+	</dependencies>
+
+</project>

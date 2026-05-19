@@ -1,0 +1,78 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>dimster-kafka-4.1</artifactId>
+	<name>Dimster Kafka 4.1 Impl</name>
+	<packaging>jar</packaging>
+
+	<!--
+	SPI implementation for kafka-clients 4.1.x.
+
+	Why this is a separate module from dimster-kafka-4.2.0:
+	4.1 has share-group consumers AND the admin-side share-group APIs
+	(listShareGroupOffsets, alterShareGroupOffsets, deleteShareGroups), but the
+	broker-side share-group lag field on SharePartitionOffsetInfo only landed in
+	4.2. V4_1Admin.shareGroupLag therefore computes lag client-side (committed
+	offset minus end offsets, two admin RPCs per poll) instead of reading the
+	broker-computed value.
+
+	Why this module does NOT also cover 4.0:
+	4.0 introduced KafkaShareConsumer but is missing the admin-side share-group
+	APIs - listShareGroupOffsets, alterShareGroupOffsets, and deleteShareGroups
+	all came in 4.1. Since dimster relies on alterShareGroupOffsets to seed
+	share group offsets, share-group workloads can't run against 4.0 anyway.
+	If anyone needs to benchmark classic-only against 4.0, the cleanest path
+	would be a dedicated dimster-kafka-4.0 module that throws on share-group
+	methods (the way dimster-kafka-3.x does for the entire share-group surface).
+
+	Default kafka.version is 4.1.0; override with -Dkafka.version=4.1.x for a
+	specific point release in the 4.1 line.
+	-->
+
+	<properties>
+		<kafka.version>4.1.0</kafka.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>dev.dimster</groupId>
+			<artifactId>dimster-spi</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka-clients</artifactId>
+			<version>${kafka.version}</version>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>2.10</version>
+				<executions>
+					<execution>
+						<id>build-classpath</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>build-classpath</goal>
+						</goals>
+						<configuration>
+							<outputFile>target/classpath.txt</outputFile>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

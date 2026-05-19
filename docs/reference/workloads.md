@@ -1,0 +1,465 @@
+# Workload Reference
+
+Workload YAML files define what a benchmark test does: the topic topology, producer/consumer configuration, message properties, and mode-specific behavior. Each workload targets a specific mode determined by which config section is present.
+
+Workload files are typically stored in `run/workloads/`.
+
+---
+
+## Workload Modes
+
+| Mode | CLI Command | Config Section | Description |
+|------|-------------|----------------|-------------|
+| Run | `dimster run` | `runConfig` | Standard timed benchmark with optional scenarios. |
+| Explore | `dimster explore` | `exploreConfig` | Automated throughput limit discovery. |
+| Correctness | `dimster correctness` | `correctnessConfig` | Message ordering, duplicate, and CRC verification. |
+| Drain Backlog | `dimster drain-backlog` | `drainBacklogConfig` | Measures time to drain a consumer backlog. |
+
+---
+
+## Workload File Structure
+
+All workload types share a common structure:
+
+```yaml
+name: <string>                    # Workload name
+
+engineConfig:                     # Optional, operational settings shared
+  ...                             # across all engine modes
+
+<modeConfig>:                     # One of: runConfig, exploreConfig,
+                                  # correctnessConfig, drainBacklogConfig
+  ...
+
+availabilityConfig:               # Optional, only with runConfig
+  ...
+
+baseWorkload:                     # Default field values for all test points
+  ...
+
+scenarios:                        # Optional list of test variations
+  - name: <string>
+    ...
+```
+
+---
+
+## engineConfig (optional)
+
+Operational settings shared across all engine modes. Lives at the top level of the workload file (next to `runConfig`/`exploreConfig`/`correctnessConfig`/`drainBacklogConfig`). When omitted, defaults apply.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxConsumerRecreations` | integer | `0` | Maximum number of times a consumer can be recreated after a fatal error before the test gives up on it. `0` disables recreation. |
+| `perPartitionMetrics` | boolean | `false` | Emit per-partition metrics (in addition to per-topic aggregates). Increases metric cardinality significantly on high-partition topologies. |
+| `perConsumerMetrics` | boolean | `false` | Emit per-consumer-instance metrics. Off by default to keep metric cardinality manageable. |
+| `cooldownMinutes` | integer | `0` | Minutes to wait between test points before tearing down topics and consumer groups. Gives Kafka time to stabilise and metric scrapers time to collect final samples. |
+| `printMessages` | boolean | `false` | Log every successfully produced and consumed record (partition, offset, timestamp). Intended for low-rate debugging only -- the coordinator forces this off for any test point with producer rate > 50 msg/s, and always off for the explore engine (where rate is dynamic). |
+
+### engineConfig Example
+
+```yaml
+engineConfig:
+  perPartitionMetrics: true
+  cooldownMinutes: 1
+```
+
+---
+
+## baseWorkload Fields
+
+These fields define the default test parameters. Each field can be overridden per scenario.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `kafkaConfig` | object | -- | Embedded [Kafka configuration](kafka-configs.md). Merged with the `-k` file if both are present. |
+| `label` | string | -- | Label prefix used in chart output and result filenames. |
+| `topics` | integer | `1` | Number of test topics to create. |
+| `partitionsPerTopic` | integer | `1` | Number of partitions per topic. |
+| `producersPerTopic` | integer | `1` | Number of producer instances per topic. |
+| `consumerGroupsPerTopic` | integer | `1` | Number of consumer groups per topic (controls fan-out). |
+| `consumersPerGroup` | integer | `1` | Number of consumers per consumer group. |
+| `messageSize` | integer | `1000` | Message payload size in bytes. |
+| `producerRate` | integer | `10000` | Target aggregate producer rate in messages per second. |
+| `useRandomizedPayloads` | boolean | `true` | Generate randomized message payloads (provides more realistic compression behavior). |
+| `randomBytesRatio` | double | `0.5` | Fraction of message bytes that are random (0.0 to 1.0). |
+| `randomizedPayloadPoolSize` | integer | `100` | Number of pre-generated random payloads to cycle through. |
+| `payloadFile` | string | _(unset)_ | Path to a static payload file. Required when `useRandomizedPayloads` is `false`; otherwise ignored. |
+| `messageDistributor` | enum | `NO_KEY` | Message distribution strategy. See [Message Distributor Types](#message-distributor-types). |
+| `messageDistributorSkew` | double | `1.0` | Zipf exponent used by `KEY_ZIPF` and `PARTITION_ZIPF`. Higher values produce a steeper, more skewed distribution. Ignored by other strategies. |
+| `consumerType` | enum | `CONSUMER_GROUP` | Consumer type. See [Consumer Types](#consumer-types). |
+| `consumerProcMsMin` | integer | `0` | Minimum simulated per-record consumer processing time in milliseconds. The consumer sleeps between `consumerProcMsMin` and `consumerProcMsMax` ms after delivering each record, modelling downstream work. |
+| `consumerProcMsMax` | integer | `0` | Maximum simulated per-record consumer processing time in milliseconds. `0` disables the simulated processing delay. |
+
+### Message Distributor Types
+
+The message distributor controls how each producer record is routed to a partition. Strategies fall into two families:
+
+- **Key-based** — return a string key and let Kafka's configured partitioner decide which partition it lands on. The partition mapping depends on the partitioner algorithm (typically murmur2 hash mod partition count). Use these when you want to model realistic producer behavior where applications set message keys and rely on the broker for partition placement.
+- **Partition-targeted** — explicitly name the partition number and bypass the partitioner entirely. The record is sent with a null key and a specific partition. Use these when you want direct, deterministic control over which partitions receive load — for example, to create a known-skewed or perfectly-uniform distribution independent of key hashing.
+
+#### Key-based strategies
+
+| Value | Description |
+|-------|-------------|
+| `NO_KEY` | No message key (null). Messages use Kafka's default sticky partitioner, which batches records into the same partition until the batch is full, then picks a new one. Good baseline for throughput tests where partition distribution doesn't matter. |
+| `KEY_ROUND_ROBIN` | Cycle through a pool of 10,000 pre-generated keys in round-robin order. Each key always hashes to the same partition, so partition load depends on how evenly the partitioner distributes the key space. Provides a stable, repeatable distribution across runs. |
+| `RANDOM_NANO` | Pick a random key from the pool on each send using `System.nanoTime()`. Produces a roughly uniform partition distribution through the hash partitioner, but with more randomness per-message than `KEY_ROUND_ROBIN`. |
+| `KEY_ZIPF` | Pick a key from the pool with a Zipf-distributed index. A small subset of keys is produced far more often than the rest, leading to hot partitions through the broker's hash partitioner. The resulting partition skew depends on how keys happen to hash — it's realistic but not fully deterministic. Skew controlled by `messageDistributorSkew`. |
+
+#### Partition-targeted strategies
+
+| Value | Description |
+|-------|-------------|
+| `PARTITION_ZIPF` | Target a specific partition number drawn from a Zipf distribution. Partition 0 is always the hottest; partition (n-1) is the coldest. Produces a maximally skewed, fully deterministic load profile — useful for stressing share-group fetcher fairness, per-partition back-pressure, or rebalance behavior under imbalance. Requires `partitionsPerTopic > 1` to be meaningful. Skew controlled by `messageDistributorSkew`. |
+| `PARTITION_ROUND_ROBIN` | Cycle through partitions `[0, partitionsPerTopic)` in round-robin order. Produces a perfectly uniform distribution across all partitions without relying on key hashing. Useful when you want guaranteed even load regardless of the partitioner algorithm — for example, when testing per-partition throughput limits or comparing consumer group scaling with a known-uniform input. |
+
+#### Choosing a Zipf skew (`messageDistributorSkew`)
+
+The probability of partition `k` (1-indexed) is proportional to `1 / k^skew`. The hot/cold ratio grows quickly with skew but the share of partition 0 grows more slowly, so values like 1.0–1.1 produce only a mild imbalance. Reference table for the share of messages landing on partition 0 (the hottest), and the ratio between the hottest and coldest partition, for `partitionsPerTopic = 10`:
+
+| skew | p0 share | p0 : p(n-1) ratio | Notes |
+|------|----------|-------------------|-------|
+| `1.0` | ~34% | 10× | Classic Zipf-1. Soft skew, long tail still meaningful. |
+| `1.1` | ~37% | ~13× | Barely distinguishable from `1.0` at low partition counts. |
+| `1.5` | ~50% | ~32× | First value where p0 dominates the topic. |
+| `2.0` | ~65% | ~99× | Heavy skew; bottom half of partitions barely fire. |
+
+Two notes when picking a value:
+
+- The differences between low skew values widen as `partitionsPerTopic` grows. At 10 partitions the gap between `1.0` and `1.5` is moderate; at 100+ partitions p0's share for `skew=1.0` drops below 20% while `skew=1.5` stays near 38%.
+- For "realistic production-like skew" use `1.1`–`1.5`. For "stress fairness / hot-partition isolation" experiments where you want one partition to clearly dominate, use `2.0` or higher.
+
+### Consumer Types
+
+| Value | Description |
+|-------|-------------|
+| `CONSUMER_GROUP` | Standard Kafka consumer groups with partition assignment. |
+| `SHARE_GROUP` | Kafka share groups (KIP-932). Shared consumption model without partition assignment. Requires Kafka 4.0+ and appropriate broker configuration. |
+
+---
+
+## Scenarios
+
+Scenarios allow running multiple test variations from a single workload file. Each scenario can override any `baseWorkload` field.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Scenario name, used in result metadata. |
+| `label` | list of string | Per-test-point labels for chart output. |
+| `topics` | list of integer | Override `topics` per test point. |
+| `partitionsPerTopic` | list of integer | Override `partitionsPerTopic` per test point. |
+| `producersPerTopic` | list of integer | Override `producersPerTopic` per test point. |
+| `consumerGroupsPerTopic` | list of integer | Override `consumerGroupsPerTopic` per test point. |
+| `consumersPerGroup` | list of integer | Override `consumersPerGroup` per test point. |
+| `messageSize` | list of integer | Override `messageSize` per test point. |
+| `producerRate` | list of integer | Override `producerRate` per test point. |
+| `messageDistributor` | list of enum | Override `messageDistributor` per test point. |
+| `messageDistributorSkew` | list of double | Override `messageDistributorSkew` per test point. |
+| `consumerType` | list of enum | Override `consumerType` per test point. |
+| `consumerProcMsMin` | list of integer | Override `consumerProcMsMin` per test point. |
+| `consumerProcMsMax` | list of integer | Override `consumerProcMsMax` per test point. |
+| `kafkaConfig` | object | Override [Kafka configuration](kafka-configs.md). Individual property values within its config maps may be lists to express dimensions (see [Per-scenario Kafka config overrides](kafka-configs.md#per-scenario-kafka-config-overrides)). |
+| `drainBacklogConfig` | object | Drain-backlog mode only. Per-scenario overrides for `drainBacklogConfig` fields. Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `drainBacklogConfig`. |
+| `exploreConfig` | object | Explore mode only. Per-scenario overrides for `exploreConfig` fields. Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `exploreConfig`. |
+| `runConfig` | object | Run mode only. Per-scenario overrides for `runConfig` fields (`testDurationMinutes`, `warmupDurationMinutes`, `sampleRateMillis`, `rampIntervals`, `rampIntervalSeconds`). Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `runConfig`. |
+| `repeat` | integer | Number of times to repeat this scenario back-to-back. Default `1`. Useful for stability/reproducibility runs. |
+
+**Rules:**
+
+- **Scalar values** apply to all test points (e.g. `messageSize: 2048` sets the same size for every point).
+- **Array values** create multiple test points. Each index becomes a separate test run. All arrays in a scenario must have the same length -- this includes list-valued properties inside `kafkaConfig`, `drainBacklogConfig`, `exploreConfig`, and `runConfig`.
+- Fields not specified in a scenario inherit from `baseWorkload` (or the workload-level `drainBacklogConfig` / `exploreConfig` / `runConfig` for those nested overrides).
+- If `scenarios` is absent or empty, a single test runs using the `baseWorkload` values directly.
+
+### Scenario Example
+
+```yaml
+scenarios:
+  - name: producer-rate
+    label: ["100k", "200k", "300k"]
+    producerRate: [100000, 200000, 300000]
+```
+
+This produces three test runs using all other values from `baseWorkload`, varying only `producerRate`.
+
+---
+
+## Run Mode (runConfig)
+
+Standard benchmark mode. Produces and consumes at a target rate for a fixed duration.
+
+### runConfig Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `testDurationMinutes` | integer | `5` | Duration of the measurement phase in minutes. |
+| `warmupDurationMinutes` | integer | `1` | Duration of the warmup phase in minutes. Stats collected during warmup are discarded. |
+| `rampIntervals` | integer | `3` | Number of equal increments in the ramp-up phase before warmup. When both `rampIntervals` and `rampIntervalSeconds` are `> 0`, the producer rate is stepped from `producerRate / rampIntervals` up to `producerRate` over `rampIntervals × rampIntervalSeconds`. Stats during the ramp are discarded. Set to `0` to disable ramp-up. |
+| `rampIntervalSeconds` | integer | `20` | Duration in seconds of each ramp-up increment. Set to `0` to disable ramp-up. |
+| `sampleRateMillis` | integer | `10000` | Stats sampling interval in milliseconds. |
+
+### availabilityConfig (optional)
+
+When present in a run-mode workload, enables per-partition availability probes that measure producer availability and failover times alongside the benchmark.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `unavailabilityThresholdMs` | integer | `5000` | Milliseconds without a successful probe before a partition is considered unavailable. |
+| `probeTimeoutSeconds` | integer | `30` | Timeout in seconds for each availability probe operation. |
+| `probePartitions` | integer | `1` | Number of partitions on the dedicated probe topic. |
+
+### Run Mode Example
+
+```yaml
+name: throughput-scaling
+
+runConfig:
+  testDurationMinutes: 5
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 6
+  producerRate: 50000
+
+scenarios:
+  - name: rate-sweep
+    label: ["100k", "200k", "300k"]
+    producerRate: [100000, 200000, 300000]
+```
+
+### Sweeping runConfig Fields
+
+Scenarios may sweep the run-mode phase settings via a nested `runConfig` block. All five `runConfig` fields are sweepable: `testDurationMinutes`, `warmupDurationMinutes`, `sampleRateMillis`, `rampIntervals`, `rampIntervalSeconds`. Omitted fields inherit from the workload-level `runConfig`. Arrays inside `scenarios.runConfig` must have the same length as any other dimensions in the scenario.
+
+```yaml
+name: ramp-sweep
+
+runConfig:
+  testDurationMinutes: 10
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 6
+  producerRate: 100000
+
+scenarios:
+  - name: ramp-shapes
+    label: ["short", "medium", "long"]
+    runConfig:
+      rampIntervals: [3, 5, 10]
+      rampIntervalSeconds: [10, 20, 30]
+```
+
+This produces three test points at the same `producerRate` of 100k msg/s, each warmed up via a different ramp profile (30 s, 100 s, and 5 min respectively).
+
+### Run Mode with Availability Probes
+
+```yaml
+name: availability-test
+
+runConfig:
+  testDurationMinutes: 5
+  warmupDurationMinutes: 0
+
+availabilityConfig:
+  unavailabilityThresholdMs: 5000
+  probeTimeoutSeconds: 30
+  probePartitions: 6
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 3
+  producersPerTopic: 3
+  producerRate: 1000
+```
+
+---
+
+## Explore Mode (exploreConfig)
+
+Finds the maximum sustainable throughput under latency constraints using a three-phase algorithm:
+
+1. **Ramp** (phase 1): Start at `initialRate` and double every `rampIntervalSeconds` until latency thresholds are breached.
+2. **Search** (phase 2): Binary search between the last good rate and the first bad rate. Each midpoint is tested for `searchDurationSeconds`, checked every `searchIntervalSeconds`. Three consecutive bad checks mark a rate as saturated.
+3. **Sustain** (phase 3): Hold the discovered rate for `sustainDurationSeconds`. If 80%+ of checks pass, the rate is confirmed. Otherwise, reduce the upper bound and retry search+sustain (up to `searchMaxRetries`).
+
+### exploreConfig Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `e2eLatencyPercentile` | double | `75` | Latency percentile to evaluate (e.g. `75` for p75). |
+| `e2eLatencyThresholdMs` | double | `50` | Maximum acceptable end-to-end latency in milliseconds at the given percentile. |
+| `publishDelayThresholdMs` | double | `200` | Maximum acceptable publish delay in milliseconds at the given percentile. Measures how far behind schedule producers fall. |
+| `sustainLeniency` | double | `0.10` | Fraction by which the sustain phase relaxes thresholds (e.g. `0.10` = 10% more lenient than the search phase). |
+| `initialRate` | integer | `100` | Starting rate in messages/sec for the ramp-up phase. Doubled each interval. |
+| `rampIntervalSeconds` | integer | `10` | Measurement interval in seconds during ramp-up (phase 1). |
+| `rampWarmupSeconds` | integer | `10` | Warmup seconds before each test point (at initial rate, stats discarded). |
+| `searchDurationSeconds` | integer | `120` | Duration in seconds of each binary search measurement window (phase 2). |
+| `searchIntervalSeconds` | integer | `10` | How often to check for latency violations during binary search, in seconds. 3 consecutive bad checks = saturated. |
+| `searchMaxRetries` | integer | `3` | Maximum retries of binary search + sustain if the discovered rate cannot be sustained. |
+| `sustainDurationSeconds` | integer | `300` | Duration in seconds to sustain the discovered peak rate (phase 3). 80%+ good checks = pass. |
+| `stabilizeRate` | integer | `0` | Producer rate (msgs/s) to maintain during the inter-phase stabilization drain. A small trickle keeps share-group consumers progressing on Kafka versions affected by the stop-drain bug. `0` means no producer activity during stabilization. |
+| `stabilizeTimeoutSeconds` | integer | `120` | Maximum seconds to wait for consumers to drain remaining messages between search/sustain phases. Prevents stale messages from a failed high-rate attempt contaminating the next measurement. |
+| `minViableRate` | double | `1.0` | Minimum rate (msgs/s) below which binary search declares the system unable to sustain any load for this test point. |
+| `useDeliveryLatencyForThreshold` | boolean | `false` | When `true`, threshold checks use e2e delivery latency (measured at poll return, before per-record processing) instead of standard e2e latency. Useful when `consumerProcMsMin`/`consumerProcMsMax` are set, as standard e2e latency includes simulated processing time. Combines with `perPartitionE2eMode`: when both are true, worst per-partition delivery latency is used. |
+
+### Explore Mode Example
+
+```yaml
+name: explore-limits
+
+exploreConfig:
+  e2eLatencyPercentile: 75
+  e2eLatencyThresholdMs: 50
+  publishDelayThresholdMs: 200
+  sustainLeniency: 0.1
+  initialRate: 10000
+  searchDurationSeconds: 120
+  sustainDurationSeconds: 300
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 1000
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  useRandomizedPayloads: true
+  randomBytesRatio: 0.5
+
+scenarios:
+  - name: partition-scaling
+    label: ["1-part", "6-part"]
+    partitionsPerTopic: [1, 6]
+    consumersPerGroup: [1, 6]
+```
+
+---
+
+## Correctness Mode (correctnessConfig)
+
+Verifies message delivery correctness. Each producer is pinned to a specific partition (round-robin within each topic), bypassing the partitioner so every partition receives a single ordered stream from one producer — this is what makes out-of-order detection meaningful.
+
+### correctnessConfig Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `testMode` | enum | `CONCURRENT` | `CONCURRENT` runs producers and consumers in parallel for `testDurationMinutes`. `DRAIN` builds a backlog (sized by `backlogSizeGB`, or by `testDurationMinutes` when `backlogSizeGB=0`) with consumers paused, then starts consumers and measures while they drain. |
+| `testDurationMinutes` | integer | `5` | Duration of the test in minutes (CONCURRENT mode), or duration of the backlog-build phase when `backlogSizeGB=0` in DRAIN mode. |
+| `backlogSizeGB` | double | `0` | DRAIN mode only. Target backlog size in GB before consumers start. When `> 0` overrides `testDurationMinutes` for the build phase. Supports fractions (e.g. `0.05` = 50 MB). `0` means use `testDurationMinutes`. |
+| `gracePeriodSeconds` | integer | `30` | Seconds to wait after producers stop for consumers to drain remaining in-flight messages. |
+| `detectDuplicates` | boolean | `true` | Enable duplicate message detection. |
+| `detectOutOfOrder` | boolean | `true` | Enable out-of-order message detection. |
+| `enableCrc` | boolean | `false` | Enable CRC verification on message payloads to detect corruption. |
+| `staticConsumerAssignment` | boolean | `true` | Use static partition assignment for consumers (each consumer is pinned to a fixed set of partitions) rather than relying on the consumer group protocol. Removes rebalance noise from correctness measurements. |
+| `sampleRateMillis` | integer | `10000` | Stats sampling interval in milliseconds. |
+| `logDuplicateCount` | integer | `100` | Number of duplicate messages to log before suppressing further output. |
+| `failOnLoss` | boolean | `true` | Fail the test if message loss is detected. |
+| `failOnDuplicates` | boolean | `false` | Fail the test if duplicates are detected (only relevant when `detectDuplicates=true`). |
+| `failOnOutOfOrder` | boolean | `true` | Fail the test if out-of-order delivery is detected (only relevant when `detectOutOfOrder=true`). |
+| `failOnCrc` | boolean | `true` | Fail the test on CRC mismatch (only relevant when `enableCrc=true`). |
+
+### Correctness Mode Example
+
+```yaml
+name: correctness-check
+
+correctnessConfig:
+  testDurationMinutes: 5
+  gracePeriodSeconds: 30
+  detectDuplicates: true
+  detectOutOfOrder: true
+  enableCrc: true
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageSize: 256
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 5
+  producersPerTopic: 10
+  producerRate: 1000
+```
+
+---
+
+## Drain Backlog Mode (drainBacklogConfig)
+
+Measures how quickly consumers can drain a pre-built backlog. The engine first builds a backlog by producing without consumers, then starts consumers and measures drain time.
+
+### drainBacklogConfig Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `backlogSizeGB` | double | `1` | Size of the backlog to build before draining, in GB. Supports fractions (e.g. `0.05` = 50 MB). |
+| `buildRate` | integer | `-1` | Producer rate while building the backlog. `-1` means use the `baseWorkload.producerRate`. |
+| `backlogProducerRate` | integer | `0` | Producer rate during the drain phase. `0` means producers are paused (pure consumer drain). |
+| `sampleRateMillis` | integer | `10000` | Stats sampling interval in milliseconds. |
+| `drainTimeoutMinutes` | integer | `0` | Maximum minutes to wait for the drain to complete. `0` means no timeout (wait indefinitely). |
+
+### Drain Backlog Mode Example
+
+```yaml
+name: drain-50GB
+
+drainBacklogConfig:
+  backlogSizeGB: 50
+  backlogProducerRate: 0
+  buildRate: 100000
+  sampleRateMillis: 10000
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 6
+```
+
+---
+
+## Classic vs Share Group Comparison Example
+
+No embedded kafkaConfig, so assumed to use `-k path/to/kafka-config.yaml` in the dimster command.
+
+```yaml
+name: classic-vs-share
+
+runConfig:
+  testDurationMinutes: 5
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  messageSize: 1000
+  producerRate: 50000
+
+scenarios:
+  - name: consumer-type
+    consumerType: [CONSUMER_GROUP, SHARE_GROUP]
+    label: ["Classic", "Share Group"]
+```

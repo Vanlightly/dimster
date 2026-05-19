@@ -1,0 +1,27 @@
+name: Quick run test - consumer processing time
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 3
+  producersPerTopic: 1
+  producerRate: 1000
+
+scenarios:
+  - name: proc-time
+    label: ["no-delay", "10ms-fixed", "10-50ms-uniform"]
+    consumerProcMsMin: [0, 10, 10]
+    consumerProcMsMax: [0, 10, 50]

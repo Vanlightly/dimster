@@ -1,0 +1,85 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>dimster-kafka-3.x</artifactId>
+	<name>Dimster Kafka 3.x Impl</name>
+	<packaging>jar</packaging>
+
+	<!--
+	SPI implementation covering the entire Kafka 3.x client release line.
+
+	Why one module for the whole 3.x line:
+	dimster only uses APIs that have been stable since at least 2.x (classic
+	KafkaConsumer/KafkaProducer/AdminClient, listConsumerGroups, listOffsets,
+	transactional methods, etc.). None of the intra-3.x additions - notably
+	KIP-848's new consumer protocol previewed in 3.7 - touch the surface this
+	SPI uses. So one impl module covers 3.0 through 3.9, and the concrete
+	kafka-clients version is selected at build time via the property below
+	(default: latest stable 3.x; override with -Dkafka.version=3.7.2 etc.).
+
+	Why share-groups are absent here:
+	KIP-932 (share groups) ships in 4.2. KafkaClientFactoryV3.newShareConsumer
+	throws UnsupportedOperationException and the share-group methods on V3Admin
+	do the same. dimster-core's capability check
+	(factory.capabilities().shareGroupsSupported()) is the primary guard that
+	catches share-group workloads at workload-build time, well before any of
+	those throws fire.
+
+	The classic-consumer / classic-producer / admin impls in this module are
+	near-identical in shape to the 4.2.0 impls - the SPI was deliberately
+	designed to fit both. They are intentionally NOT pulled up into a shared
+	base class: subtle API drift between minor / point versions is the original
+	motivating problem, and a shared base class would re-introduce exactly
+	that risk.
+	-->
+
+	<properties>
+		<!-- Concrete kafka-clients 3.x release used in this build. Default is the
+		     latest stable 3.x; override on the command line to benchmark older
+		     baselines: ./mvnw install -pl dimster-kafka-3.x -Dkafka.version=3.7.2 -->
+		<kafka.version>3.9.0</kafka.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>dev.dimster</groupId>
+			<artifactId>dimster-spi</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka-clients</artifactId>
+			<version>${kafka.version}</version>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>2.10</version>
+				<executions>
+					<execution>
+						<id>build-classpath</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>build-classpath</goal>
+						</goals>
+						<configuration>
+							<outputFile>target/classpath.txt</outputFile>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

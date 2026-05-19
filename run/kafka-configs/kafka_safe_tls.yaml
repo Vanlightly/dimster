@@ -1,0 +1,27 @@
+name: kafka-safe-tls
+
+replicationFactor: 3
+
+commonConfig:
+  request.timeout.ms: 120000
+  # All clients use SSL. The CLI auto-injects bootstrap.servers (SSL port) and the ssl.keystore.* /
+  # ssl.truststore.* / ssl.key.password lines from the kafka-tls-client Secret.
+  security.protocol: SSL
+
+topicConfig:
+  min.insync.replicas: 2
+
+producerConfig:
+  acks: all
+  enable.idempotence: true
+
+classicConsumerConfig:
+  auto.offset.reset: earliest
+  enable.auto.commit: false
+  dimster.commit.mode: CommitAsync
+  dimster.commit.linger.ms: 0
+
+shareConsumerConfig:
+  share.acknowledgement.mode: implicit
+  share.acquire.mode: batch_optimized
+  dimster.commit.mode: Poll

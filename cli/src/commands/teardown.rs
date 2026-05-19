@@ -1,0 +1,93 @@
+use std::path::Path;
+
+use anyhow::Result;
+
+use crate::commands::deploy;
+use crate::kubectl::Kubectl;
+
+/// Tear down a dimster deployment from the env's resolved namespace.
+///
+/// Symmetric with `deploy::run`: builds a small temporary kustomize overlay
+/// that re-templates the `Namespace` resource and sets a top-level
+/// `namespace:` so kustomize rewrites every resource to the right namespace
+/// before delete. Without this, `kubectl delete -k <base>` would always
+/// target the literal `dimster` namespace baked into the base manifests —
+/// which is wrong for any env that overrides `namespace:` (and would even
+/// silently delete a sibling deploy living in `dimster`).
+pub fn run(kubectl: &Kubectl, env: &str, k8s_dir: &Path) -> Result<()> {
+    let ns = kubectl.namespace();
+    println!("==> Tearing down Dimster ({}) from namespace {}...", env, ns);
+
+    // Stage a temp overlay that mirrors the deploy-time overlay structure.
+    // We list every component's resources so that a teardown invoked
+    // against a partially-deployed env (e.g. workers only) still sweeps
+    // everything that may have been left around — `--ignore-not-found`
+    // makes missing resources a no-op.
+    let tmp_dir = tempfile::tempdir()?;
+    let tmp = tmp_dir.path();
+    let base = k8s_dir.join("base");
+    deploy::copy_dir_recursive(&base, &tmp.join("base"))?;
+    deploy::write_namespace_yaml(&tmp.join("base/namespace.yaml"), ns)?;
+
+    let kustomization = format!(
+        "apiVersion: kustomize.config.k8s.io/v1beta1\n\
+         kind: Kustomization\n\
+         namespace: {ns}\n\
+         \n\
+         resources:\n\
+         \x20\x20- base/namespace.yaml\n\
+         \x20\x20- base/kafka/configmap.yaml\n\
+         \x20\x20- base/kafka/service.yaml\n\
+         \x20\x20- base/kafka/statefulset.yaml\n\
+         \x20\x20- base/workers/deployment.yaml\n\
+         \x20\x20- base/workers/service.yaml\n\
+         \x20\x20- base/coordinator/deployment.yaml\n\
+         \x20\x20- base/coordinator/service.yaml\n\
+         \x20\x20- base/results/pvc.yaml\n\
+         \x20\x20- base/monitoring/kafka-jmx-config.yaml\n\
+         \x20\x20- base/monitoring/prometheus-config.yaml\n\
+         \x20\x20- base/monitoring/prometheus.yaml\n\
+         \x20\x20- base/monitoring/grafana-config.yaml\n\
+         \x20\x20- base/monitoring/grafana-dashboards.yaml\n\
+         \x20\x20- base/monitoring/grafana-dashboards-system.yaml\n\
+         \x20\x20- base/monitoring/grafana.yaml\n\
+         \x20\x20- base/monitoring/node-exporter.yaml\n\
+         \x20\x20- base/monitoring/dashboard-export-configmap.yaml\n",
+    );
+    std::fs::write(tmp.join("kustomization.yaml"), &kustomization)?;
+
+    // Surface the kustomize delete result. With --ignore-not-found, missing
+    // resources are not errors, so any failure here is a real problem
+    // (kustomize build error, wrong context, RBAC, etc.) and should be shown
+    // rather than silently swallowed.
+    if let Err(e) = kubectl.run_inherit(&[
+        "delete", "-k", &tmp.to_string_lossy(), "--ignore-not-found",
+    ]) {
+        eprintln!("==> kustomize delete failed: {e:#}");
+        return Err(e);
+    }
+
+    // Belt-and-braces cleanup of helper resources that aren't part of the
+    // kustomize overlay (results-copy pod) or that may linger past the
+    // namespace delete due to PVC finalizers. All scoped to the resolved
+    // namespace via the Kubectl wrapper, so safe to run alongside other
+    // dimster instances in different namespaces. These are best-effort:
+    // surface the error to stderr but don't abort the teardown.
+    for args in [
+        &["delete", "pods", "-l", "app=benchmark-results-copy", "--ignore-not-found"][..],
+        // dimster-inspect is the long-lived helper pod created on demand by
+        // `dimster inspect <env>` in external deploy mode. It is not part of
+        // the kustomize overlay (lazy-created on first inspect) so it needs
+        // explicit cleanup here to avoid lingering past teardown.
+        &["delete", "pods", "-l", "app=dimster-inspect", "--ignore-not-found"][..],
+        &["delete", "pvc", "-l", "app=kafka", "--ignore-not-found"][..],
+        &["delete", "pvc", "benchmark-results", "--ignore-not-found"][..],
+    ] {
+        if let Err(e) = kubectl.run(args) {
+            eprintln!("==> Warning: cleanup step failed: {e:#}");
+        }
+    }
+
+    println!("==> Teardown complete.");
+    Ok(())
+}

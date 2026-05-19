@@ -1,0 +1,156 @@
+# Dimster — DIMensional performance teSTER for Apache Kafka
+
+A dimensional benchmarking framework for Apache Kafka. Define many configurations in one workload file, run them as a single campaign, and get reproducible, shareable artifacts.
+
+> A *dimension* is any workload aspect you'd want to vary across runs such as partition count, consumer count, consumer type, message size, batch size, producer rate, client settings. Pick one or more and Dimster (co-)varies them across a single campaign, with results landing side-by-side in charts for comparison.
+
+Dimster's core design principle is making it easy to compare performance across multiple configurations in a single run. Instead of manually running separate benchmarks for each variation, you define all variations in one workload file.
+
+All results are shareable assets:
+- Detailed results in JSON and CSV format which includes:
+    - producer/consumer throughput and various latencies
+    - per-partition and per-consumer latencies
+    - the hardware configuration (for reproducibility)
+- Configuration:
+    - Broker version and configuration.
+    - The workload, Kafka client configs.
+- Charts as a single interactive html file
+- Logs of all Kafka brokers, workers and the coordinator
+- Grafana dashboards converted to HTML files
+
+Run fully automated test suites or use interactive mode to shape the workload as it runs.
+
+> **Status: 0.x — early, expect change.** Workload schema, CLI flags, and deployment manifests may shift between minor versions. See [CHANGELOG.md](CHANGELOG.md) for what's changed. Always rebuild the CLI and Dimster framework after a `git pull`.
+
+## What can I ask it?
+
+A Dimster test campaign is formed from one or more scenarios, where each scenario consists of one or more test points which varies a selected dimension or dimensions. Each scenario generates a set of charts where the test points are the data series. Use this format to ask questions.
+
+**"How does end-to-end latency change as I scale share consumers from 1 to 50?"**
+
+`dimster run <env> -w workload.yaml` executes the test points.
+
+```yaml
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  producersPerTopic: 5
+  producerRate: 50000
+  messageSize: 500
+  consumerType: SHARE_GROUP
+  
+scenarios:
+  - name: scaling-consumers
+    label:             ["1-con", "10-con", "20-con", "30-con", "40-con", "50-con"]
+    consumersPerGroup: [1,        10,       20,       30,       40,       50]
+```
+
+One set of charts with 6 data series.
+
+**"How does linger.ms and batch.size impact throughput and latency?"**
+
+One test campaign with two scenarios exploring `batch.size` as a dimension and then `linger.ms` as a dimension.
+
+```yaml
+# baseWorkload ...
+
+scenarios:
+  - name: batch-size
+    label: ["batch-8k", "batch-16k", "batch-32k", "batch-64k", "batch-128k", "batch-256k"]
+    kafkaConfig:
+      classicConsumerConfig:
+        linger.ms: 100
+        batch.size: [8192, 16384, 32768, 65536, 131072, 262144]
+        
+  - name: linger-ms
+    label: ["linger-0ms", "linger-50ms", "linger-100ms"]
+    kafkaConfig:
+      producerConfig:
+        linger.ms: [0, 50, 100]
+```
+
+Two sets of charts with 6 and 3 data series.
+
+**"How do CONSUMER_GROUP consumers compare to SHARE_GROUP at three throughput levels?"**
+
+```yaml
+scenarios:
+  - name: 50MBs
+    producerRate: 50000
+    label:        ["classic",      "share"]
+    consumerType: [CONSUMER_GROUP, SHARE_GROUP]
+  - name: 100MBs
+    producerRate: 100000
+    label:        ["classic",      "share"]
+    consumerType: [CONSUMER_GROUP, SHARE_GROUP]
+  - name: 200MBs
+    producerRate: 200000
+    label:        ["classic", "share"]
+    consumerType: [CONSUMER_GROUP, SHARE_GROUP]
+```
+
+Three sets of charts with two data series.
+
+**"What's the highest throughput my cluster sustains under p75 ≤ 50 ms?"**
+
+`dimster explore` ramps the rate, binary-searches for the breaking point, then sustains the discovered ceiling. Create multiple scenarios and test points, fully automated.
+
+**"Does `acks=1` actually lose messages under broker churn?"**
+
+`dimster correctness` produces sequentially-keyed payloads and checks every one for loss, duplication, ordering, and CRC integrity — pass/fail with per-detector counts.
+
+**How fast can my consumers drain a backlog under load?**
+
+`dimster drain-backlog` builds a backlog then starts consumers to time how long it takes to drain it. Optionally configure a producer load while the drain takes place.
+
+**What hardware requirements in terms of network and disk bandwidth does my benchmark require?**
+
+`dimster resources` takes your workload file and tells you the amount of resources needed to run it.
+
+## What a campaign produces
+
+*[Chart screenshot — TODO]*
+
+Every run writes a single timestamped folder containing everything you need to reproduce, share, or publish the result:
+
+- **JSON and CSV results** — throughput and latency percentiles for every test point.
+- **Captured config** — the broker config, the client configs, the workload file, the hardware shape (instance type, CPU, memory, storage class). No "what version was that on?" later.
+- **Charts** — interactive HTML, all test points overlaid.
+- **Grafana snapshots** — broker, client, and system dashboards exported to static HTML at the moment the run finished.
+- **Logs** — coordinator, every worker, every Kafka broker.
+
+If you can ship the folder, someone else can read the result. If you have the workload YAML, you can re-run it.
+
+## Version & compatibility
+
+## Getting started
+
+Run some small-scale tests locally on your k8s distro of choice (minikube, k3d, kind, orbstack etc): **[docs/getting-started/](docs/getting-started/README.md)**.
+
+## Documentation
+
+Full docs: **[docs/index.md](docs/index.md)**.
+
+Highlights:
+- [Getting Started](docs/getting-started/README.md) — 10-page walkthrough from zero to dimensional sweeps.
+- [Architecture](docs/concepts/architecture.md) — CLI, coordinator, workers; what Kubernetes does and doesn't do for you.
+- [Dimensional Testing](docs/concepts/dimensional-testing.md) — the mental model behind workload files.
+- [Deployment](docs/deployment/README.md) — what Dimster expects from any cluster; per-target guides.
+- [CLI Reference](docs/reference/cli.md) · [`dimster-config.yaml`](docs/reference/dimster-config.md) · [Workload Reference](docs/reference/workloads.md).
+
+## Inspiration
+
+Heavily inspired by [OpenMessaging Benchmark](https://github.com/openmessaging/benchmark), but diverges on a few things:
+
+- **Kafka-centric**, built as an in-house perf tool at Confluent for Kafka testing. For other systems, use OpenMessaging Benchmark.
+- **Dimensional testing as a first-class primitive**.
+- **Reproducible artifact bundles** — every run captures enough config and context to re-run or audit.
+- **Kubernetes-centric** — Run benchmarks on any cloud, any hardware, with k8s as the standardized runtime.
+
+## Acknowledgements
+
+A handful of utility classes in Dimster were originally copied from OpenMessaging Benchmark (Apache 2.0). Some remain near-identical; others have been heavily modified. See [`NOTICE`](NOTICE) for the per-file breakdown and the relevant license terms.
+
+## Contributing
+
+If you want to hack on the Java engine, the Rust CLIs, or the Kubernetes manifests, see [docs/development.md](docs/development.md). For feature ideas or larger changes, open an issue first.

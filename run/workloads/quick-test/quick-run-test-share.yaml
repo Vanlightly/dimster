@@ -1,0 +1,21 @@
+name: run-quick-test-share
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 5
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: SHARE_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  producersPerTopic: 1
+  producerRate: 1000

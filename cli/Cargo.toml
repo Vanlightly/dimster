@@ -1,0 +1,26 @@
+[package]
+name = "dimster"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+anyhow = "1"
+ctrlc = "3"
+tempfile = "3"
+# Pure-Rust X.509 cert generation for the in-cluster mTLS feature
+# (cli/src/commands/kafka_tls.rs). PEM output only — Kafka 2.7+ accepts
+# PEM keystores directly via ssl.keystore.type=PEM, so we never need to
+# build a JKS or PKCS12 bundle.
+rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }
+# Already pulled in transitively by rcgen — declared explicitly so we can
+# set not_before/not_after on certificate params (rcgen's default validity
+# is 4 weeks, way too short for benchmarking sessions).
+time = { version = "0.3", default-features = false, features = ["std"] }
+
+[profile.release]
+strip = true
+lto = true

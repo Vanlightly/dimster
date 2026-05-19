@@ -1,0 +1,37 @@
+name: quick-multi-scenario-test
+
+# Tiny multi-scenario workload used to exercise scenario-aware dashboard
+# window splitting end-to-end. Three short scenarios × 1 test point each so
+# the result JSON carries three distinct beginTime/endTime ranges that the
+# exporter can align HTML windows with.
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 4
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 2
+  producersPerTopic: 1
+  producerRate: 1000
+
+scenarios:
+  - name: scenario-low
+    label: "low"
+    producerRate: 500
+  - name: scenario-mid
+    label: "mid"
+    producerRate: 1000
+  - name: scenario-high
+    label: "high"
+    producerRate: 2000

@@ -1,0 +1,30 @@
+name: Zipf smoke test
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 16
+  messageSize: 50
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 4
+  producersPerTopic: 1
+  producerRate: 5000
+
+scenarios:
+  - name: partition-zipf
+    messageDistributor: "PARTITION_ZIPF"
+    messageDistributorSkew: 1.5
+  - name: key-zipf
+    messageDistributor: "KEY_ZIPF"
+    messageDistributorSkew: 1.5
+  - name: baseline-no-key
+    messageDistributor: "NO_KEY"

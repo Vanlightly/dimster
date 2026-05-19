@@ -1,0 +1,22 @@
+name: Quick drain-backlog test
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+drainBacklogConfig:
+  backlogSizeGB: 3          # The size of the backlog
+  buildRate: 100000         # the producer rate while the backlog is being built
+  backlogProducerRate: 0    # the producer rate while the backlog is being drained
+  sampleRateMillis: 10000   # How often to check the backlog size (build and drain phases)
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 100
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 2

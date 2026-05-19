@@ -1,0 +1,108 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>dev.dimster</groupId>
+	<artifactId>dimster</artifactId>
+	<version>0.1.0-SNAPSHOT</version>
+	<name>Dimster</name>
+	<packaging>pom</packaging>
+
+	<modules>
+		<module>dimster-spi</module>
+		<module>dimster-kafka-3.x</module>
+		<module>dimster-kafka-4.1</module>
+		<module>dimster-kafka-4.2.0</module>
+		<module>dimster-core</module>
+		<module>package-3.x</module>
+		<module>package-4.1</module>
+		<module>package-4.2.0</module>
+		<module>docker</module>
+	</modules>
+
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://opensource.org/licenses/MIT</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<maven.compiler.release>25</maven.compiler.release>
+		<!--
+		No global kafka.version. Each per-version impl module
+		(dimster-kafka-3.x, dimster-kafka-4.2.0, ...) declares its own
+		<kafka.version> in its pom. dimster-core has no direct kafka-clients
+		dep; it gets the SPI's pinned 3.7.x at compile time and the per-flavor
+		impl's kafka-clients at runtime via Maven nearest-wins.
+		-->
+		<jackson.version>2.13.2</jackson.version>
+	</properties>
+
+	<build>
+		<plugins>
+		</plugins>
+	</build>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>1.7.25</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>${jackson.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-yaml</artifactId>
+			<version>${jackson.version}</version>
+		</dependency>
+	</dependencies>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>com.google.guava</groupId>
+				<artifactId>guava</artifactId>
+				<version>29.0-jre</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<profiles>
+		<profile>
+			<id>modern-java-compile</id>
+			<activation>
+				<jdk>[21,)</jdk>
+			</activation>
+			<build>
+				<pluginManagement>
+					<plugins>
+						<plugin>
+							<groupId>org.apache.maven.plugins</groupId>
+							<artifactId>maven-compiler-plugin</artifactId>
+							<version>3.13.0</version>
+							<configuration>
+								<source>25</source>
+								<target>25</target>
+								<release>25</release>
+								<encoding>UTF-8</encoding>
+								<showDeprecation>true</showDeprecation>
+								<showWarnings>true</showWarnings>
+								<optimize>true</optimize>
+							</configuration>
+						</plugin>
+					</plugins>
+				</pluginManagement>
+			</build>
+		</profile>
+	</profiles>
+</project>

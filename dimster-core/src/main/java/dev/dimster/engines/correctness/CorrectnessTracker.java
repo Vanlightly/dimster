@@ -1,0 +1,75 @@
+package dev.dimster.engines.correctness;
+
+import java.time.Instant;
+
+import dev.dimster.kafka.ConsumerCallback;
+import dev.dimster.stats.StatsCollector;
+
+/**
+ * ConsumerCallback wrapper that delegates performance stats to StatsCollector
+ * and correctness tracking to ModelChecker.
+ */
+public class CorrectnessTracker implements ConsumerCallback {
+
+    private final StatsCollector stats;
+    private final ModelChecker checker;
+
+    public CorrectnessTracker(StatsCollector stats, ModelChecker checker) {
+        this.stats = stats;
+        this.checker = checker;
+    }
+
+    @Override
+    public void messageReceived(byte[] payload, String topic, int partition,
+                                long publishTimestampMillis, Instant deliveryTime) {
+        stats.messageReceived(payload, topic, partition, publishTimestampMillis, deliveryTime);
+
+        var msg = CorrectnessPayload.decode(payload);
+        if (msg.producerId() >= 0) {
+            checker.messageReceived(msg.producerId(), msg.sequence(), topic, partition, msg.crcValid());
+        }
+    }
+
+    @Override
+    public void messageReceived(int payloadSize, long publishTimestampMillis, Instant deliveryTime) {
+        stats.messageReceived(payloadSize, publishTimestampMillis, deliveryTime);
+    }
+
+    @Override
+    public void error() {
+        stats.error();
+    }
+
+    @Override
+    public void pollCompleted(int messageCount) {
+        stats.pollCompleted(messageCount);
+    }
+
+    @Override
+    public void commitSyncCompleted(long latencyMicros) {
+        stats.commitSyncCompleted(latencyMicros);
+    }
+
+    @Override
+    public void commitAsyncCompleted() {
+        stats.commitAsyncCompleted();
+    }
+
+    @Override
+    public void processingTimeCompleted(long latencyMicros) {
+        stats.processingTimeCompleted(latencyMicros);
+    }
+
+    @Override
+    public void batchReceived(String consumerName, int messageCount) {
+        stats.batchReceived(consumerName, messageCount);
+    }
+
+    public StatsCollector stats() {
+        return stats;
+    }
+
+    public ModelChecker checker() {
+        return checker;
+    }
+}

@@ -1,0 +1,17 @@
+name: kafka-local
+
+replicationFactor: 1
+
+topicConfig:
+  min.insync.replicas: 1
+
+classicConsumerConfig:
+  auto.offset.reset: earliest
+  enable.auto.commit: false
+  dimster.commit.mode: CommitAsync  # CommitAsync|CommitSync (the type of commit when enable.auto.commit=false)
+  dimster.commit.linger.ms: 0       # How many ms to defer a commit (0ms means after each non-empty poll)
+
+shareConsumerConfig:
+  share.acknowledgement.mode: implicit
+  share.acquire.mode: batch_optimized
+  dimster.commit.mode: Poll      # How many ms to defer a commit (not used with Poll commit mode)

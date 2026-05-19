@@ -1,0 +1,25 @@
+name: Quick availability check
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 2
+  warmupDurationMinutes: 1
+
+availabilityConfig:
+  unavailabilityThresholdMs: 5000   # Treat any producer, publish delay or e2e latency above this as unavailability
+  probeTimeoutSeconds: 30           # Send timeout (when a send is treated as a failure and unavailability)
+  probePartitions: 6                # The number of partitions in the availability probe topic
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageSize: 100
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 3
+  producersPerTopic: 3
+  producerRate: 1000

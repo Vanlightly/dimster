@@ -1,0 +1,30 @@
+#!/bin/bash
+if [ -d "./lib" ]; then
+    # Packaged-tarball mode: every dependency (incl. the chosen dimster-kafka-X
+    # impl) is in ./lib next to this script. Flavor is baked in at package time.
+    CLASSPATH=$CLASSPATH:lib/*
+else
+    # Source-tree mode: dimster-core's classpath alone does NOT include any
+    # dimster-kafka-X SPI impl, so KafkaSpi.factory() would throw at startup.
+    # Splice in one flavor module (default 4.2.0, override with DIMSTER_KAFKA_FLAVOR).
+    DIMSTER_KAFKA_FLAVOR="${DIMSTER_KAFKA_FLAVOR:-4.2.0}"
+    KAFKA_MOD="dimster-kafka-${DIMSTER_KAFKA_FLAVOR}"
+    if [ ! -f "${KAFKA_MOD}/target/classpath.txt" ]; then
+        echo "Missing ${KAFKA_MOD}/target/classpath.txt." >&2
+        echo "Run: ./mvnw -pl ${KAFKA_MOD} -am compile" >&2
+        exit 1
+    fi
+    # Order matters: the flavor's classpath.txt must come BEFORE dimster-core's
+    # so its kafka-clients-X.Y.Z.jar wins over the older kafka-clients pulled in
+    # transitively by dimster-spi. Otherwise the SPI impl loads stale client classes.
+    CLASSPATH="dimster-core/target/classes:${KAFKA_MOD}/target/classes:$(cat ${KAFKA_MOD}/target/classpath.txt):$(cat dimster-core/target/classpath.txt)"
+fi
+
+if [ -z "$HEAP_OPTS" ]
+then
+    HEAP_OPTS="-Xms4G -Xmx8G"
+fi
+
+JVM_MEM="${HEAP_OPTS} -XX:+UseG1GC"
+
+exec java -server $KAFKA_JMX_OPTS -cp $CLASSPATH $JVM_MEM $KAFKA_OPTS dev.dimster.worker.WorkerHttpServer "$@"

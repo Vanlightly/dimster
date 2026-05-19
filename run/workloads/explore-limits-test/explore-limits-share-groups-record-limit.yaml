@@ -1,0 +1,107 @@
+name: explore-limits-share-groups-record-limit
+
+# For testing a record_limit issue with Apache Kafka 4.2.0
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 1
+
+exploreConfig:
+  searchMaxRetries: 2      #  Retries for finding a sustainable throughput
+  minViableRate: 4  # the minimum throughput for a result
+
+  # The constraints -----------
+  e2eLatencyPercentile: 75
+  e2eLatencyThresholdMs: 50
+  publishDelayThresholdMs: 200 # how far behind schedule the publishers can get
+  sustainLeniency: 0.1         # sustain phase is 10% more lenient
+
+  # Phase 1 - RAMP - Rapidly find an unsustainable rate
+  initialRate: 100                # Start here, then double in each interval
+  rampWarmupSeconds: 10           # The number of seconds to stay at initialRate to warm-up producers/consumers
+  rampIntervalSeconds: 10  # Throughput doubling interval
+
+  # Phase 2 - Binary search - Find a candidate sustainable throughput
+  searchDurationSeconds: 90       # Seconds spent at each midpoint
+  searchIntervalSeconds: 10       # interval to check latency constraints
+  stabilizeTimeoutSeconds: 600    # how long to give consumers to clear messages at the end of a search band
+
+  # Phase 3 - Sustain - Try to sustain the discovered throughput
+  sustainDurationSeconds: 300     # The number of seconds to sustain the candidate sustainable throughput
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageDistributor: "NO_KEY"
+  messageSize: 1000
+  producersPerTopic: 1
+  consumerType: SHARE_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+      enable.idempotence: true
+    classicConsumerConfig:
+      auto.offset.reset: earliest
+      enable.auto.commit: false
+      dimster.commit.mode: CommitAsync
+      dimster.commit.linger.ms: 0
+    shareConsumerConfig:
+      max.poll.records: 500
+      share.acknowledgement.mode: implicit
+      share.acquire.mode: batch_optimized
+      dimster.commit.mode: Poll
+      dimster.commit.linger.ms: 0
+
+scenarios:
+  - name: one-at-a-time-share
+    repeat: 2
+    kafkaConfig:
+      shareConsumerConfig:
+        max.poll.records: 1
+        share.acknowledgement.mode: explicit
+        share.acquire.mode: record_limit
+        dimster.commit.mode: CommitSync
+    consumerType: SHARE_GROUP
+    label: ["10-con-SG", "50-con-SG", "100-con-SG",
+            "500-con-SG", "1000-con-SG"]
+    consumersPerGroup: [ 10, 50, 100, 500, 1000 ]
+
+  - name: one-at-a-time-share-1s-processing-time
+    repeat: 2
+    exploreConfig:
+      initialRate: 1
+      minViableRate: 1
+    kafkaConfig:
+      shareConsumerConfig:
+        max.poll.records: 1
+        share.acknowledgement.mode: explicit
+        share.acquire.mode: record_limit
+        dimster.commit.mode: CommitSync
+    consumerType: SHARE_GROUP
+    consumerProcMsMin: 1000
+    consumerProcMsMax: 1000
+    label: [ "100-con", "250-con", "500-con", "750-con", "1000-con" ]
+    consumersPerGroup: [ 100, 250, 500, 750, 1000 ]
+
+  - name: one-at-a-time-share-10s-processing-time
+    repeat: 2
+    exploreConfig:
+      initialRate: 1
+      minViableRate: 1
+    kafkaConfig:
+      shareConsumerConfig:
+        max.poll.records: 1
+        share.acknowledgement.mode: explicit
+        share.acquire.mode: record_limit
+        dimster.commit.mode: CommitSync
+    consumerType: SHARE_GROUP
+    consumerProcMsMin: 10000
+    consumerProcMsMax: 10000
+    label: [ "250-con", "500-con", "750-con", "1000-con" ]
+    consumersPerGroup: [ 250, 500, 750, 1000 ]

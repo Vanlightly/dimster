@@ -1,0 +1,32 @@
+name: quick-run-scale-topics-and-partitions
+
+engineConfig:
+  perPartitionMetrics: false
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 100
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 1
+  producerRate: 2000
+
+scenarios:
+  - name: N-topics-6-parts
+    label: [ "1-topic", "10-topics" ]
+    partitionsPerTopic: 6
+    topics: [1, 10]
+
+  - name: 1-topic-N-parts
+    label: ["1-part", "10-parts"]
+    topics: 1
+    consumersPerGroup: [1, 10]
+    partitionsPerTopic: [1, 10]

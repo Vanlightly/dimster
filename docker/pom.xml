@@ -1,0 +1,30 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>dimster</artifactId>
+        <groupId>dev.dimster</groupId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>dimster-docker</artifactId>
+
+    <name>Dimster Docker Image</name>
+    <packaging>pom</packaging>
+
+    <!--
+    Holds the Dockerfiles only. The actual `docker build` invocations are
+    driven by the Rust CLI (cli/src/commands/build.rs), which knows about
+    the per-flavor package modules and loops over them to produce one image
+    per flavor. This pom exists so the docker/ directory shows up in the
+    Maven reactor (which keeps Dockerfile copies/edits visible alongside
+    the Java module changes), but it has no build steps of its own.
+
+    Pre-multi-version this module had a Spotify dockerfile-maven-plugin
+    profile and a dependency on the (now-removed) "package" artifact for
+    its in-Maven docker build path. That path was unused in practice -
+    the Rust CLI was already the only invoker - so the plugin profile
+    and the broken dep were dropped here in the multi-version refactor.
+    -->
+
+</project>

@@ -1,0 +1,48 @@
+Configuration:
+  status: INFO
+  name: messaging-benchmark
+
+  # Two appenders:
+  #   * Console — kept as-is for `kubectl logs` / interactive readability.
+  #     Short HH:mm:ss.SSS pattern.
+  #   * File    — RollingFile whose path is resolved by precedence:
+  #         sys property DIMSTER_LOG_FILE > env var DIMSTER_LOG_FILE > /tmp/dimster.log
+  #     Embedded mode (Dimster.main) sets the sys property at startup to land
+  #     the log alongside the results JSON under <output>/<timestamp>/. K8s
+  #     pods set the env var via their deployment yaml so coordinator/worker
+  #     write to a PVC path the CLI can later pull with `dimster results --logs`.
+  #     The full yyyy-MM-dd HH:mm:ss.SSS prefix lets the CLI filter the
+  #     persisted log down to a single benchmark run when one log file
+  #     accumulates lines from multiple back-to-back runs.
+  Appenders:
+    Console:
+      name: Console
+      target: SYSTEM_OUT
+      PatternLayout:
+        Pattern: "%d{HH:mm:ss.SSS} %-4level: %msg%n"
+    RollingFile:
+      name: File
+      fileName: ${sys:DIMSTER_LOG_FILE:-${env:DIMSTER_LOG_FILE:-/tmp/dimster.log}}
+      filePattern: ${sys:DIMSTER_LOG_FILE:-${env:DIMSTER_LOG_FILE:-/tmp/dimster.log}}.%i.gz
+      PatternLayout:
+        Pattern: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-4level: %msg%n"
+      Policies:
+        SizeBasedTriggeringPolicy:
+          size: 50 MB
+      DefaultRolloverStrategy:
+        max: 5
+
+  Loggers:
+    Logger:
+      - name: org.apache.kafka
+        level: warn
+        additivity: false
+        AppenderRef:
+          - ref: Console
+          - ref: File
+    Root:
+      level: info
+      additivity: false
+      AppenderRef:
+        - ref: Console
+        - ref: File

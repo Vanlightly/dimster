@@ -1,0 +1,235 @@
+package dev.dimster.kafka.impl.v4_2_0;
+
+import dev.dimster.spi.kafka.GroupKind;
+import dev.dimster.spi.kafka.RawAdmin;
+import dev.dimster.spi.kafka.ShareGroupInfo;
+import dev.dimster.spi.kafka.ShareGroupMember;
+import dev.dimster.spi.kafka.ShareGroupOffsetInfo;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ListGroupsOptions;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.ListShareGroupOffsetsSpec;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.ShareGroupDescription;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.GroupType;
+import org.apache.kafka.common.TopicPartition;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Kafka 4.2.0 implementation of {@link RawAdmin}.
+ *
+ * <p>All blocking admin calls go through {@link #unwrap}, which converts checked
+ * concurrency exceptions into {@link RuntimeException}. The dimster-side wrapper
+ * ({@code KafkaCluster}) catches those at its own boundary and converts them to
+ * domain errors. This matches the pre-SPI behaviour - the original
+ * {@code KafkaCluster} caught {@code Throwable} on every admin call.
+ *
+ * <p>The 30-second timeouts on the offset-related calls match what
+ * {@code KafkaCluster.getConsumerGroupLag} and {@code ShareGroupLagMonitor.poll}
+ * used pre-refactor, and serve as a safety net against an unresponsive broker
+ * locking up a poll thread.
+ */
+public class V4_2_0Admin implements RawAdmin {
+
+    private static final long ADMIN_OP_TIMEOUT_SECONDS = 30;
+
+    private final AdminClient admin;
+
+    public V4_2_0Admin(AdminClient admin) {
+        this.admin = admin;
+    }
+
+    @Override
+    public Set<String> listTopicNames() {
+        return unwrap(() -> admin.listTopics().names().get());
+    }
+
+    @Override
+    public void createTopic(NewTopic topic) {
+        unwrap(() -> {
+            admin.createTopics(List.of(topic)).all().get();
+            return null;
+        });
+    }
+
+    @Override
+    public void deleteTopics(Set<String> topicNames) {
+        unwrap(() -> {
+            admin.deleteTopics(topicNames).all().get();
+            return null;
+        });
+    }
+
+    @Override
+    public Map<TopicPartition, OffsetAndMetadata> committedOffsets(String groupId) {
+        return unwrap(() -> admin.listConsumerGroupOffsets(groupId)
+                .partitionsToOffsetAndMetadata()
+                .get(ADMIN_OP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+    }
+
+    @Override
+    public Map<TopicPartition, Long> endOffsets(Set<TopicPartition> partitions) {
+        Map<TopicPartition, OffsetSpec> request = new HashMap<>(partitions.size());
+        for (TopicPartition tp : partitions) {
+            request.put(tp, OffsetSpec.latest());
+        }
+        Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> raw = unwrap(() ->
+                admin.listOffsets(request).all().get(ADMIN_OP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        Map<TopicPartition, Long> out = new LinkedHashMap<>(raw.size());
+        for (var e : raw.entrySet()) {
+            out.put(e.getKey(), e.getValue().offset());
+        }
+        return out;
+    }
+
+    @Override
+    public Set<String> listGroupIds(GroupKind kind) {
+        // GroupType.CLASSIC + GroupType.CONSUMER together cover both the legacy
+        // and KIP-848 protocols - dimster's KafkaCluster.deleteTestConsumerGroups
+        // queried both originally. SHARE is the 4.2 share-group type.
+        Set<GroupType> types = switch (kind) {
+            case CLASSIC_OR_CONSUMER -> Set.of(GroupType.CLASSIC, GroupType.CONSUMER);
+            case SHARE -> Set.of(GroupType.SHARE);
+        };
+        var options = new ListGroupsOptions().withTypes(types);
+        return unwrap(() -> {
+            var listings = admin.listGroups(options).all().get();
+            var ids = new java.util.LinkedHashSet<String>(listings.size());
+            for (var listing : listings) {
+                ids.add(listing.groupId());
+            }
+            return ids;
+        });
+    }
+
+    @Override
+    public void deleteConsumerGroups(Collection<String> groupIds) {
+        unwrap(() -> {
+            admin.deleteConsumerGroups(groupIds).all().get();
+            return null;
+        });
+    }
+
+    @Override
+    public Map<TopicPartition, Long> shareGroupLag(String groupId) {
+        // Server computes lag and exposes it via SharePartitionOffsetInfo.lag().
+        var spec = Map.of(groupId, new ListShareGroupOffsetsSpec());
+        var perGroup = unwrap(() -> admin.listShareGroupOffsets(spec)
+                .all()
+                .get(ADMIN_OP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        var offsets = perGroup.get(groupId);
+        if (offsets == null) {
+            return Map.of();
+        }
+        var out = new LinkedHashMap<TopicPartition, Long>(offsets.size());
+        for (var e : offsets.entrySet()) {
+            out.put(e.getKey(), e.getValue().lag().orElse(0L));
+        }
+        return out;
+    }
+
+    @Override
+    public Map<TopicPartition, ShareGroupOffsetInfo> shareGroupOffsets(String groupId) {
+        // SharePartitionOffsetInfo carries both startOffset() (always populated)
+        // and lag() (Optional<Long> — broker may not have a value yet for a
+        // brand-new share group). We default a missing lag to 0 to match the
+        // convention shareGroupLag has used since the SPI was introduced.
+        var spec = Map.of(groupId, new ListShareGroupOffsetsSpec());
+        var perGroup = unwrap(() -> admin.listShareGroupOffsets(spec)
+                .all()
+                .get(ADMIN_OP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        var offsets = perGroup.get(groupId);
+        if (offsets == null) {
+            return Map.of();
+        }
+        var out = new LinkedHashMap<TopicPartition, ShareGroupOffsetInfo>(offsets.size());
+        for (var e : offsets.entrySet()) {
+            var info = e.getValue();
+            out.put(e.getKey(), new ShareGroupOffsetInfo(info.startOffset(), info.lag().orElse(0L)));
+        }
+        return out;
+    }
+
+    @Override
+    public ShareGroupInfo describeShareGroup(String groupId) {
+        ShareGroupDescription desc = unwrap(() -> admin.describeShareGroups(List.of(groupId))
+                .describedGroups()
+                .get(groupId)
+                .get(ADMIN_OP_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        List<ShareGroupMember> members = new ArrayList<>(desc.members().size());
+        for (var m : desc.members()) {
+            // ShareMemberAssignment.topicPartitions() can be empty for members
+            // that haven't received an assignment yet; we forward as-is.
+            Set<TopicPartition> assignment = m.assignment() != null
+                    ? m.assignment().topicPartitions()
+                    : Set.of();
+            members.add(new ShareGroupMember(m.consumerId(), m.clientId(), m.host(), assignment));
+        }
+        // groupState() exists on ShareGroupDescription since 4.1; toString()
+        // gives "STABLE", "EMPTY", "DEAD", etc. — the textual form keeps the
+        // SPI free of Kafka's GroupState enum (which has shifted across
+        // releases).
+        String state = desc.groupState() != null ? desc.groupState().toString() : "UNKNOWN";
+        int coordinatorId = desc.coordinator() != null ? desc.coordinator().id() : -1;
+        return new ShareGroupInfo(desc.groupId(), state, coordinatorId, members);
+    }
+
+    @Override
+    public void alterShareGroupOffsets(String groupId, Map<TopicPartition, Long> startOffsets) {
+        // Fire-and-forget on purpose: matches pre-SPI behaviour in
+        // KafkaCluster.createShareGroup, which similarly never awaited the result.
+        // If we ever want to surface failures here we can switch to .all().get();
+        // doing so is a behaviour change so it's left to a follow-up.
+        admin.alterShareGroupOffsets(groupId, startOffsets);
+    }
+
+    @Override
+    public void deleteShareGroups(Collection<String> groupIds) {
+        unwrap(() -> {
+            admin.deleteShareGroups(groupIds).all().get();
+            return null;
+        });
+    }
+
+    @Override
+    public void close() {
+        admin.close();
+    }
+
+    /**
+     * Runs a blocking admin call, converting checked concurrency exceptions into
+     * {@link RuntimeException}. {@code Future.get()} throws InterruptedException
+     * (re-interrupts the thread) and ExecutionException (unwraps the cause); both
+     * are pointless to bubble up as checked exceptions through the SPI when every
+     * caller wraps them anyway.
+     */
+    private static <T> T unwrap(AdminCall<T> call) {
+        try {
+            return call.run();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for admin operation", e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            // Surface the underlying Kafka exception, not the ExecutionException wrapper.
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new RuntimeException("Admin operation failed: " + cause.getMessage(), cause);
+        } catch (Exception e) {
+            throw new RuntimeException("Admin operation failed: " + e.getMessage(), e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface AdminCall<T> {
+        T run() throws Exception;
+    }
+}

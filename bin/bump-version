@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# bin/bump-version — sweep the Dimster version across every file that
+# carries it:
+#
+#   * Root pom.xml                  (project <version>)
+#   * Every child module pom.xml    (<parent><version> block)
+#   * cli/Cargo.toml                (package version)
+#   * eks-setup-cli/Cargo.toml      (package version)
+#
+# Why this script exists: the version lives in the root pom plus eight
+# child <parent> blocks plus two Cargo.toml [package] sections. Hand-
+# editing them is error-prone, and a mismatch between root and child
+# <parent> versions silently degrades the build (Maven warns but proceeds).
+# Sweeping them in one command removes that class of bug from the release
+# workflow described in RELEASING.md.
+#
+# Usage:
+#   bin/bump-version <version> [--snapshot]
+#
+# Examples:
+#   bin/bump-version 0.1.0              # release commit: pom and cargo at 0.1.0
+#   bin/bump-version 0.2.0 --snapshot   # post-release bump on main:
+#                                       # pom 0.2.0-SNAPSHOT, cargo 0.2.0
+#
+# Cargo.toml versions always use the bare <version> — Cargo has no
+# -SNAPSHOT concept and Dimster does not publish to crates.io, so a
+# next-minor version on main is sufficient. The -SNAPSHOT suffix is a
+# Maven-only convention.
+
+set -euo pipefail
+
+usage() {
+    cat <<EOF >&2
+Usage: $(basename "$0") <version> [--snapshot]
+
+  <version>     SemVer string (e.g. 0.1.0, 0.2.0-rc.1)
+  --snapshot    Append -SNAPSHOT to pom.xml versions (Maven convention)
+
+Examples:
+  $(basename "$0") 0.1.0
+  $(basename "$0") 0.2.0 --snapshot
+EOF
+    exit 1
+}
+
+[ $# -lt 1 ] && usage
+VERSION="$1"
+SNAPSHOT_SUFFIX=""
+case "${2:-}" in
+    --snapshot) SNAPSHOT_SUFFIX="-SNAPSHOT" ;;
+    "") ;;
+    *) echo "error: unknown second arg '$2'" >&2; usage ;;
+esac
+
+# Basic SemVer sanity check. Catches typos like "0.1" or "v0.1.0" before
+# they make it into commits. Allows pre-release identifiers (-rc.1, -alpha).
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+    echo "error: '$VERSION' does not look like SemVer (expected e.g. 0.1.0 or 0.2.0-rc.1)" >&2
+    exit 1
+fi
+
+POM_VERSION="${VERSION}${SNAPSHOT_SUFFIX}"
+
+# Resolve the repo root from the script's own location so the script works
+# regardless of the caller's cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- Root pom.xml ---------------------------------------------------------
+# Replace only the FIRST <version>...</version> in the file (the parent
+# POM version, around line 7). The root pom contains no <parent> block, so
+# the first match IS the project version. Dependency and plugin <version>
+# tags further down must NOT be rewritten.
+bump_root_pom() {
+    local f="$REPO_ROOT/pom.xml"
+    awk -v ver="$POM_VERSION" '
+        BEGIN { done = 0 }
+        !done && /<version>[^<]*<\/version>/ {
+            sub(/<version>[^<]*<\/version>/, "<version>" ver "</version>")
+            done = 1
+        }
+        { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    echo "  updated $(realpath --relative-to="$REPO_ROOT" "$f" 2>/dev/null || echo "$f")"
+}
+
+# --- Child module poms ----------------------------------------------------
+# In a child module pom, the only version-bearing tag that must track the
+# root is the <version> inside the <parent> block. State-machine over
+# <parent>...</parent> so we ignore dependency / plugin <version> tags
+# elsewhere in the file.
+bump_child_pom() {
+    local f="$1"
+    awk -v ver="$POM_VERSION" '
+        BEGIN { in_parent = 0; done = 0 }
+        /<parent>/   { in_parent = 1 }
+        /<\/parent>/ { in_parent = 0 }
+        in_parent && !done && /<version>[^<]*<\/version>/ {
+            sub(/<version>[^<]*<\/version>/, "<version>" ver "</version>")
+            done = 1
+        }
+        { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    echo "  updated $(realpath --relative-to="$REPO_ROOT" "$f" 2>/dev/null || echo "$f")"
+}
+
+# --- Cargo.toml -----------------------------------------------------------
+# Replace ONLY the first line matching `version = "..."` anchored at
+# column 0 — that's the [package] table's version. Inline dependency
+# versions (`serde = { version = "1.0", ... }`) have leading whitespace
+# or are inside braces, so they don't match this pattern.
+bump_cargo() {
+    local f="$1"
+    awk -v ver="$VERSION" '
+        BEGIN { done = 0 }
+        !done && /^version = "/ {
+            print "version = \"" ver "\""
+            done = 1
+            next
+        }
+        { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    echo "  updated $(realpath --relative-to="$REPO_ROOT" "$f" 2>/dev/null || echo "$f")"
+}
+
+echo "Bumping versions: pom=$POM_VERSION, cargo=$VERSION"
+echo
+
+bump_root_pom
+
+# Auto-discover child Maven modules: any immediate subdirectory of the
+# repo root that contains a pom.xml. Avoids hardcoding the module list
+# here (which would silently miss future modules) without needing to
+# parse the root pom's <modules> section from bash.
+for child_pom in "$REPO_ROOT"/*/pom.xml; do
+    [ -f "$child_pom" ] || continue
+    bump_child_pom "$child_pom"
+done
+
+bump_cargo "$REPO_ROOT/cli/Cargo.toml"
+bump_cargo "$REPO_ROOT/eks-setup-cli/Cargo.toml"
+
+echo
+echo "Done. Review with:  git diff -- '**/pom.xml' '**/Cargo.toml'"

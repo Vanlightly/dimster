@@ -1,0 +1,42 @@
+name: 50-250MBs-classic-vs-share
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 1
+
+runConfig:
+  testDurationMinutes: 40
+  warmupDurationMinutes: 20
+
+baseWorkload:
+  topics: 10
+  partitionsPerTopic: 6
+  messageDistributor: "KEY_ROUND_ROBIN"
+  messageSize: 1000
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 4
+
+scenarios:
+  - name: 50-MB/s
+    label: ["classic", "share"]
+    producerRate: 50000
+    consumerType: [CONSUMER_GROUP, SHARE_GROUP]
+  - name: 100-MB/s
+    label: [ "classic", "share" ]
+    producerRate: 100000
+    consumerType: [ CONSUMER_GROUP, SHARE_GROUP ]
+  - name: 150-MB/s
+    label: [ "classic", "share" ]
+    producerRate: 150000
+    consumerType: [ CONSUMER_GROUP, SHARE_GROUP ]
+  - name: 200-MB/s
+    label: [ "classic", "share" ]
+    producerRate: 200000
+    consumerType: [ CONSUMER_GROUP, SHARE_GROUP ]
+  - name: 250-MB/s
+    label: [ "classic", "share" ]
+    producerRate: 250000
+    consumerType: [ CONSUMER_GROUP, SHARE_GROUP ]
+

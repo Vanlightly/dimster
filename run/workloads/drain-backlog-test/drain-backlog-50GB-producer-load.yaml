@@ -1,0 +1,23 @@
+name: 50GB drain-backlog with producer load test
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldowmMinutes: 1
+
+drainBacklogConfig:
+  backlogSizeGB: 50
+  backlogProducerRate: 100000
+  buildRate: 200000
+  sampleRateMillis: 10000
+  drainTimeoutMinutes: 20
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  producersPerTopic: 6

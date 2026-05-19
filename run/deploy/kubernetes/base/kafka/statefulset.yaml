@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: dimster
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: jmx-exporter-init
+          image: curlimages/curl:8.6.0
+          command: ['sh', '-c', 'curl -sSL -o /jmx-exporter/jmx_prometheus_javaagent.jar https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar']
+          volumeMounts:
+            - name: jmx-exporter
+              mountPath: /jmx-exporter
+      containers:
+        - name: kafka
+          image: apache/kafka:4.2.0
+          command: ["/bin/bash", "/opt/kafka-config/entrypoint.sh"]
+          env:
+            - name: KAFKA_REPLICAS
+              value: "3"
+            - name: KAFKA_CLUSTER_ID
+              value: "dimster-benchmark-cluster-001"
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xms1G -Xmx1G"
+            - name: KAFKA_CPU
+              value: "4"
+            - name: KAFKA_OPTS
+              value: "-javaagent:/opt/jmx-exporter/jmx_prometheus_javaagent.jar=9404:/opt/jmx-exporter/config.yml"
+          ports:
+            - containerPort: 9092
+              name: broker
+            - containerPort: 9093
+              name: controller
+            - containerPort: 9404
+              name: jmx-metrics
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/kafka-data
+            - name: kafka-config
+              mountPath: /opt/kafka-config
+            - name: jmx-exporter
+              mountPath: /opt/jmx-exporter/jmx_prometheus_javaagent.jar
+              subPath: jmx_prometheus_javaagent.jar
+            - name: jmx-config
+              mountPath: /opt/jmx-exporter/config.yml
+              subPath: jmx-exporter.yml
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1536Mi"
+            limits:
+              cpu: "500m"
+              memory: "1536Mi"
+      volumes:
+        - name: kafka-config
+          configMap:
+            name: kafka-config
+            defaultMode: 0755
+        - name: jmx-exporter
+          emptyDir: {}
+        - name: jmx-config
+          configMap:
+            name: kafka-jmx-config
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

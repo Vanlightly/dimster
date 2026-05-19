@@ -1,0 +1,24 @@
+name: kafka-safe
+
+replicationFactor: 3
+
+commonConfig:
+  request.timeout.ms: 120000
+
+topicConfig:
+  min.insync.replicas: 2
+
+producerConfig:
+  acks: all
+  enable.idempotence: true
+
+classicConsumerConfig:
+  auto.offset.reset: earliest
+  enable.auto.commit: false
+  dimster.commit.mode: CommitAsync
+  dimster.commit.linger.ms: 0
+
+shareConsumerConfig:
+  share.acknowledgement.mode: implicit
+  share.acquire.mode: batch_optimized
+  dimster.commit.mode: Poll

@@ -1,0 +1,1047 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-export-script
+  namespace: dimster
+data:
+  export.py: |
+    #!/usr/bin/env python3
+    """Export Grafana dashboard data as self-contained HTML from Prometheus.
+
+    Reads Grafana dashboard JSON files, queries Prometheus for the given time
+    range, and generates static HTML files with Chart.js time-series charts.
+    Dashboards that define an 'instance' template variable get rendered once
+    with all instances aggregated, then once per discovered instance.
+
+    Usage:
+        python3 export.py --prometheus-url http://prometheus:9090 \
+            --start 1711900000 --end 1711903600 \
+            --dashboard-dirs /dashboards/main,/dashboards/system \
+            --output-dir /results/2026-03-31/dashboards
+    """
+
+    import argparse
+    import html as html_mod
+    import json
+    import math
+    import os
+    import re
+    import sys
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from datetime import datetime, timezone
+
+    # -----------------------------------------------------------------------
+    # Constants
+    # -----------------------------------------------------------------------
+    CHART_JS_CDN = 'https://cdn.jsdelivr.net/npm/chart.js'
+    LUXON_CDN = 'https://cdn.jsdelivr.net/npm/luxon'
+    DATE_ADAPTER_CDN = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon'
+    ZOOM_PLUGIN_CDN = 'https://cdn.jsdelivr.net/npm/hammerjs@2.0.8'
+    ZOOM_PLUGIN_CHARTJS_CDN = 'https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom'
+
+    COLOR_PALETTE = [
+        '#4e79a7', '#e15759', '#59a14f', '#f28e2b', '#9c755f',
+        '#76b7b2', '#b07aa1', '#ff9da7', '#edc948', '#bab0ac',
+    ]
+
+    # -----------------------------------------------------------------------
+    # Prometheus helpers
+    # -----------------------------------------------------------------------
+    def prom_get(base_url, path, params):
+        """GET a Prometheus API endpoint, return parsed JSON."""
+        qs = urllib.parse.urlencode(params)
+        url = f'{base_url}{path}?{qs}'
+        try:
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                return json.loads(resp.read().decode())
+        except (urllib.error.URLError, json.JSONDecodeError) as e:
+            print(f'    Warning: Prometheus query failed: {e}', file=sys.stderr)
+            return None
+
+    def prom_query_range(base_url, expr, start, end, step):
+        """Query Prometheus range API."""
+        return prom_get(base_url, '/api/v1/query_range', {
+            'query': expr, 'start': start, 'end': end, 'step': step,
+        })
+
+    def prom_query_instant(base_url, expr, time):
+        """Query Prometheus instant API."""
+        return prom_get(base_url, '/api/v1/query', {
+            'query': expr, 'time': time,
+        })
+
+    def resolve_label_values(base_url, definition, start, end):
+        """Resolve a Grafana label_values(metric, label) query.
+
+        Parses the definition string and queries Prometheus to find
+        distinct values of the label on the given metric.
+        """
+        m = re.match(r'label_values\(([^,]+),\s*(\w+)\)', definition)
+        if not m:
+            return []
+        metric, label = m.group(1).strip(), m.group(2).strip()
+        result = prom_get(base_url, '/api/v1/query', {
+            'query': metric, 'time': end,
+        })
+        if not result or result.get('status') != 'success':
+            return []
+        values = set()
+        for item in result.get('data', {}).get('result', []):
+            v = item.get('metric', {}).get(label, '')
+            if v:
+                values.add(v)
+        return sorted(values)
+
+    # -----------------------------------------------------------------------
+    # Grafana dashboard parsing
+    # -----------------------------------------------------------------------
+    def find_template_variables(dashboard):
+        """Find all query-based template variables.
+
+        Returns list of (name, definition) tuples. Skips datasource
+        variables (like DS_PROMETHEUS) which have no label_values query.
+        """
+        variables = []
+        for tpl in dashboard.get('templating', {}).get('list', []):
+            name = tpl.get('name', '')
+            # The query can be a string or a nested object
+            q = tpl.get('query', tpl.get('definition', ''))
+            if isinstance(q, dict):
+                q = q.get('query', '')
+            if q and 'label_values' in q:
+                variables.append((name, q))
+        return variables
+
+    def extract_panels(dashboard):
+        """Extract flat list of renderable panels (skip rows)."""
+        panels = []
+        for p in dashboard.get('panels', []):
+            if p.get('type') == 'row':
+                # Row panels may contain collapsed panels
+                for child in p.get('panels', []):
+                    panels.append(child)
+            else:
+                panels.append(p)
+        return panels
+
+    def get_panel_unit(panel):
+        """Get the unit string from panel fieldConfig."""
+        return (panel.get('fieldConfig', {})
+                .get('defaults', {})
+                .get('unit', ''))
+
+    def expand_vars(expr, var_values):
+        """Replace all template variables in a PromQL expression."""
+        for name, value in var_values.items():
+            expr = expr.replace(f'${name}', value)
+        return expr
+
+    def resolve_legend(fmt, labels):
+        """Replace {{label}} placeholders with actual label values."""
+        if not fmt:
+            return ', '.join(f'{k}={v}' for k, v in labels.items()
+                            if k != '__name__')
+        def repl(m):
+            return labels.get(m.group(1), m.group(0))
+        return re.sub(r'\{\{(\w+)\}\}', repl, fmt)
+
+    # -----------------------------------------------------------------------
+    # Chart rendering
+    # -----------------------------------------------------------------------
+    def _safe_id(text):
+        return re.sub(r'[^a-zA-Z0-9_-]', '-', text).strip('-')
+
+    def render_timeseries_chart(canvas_id, title, unit, datasets):
+        """Return JS snippet for a Chart.js time-series line chart.
+
+        datasets: list of {label, data: [{x: epoch_ms, y: value}, ...]}
+        """
+        chart_datasets = []
+        for i, ds in enumerate(datasets):
+            color = COLOR_PALETTE[i % len(COLOR_PALETTE)]
+            chart_datasets.append({
+                'label': ds['label'],
+                'data': ds['data'],
+                'borderColor': color,
+                'backgroundColor': color + '1a',
+                'borderWidth': 1.5,
+                'pointRadius': 0,
+                'fill': False,
+                'tension': 0.1,
+            })
+
+        config = {
+            'type': 'line',
+            'data': {'datasets': chart_datasets},
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'animation': False,
+                'plugins': {
+                    'title': {
+                        'display': True,
+                        'text': title,
+                        'font': {'size': 14, 'weight': '600'},
+                        'color': '#1a1a2e',
+                        'padding': {'bottom': 10},
+                    },
+                    # Canvas-rendered legend disabled: with many series the
+                    # legend overflows the fixed-height canvas and Chart.js
+                    # silently truncates entries. We render an HTML legend in
+                    # a sibling <ul> instead (see htmlLegendPlugin), which
+                    # can scroll via CSS overflow.
+                    'legend': {'display': False},
+                    'htmlLegend': {'containerId': f'legend_{canvas_id}'},
+                    'zoom': '__ZOOM_CONFIG__',
+                },
+                'scales': {
+                    'x': {
+                        'type': 'time',
+                        'time': {'tooltipFormat': "HH:mm:ss 'UTC'", 'displayFormats': {'minute': 'HH:mm', 'hour': 'HH:mm'}},
+                        'adapters': {'date': {'zone': 'UTC'}},
+                        'ticks': {'color': '#555', 'maxRotation': 0},
+                        'grid': {'display': False},
+                    },
+                    'y': {
+                        'beginAtZero': True,
+                        'title': {'display': bool(unit), 'text': unit, 'font': {'size': 12}, 'color': '#555'},
+                        'ticks': {'color': '#555'},
+                        'grid': {'color': 'rgba(0,0,0,0.06)'},
+                    },
+                },
+            },
+        }
+        config_json = json.dumps(config).replace('"__ZOOM_CONFIG__"', '''{
+              zoom: {
+                drag: { enabled: true, backgroundColor: "rgba(78,121,167,0.15)", borderColor: "#4e79a7", borderWidth: 1 },
+                mode: "x",
+                onZoomComplete: function(ctx) { window.syncZoom(ctx.chart); }
+              }
+            }''')
+        # htmlLegendPlugin is registered globally via Chart.register() in the
+        # page script, so it picks up `options.plugins.htmlLegend.containerId`
+        # automatically — no per-chart wiring needed here.
+        return f'window.charts["{canvas_id}"] = new Chart(document.getElementById("{canvas_id}"), {config_json});'
+
+    def render_stat_card_html(title, value, unit):
+        """Return HTML for a stat panel."""
+        if value is None:
+            display = 'No data'
+        elif isinstance(value, float):
+            display = f'{value:,.2f}' if value < 1000 else f'{value:,.0f}'
+        else:
+            display = str(value)
+        return f'''<div class="stat-card">
+            <div class="stat-title">{html_mod.escape(title)}</div>
+            <div class="stat-value">{display}</div>
+            <div class="stat-unit">{html_mod.escape(unit)}</div>
+        </div>'''
+
+    # -----------------------------------------------------------------------
+    # Core: process panels for a given instance scope
+    # -----------------------------------------------------------------------
+    def process_panels(panels, prom_url, start, end, step, var_values, section_prefix):
+        """Query Prometheus and build chart data for all panels.
+
+        var_values: dict mapping template variable names to their replacement
+        values (e.g. {'instance': '.*', 'share_group': '.*'}).
+
+        Returns (chart_htmls, chart_scripts) — lists of HTML snippets and
+        JS snippets to be joined into the page.
+        """
+        chart_htmls = []
+        chart_scripts = []
+        chart_counter = [0]
+
+        for panel in panels:
+            ptype = panel.get('type', '')
+            title = panel.get('title', 'Untitled')
+            targets = panel.get('targets', [])
+            unit = get_panel_unit(panel)
+            grid = panel.get('gridPos', {})
+            w = grid.get('w', 12)
+
+            if ptype == 'timeseries':
+                datasets = []
+                for tgt in targets:
+                    expr = expand_vars(tgt.get('expr', ''), var_values)
+                    legend_fmt = tgt.get('legendFormat', '')
+                    result = prom_query_range(prom_url, expr, start, end, step)
+                    if not result or result.get('status') != 'success':
+                        continue
+                    for series in result.get('data', {}).get('result', []):
+                        labels = series.get('metric', {})
+                        label = resolve_legend(legend_fmt, labels)
+                        data = [{'x': float(ts) * 1000, 'y': float(val) if val != 'NaN' else None}
+                                for ts, val in series.get('values', [])]
+                        if data:
+                            datasets.append({'label': label, 'data': data})
+
+                canvas_id = f'chart_{section_prefix}_{chart_counter[0]}'
+                chart_counter[0] += 1
+
+                if datasets:
+                    # The <ul> sibling is the target for htmlLegendPlugin; its
+                    # id is derived from the canvas id by the same convention
+                    # used in render_timeseries_chart's htmlLegend.containerId.
+                    chart_htmls.append(
+                        f'<div class="chart-card" style="grid-column: span {2 if w > 12 else 1};">'
+                        f'<canvas id="{canvas_id}"></canvas>'
+                        f'<ul id="legend_{canvas_id}" class="chart-legend"></ul>'
+                        f'</div>')
+                    chart_scripts.append(render_timeseries_chart(
+                        canvas_id, title, unit, datasets))
+                else:
+                    chart_htmls.append(
+                        f'<div class="chart-card"><div class="no-data-title">'
+                        f'{html_mod.escape(title)}</div>'
+                        f'<div class="no-data">No data</div></div>')
+
+            elif ptype == 'stat':
+                values = []
+                for tgt in targets:
+                    expr = expand_vars(tgt.get('expr', ''), var_values)
+                    legend_fmt = tgt.get('legendFormat', '')
+                    result = prom_query_instant(prom_url, expr, end)
+                    if not result or result.get('status') != 'success':
+                        continue
+                    for item in result.get('data', {}).get('result', []):
+                        val = item.get('value', [None, None])
+                        try:
+                            v = float(val[1]) if val[1] != 'NaN' else None
+                        except (TypeError, IndexError):
+                            v = None
+                        labels = item.get('metric', {})
+                        label = resolve_legend(legend_fmt, labels)
+                        values.append((label, v))
+
+                if values:
+                    cards = ''.join(render_stat_card_html(
+                        f'{title} — {lbl}' if lbl else title, v, unit)
+                        for lbl, v in values)
+                else:
+                    cards = render_stat_card_html(title, None, unit)
+                chart_htmls.append(f'<div class="stat-row">{cards}</div>')
+
+        return chart_htmls, chart_scripts
+
+    # -----------------------------------------------------------------------
+    # HTML page generation
+    # -----------------------------------------------------------------------
+    def fetch_js_libraries():
+        """Fetch Chart.js and date adapter for inlining. Falls back to CDN tags."""
+        libs = {}
+        for name, url in [('chartjs', CHART_JS_CDN), ('luxon', LUXON_CDN),
+                          ('adapter', DATE_ADAPTER_CDN),
+                          ('hammer', ZOOM_PLUGIN_CDN), ('zoom', ZOOM_PLUGIN_CHARTJS_CDN)]:
+            try:
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    libs[name] = resp.read().decode()
+            except Exception as e:
+                print(f'    Warning: could not fetch {url}: {e}', file=sys.stderr)
+                libs[name] = None
+        return libs
+
+    def generate_html(dashboard_title, sections, js_libs):
+        """Generate a complete HTML page.
+
+        sections: list of {id, title, chart_htmls, chart_scripts}
+        """
+        # Sidebar links
+        sidebar_links = ''.join(
+            f'<a href="#{s["id"]}">{html_mod.escape(s["title"])}</a>'
+            for s in sections)
+
+        # Main content
+        main_sections = []
+        all_scripts = []
+        for s in sections:
+            charts_html = '\n'.join(s['chart_htmls'])
+            main_sections.append(f'''
+            <div class="section" id="{s['id']}">
+                <h2>{html_mod.escape(s['title'])}</h2>
+                <div class="chart-grid">{charts_html}</div>
+            </div>''')
+            all_scripts.extend(s['chart_scripts'])
+
+        # JS libraries — inline if fetched, else CDN
+        if js_libs.get('chartjs'):
+            js_block = f'<script>{js_libs["chartjs"]}</script>'
+        else:
+            js_block = f'<script src="{CHART_JS_CDN}"></script>'
+        # Luxon must load before the adapter (chartjs-adapter-luxon depends on it)
+        if js_libs.get('luxon'):
+            js_block += f'\n<script>{js_libs["luxon"]}</script>'
+        else:
+            js_block += f'\n<script src="{LUXON_CDN}"></script>'
+        if js_libs.get('adapter'):
+            js_block += f'\n<script>{js_libs["adapter"]}</script>'
+        else:
+            js_block += f'\n<script src="{DATE_ADAPTER_CDN}"></script>'
+        if js_libs.get('hammer'):
+            js_block += f'\n<script>{js_libs["hammer"]}</script>'
+        else:
+            js_block += f'\n<script src="{ZOOM_PLUGIN_CDN}"></script>'
+        if js_libs.get('zoom'):
+            js_block += f'\n<script>{js_libs["zoom"]}</script>'
+        else:
+            js_block += f'\n<script src="{ZOOM_PLUGIN_CHARTJS_CDN}"></script>'
+
+        return f'''<!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{html_mod.escape(dashboard_title)}</title>
+    {js_block}
+    <style>
+    *, *::before, *::after {{ box-sizing: border-box; }}
+    body {{
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background: #f8f9fa;
+        color: #1a1a2e;
+        display: flex;
+        min-height: 100vh;
+    }}
+    .sidebar {{
+        width: 220px;
+        min-width: 220px;
+        background: #1a1a2e;
+        padding: 24px 0;
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        overflow-y: auto;
+        z-index: 10;
+    }}
+    .sidebar-title {{
+        font-size: 15px;
+        font-weight: 700;
+        color: #fff;
+        padding: 0 20px 16px;
+        border-bottom: 1px solid #2a2a4e;
+        margin-bottom: 12px;
+        letter-spacing: 0.5px;
+    }}
+    .sidebar h3 {{
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #6c6c8a;
+        margin: 0;
+        padding: 12px 20px 6px;
+    }}
+    .sidebar a {{
+        display: block;
+        padding: 8px 20px;
+        color: #a0a0b8;
+        text-decoration: none;
+        font-size: 13px;
+        transition: background 0.15s, color 0.15s;
+        border-left: 3px solid transparent;
+    }}
+    .sidebar a:hover {{
+        background: #2a2a4e;
+        color: #fff;
+        border-left-color: #4e79a7;
+    }}
+    .main {{
+        margin-left: 220px;
+        flex: 1;
+        padding: 32px 40px;
+        max-width: 1600px;
+    }}
+    .section {{
+        margin-bottom: 48px;
+    }}
+    .section h2 {{
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0 0 16px 0;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e0e0e0;
+    }}
+    .chart-grid {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }}
+    .chart-card {{
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 20px;
+        position: relative;
+    }}
+    .reset-zoom-bar {{
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: #fff;
+        border-bottom: 1px solid #e0e0e0;
+        padding: 8px 20px;
+        display: none;
+        align-items: center;
+        gap: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }}
+    .reset-zoom-bar.visible {{
+        display: flex;
+    }}
+    .reset-zoom-bar span {{
+        font-size: 13px;
+        color: #555;
+    }}
+    .reset-btn {{
+        background: #4e79a7;
+        border: none;
+        border-radius: 4px;
+        padding: 5px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #fff;
+        cursor: pointer;
+        transition: background 0.15s;
+    }}
+    .reset-btn:hover {{
+        background: #3d6490;
+    }}
+    .chart-card canvas {{
+        width: 100% !important;
+        height: 280px !important;
+    }}
+    /* HTML legend rendered by htmlLegendPlugin. Kept outside the canvas so
+       it can scroll when there are many series — the canvas-rendered Chart.js
+       legend silently truncates entries that don't fit and is unscrollable. */
+    .chart-legend {{
+        list-style: none;
+        margin: 8px 0 0 0;
+        padding: 4px 4px 4px 0;
+        max-height: 120px;
+        overflow-y: auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        font-size: 11px;
+        color: #555;
+        scrollbar-width: thin;
+    }}
+    .chart-legend li {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        line-height: 1.4;
+    }}
+    .chart-legend li.legend-hidden {{
+        opacity: 0.45;
+        text-decoration: line-through;
+    }}
+    .chart-legend .legend-swatch {{
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }}
+    .no-data-title {{
+        font-size: 14px;
+        font-weight: 600;
+        color: #1a1a2e;
+        margin-bottom: 8px;
+    }}
+    .no-data {{
+        color: #999;
+        font-size: 14px;
+        text-align: center;
+        padding: 40px 0;
+    }}
+    .stat-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 8px;
+    }}
+    .stat-card {{
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        padding: 16px 24px;
+        min-width: 140px;
+        text-align: center;
+    }}
+    .stat-title {{
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        color: #888;
+        margin-bottom: 6px;
+    }}
+    .stat-value {{
+        font-size: 28px;
+        font-weight: 700;
+        color: #1a1a2e;
+    }}
+    .stat-unit {{
+        font-size: 12px;
+        color: #999;
+        margin-top: 2px;
+    }}
+    @media (max-width: 900px) {{
+        .sidebar {{ display: none; }}
+        .main {{ margin-left: 0; padding: 16px; }}
+        .chart-grid {{ grid-template-columns: 1fr; }}
+    }}
+    </style>
+    </head>
+    <body>
+    <nav class="sidebar">
+        <div class="sidebar-title">{html_mod.escape(dashboard_title)}</div>
+        <h3>Sections</h3>
+        {sidebar_links}
+    </nav>
+    <div class="main">
+        <div class="reset-zoom-bar" id="resetBar">
+            <span>Zoomed in</span>
+            <button class="reset-btn" onclick="window.resetAllZoom()">Reset Zoom</button>
+        </div>
+        {''.join(main_sections)}
+    </div>
+    <script>
+    window.charts = {{}};
+    // Custom Chart.js plugin: render the legend as an external HTML <ul>
+    // so it can scroll when there are many series. The default canvas legend
+    // is fixed-size and silently truncates entries that don't fit. The plugin
+    // reads its target <ul> id from `options.plugins.htmlLegend.containerId`,
+    // mirrors Chart.js's default click-to-toggle behavior, and rebuilds on
+    // every chart update (including after zoom).
+    window.htmlLegendPlugin = {{
+        id: 'htmlLegend',
+        afterUpdate: function(chart) {{
+            var opts = chart.options.plugins && chart.options.plugins.htmlLegend;
+            if (!opts || !opts.containerId) return;
+            var ul = document.getElementById(opts.containerId);
+            if (!ul) return;
+            // Use Chart.js's own label generator so per-dataset visibility,
+            // colors, and labels stay in sync with whatever Chart.js would
+            // have produced for the canvas legend.
+            var labelOpts = (chart.options.plugins.legend && chart.options.plugins.legend.labels) || {{}};
+            var generator = labelOpts.generateLabels || Chart.defaults.plugins.legend.labels.generateLabels;
+            var items = generator(chart);
+            // Replace children in one pass to avoid flicker on frequent updates.
+            while (ul.firstChild) ul.removeChild(ul.firstChild);
+            items.forEach(function(item) {{
+                var li = document.createElement('li');
+                if (item.hidden) li.classList.add('legend-hidden');
+                var swatch = document.createElement('span');
+                swatch.className = 'legend-swatch';
+                swatch.style.background = item.fillStyle || item.strokeStyle || '#888';
+                if (item.strokeStyle && item.strokeStyle !== item.fillStyle) {{
+                    swatch.style.border = '1px solid ' + item.strokeStyle;
+                }}
+                var text = document.createElement('span');
+                text.textContent = item.text;
+                li.appendChild(swatch);
+                li.appendChild(text);
+                li.addEventListener('click', function() {{
+                    // Mirror Chart.js's default onClick: flip dataset visibility
+                    // and force an update so the canvas + this legend re-render.
+                    var idx = item.datasetIndex;
+                    chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+                    chart.update();
+                }});
+                ul.appendChild(li);
+            }});
+        }}
+    }};
+    Chart.register(window.htmlLegendPlugin);
+    window.syncZoom = function(sourceChart) {{
+        var xScale = sourceChart.scales.x;
+        var min = xScale.min;
+        var max = xScale.max;
+        Object.values(window.charts).forEach(function(c) {{
+            if (c !== sourceChart && c.scales.x) {{
+                c.zoomScale('x', {{min: min, max: max}}, 'none');
+            }}
+        }});
+        document.getElementById('resetBar').classList.add('visible');
+    }};
+    window.resetAllZoom = function() {{
+        Object.values(window.charts).forEach(function(c) {{
+            c.resetZoom('none');
+        }});
+        document.getElementById('resetBar').classList.remove('visible');
+    }};
+    document.addEventListener('DOMContentLoaded', function() {{
+    {chr(10).join(all_scripts)}
+    }});
+    </script>
+    </body>
+    </html>'''
+
+    # -----------------------------------------------------------------------
+    # Window splitting
+    # -----------------------------------------------------------------------
+    # Long campaigns produce HTML files that take a very long time to load
+    # in a browser. To keep individual files manageable we split a long
+    # campaign into several windows, generating one file per window per
+    # dashboard. Each window includes a buffer on either side so transitions
+    # at window boundaries remain visible without having to flip between
+    # files.
+    #
+    # When the CLI passes scenario boundaries (--scenario-boundaries), we
+    # bin-pack scenarios greedily into windows of ~target hours and never cut
+    # inside a scenario, so all test points of a scenario stay co-located in
+    # the same HTML file. Without scenario boundaries we fall back to even
+    # time-based splitting (legacy result data, single-scenario campaigns).
+    def compute_windows(start, end, window_hours, buffer_minutes, scenarios=None):
+        """Split [start, end] into windows.
+
+        Returns a list of window dicts with keys: index (1-based), total,
+        core_start, core_end (the actual time slice for this window), and
+        start, end (core extended by buffer_minutes on each side, used for
+        the Prometheus query). When the duration is at or below the
+        threshold, returns a single window covering the full range — the
+        single-window file uses the legacy unsuffixed filename.
+
+        scenarios (optional): list of {name, start, end} dicts that lets us
+        align window cuts with scenario transitions. A scenario longer than
+        the target gets its own oversized window — we honor "co-located test
+        points" over "small file" since the user opted into scenario
+        alignment by passing this list.
+        """
+        buffer_s = int(buffer_minutes * 60)
+        duration = end - start
+        threshold_s = int(window_hours * 3600)
+
+        if window_hours <= 0 or duration <= threshold_s:
+            return [{
+                'index': 1, 'total': 1,
+                'core_start': start, 'core_end': end,
+                'start': start - buffer_s, 'end': end + buffer_s,
+                'scenario_names': [s['name'] for s in (scenarios or [])],
+            }]
+
+        if scenarios:
+            return _scenario_aware_windows(start, end, scenarios, threshold_s, buffer_s)
+
+        # Legacy even-split: divide evenly so the last window isn't a tiny
+        # sliver — 7h with a 3h target -> 3 windows of ~2.33h, not 3+3+1.
+        n = math.ceil(duration / threshold_s)
+        windows = []
+        for i in range(n):
+            core_start = start + (duration * i) // n
+            # Pin the last window's end to the exact end so floor division
+            # rounding doesn't drop the tail second.
+            core_end = end if i == n - 1 else start + (duration * (i + 1)) // n
+            windows.append({
+                'index': i + 1, 'total': n,
+                'core_start': core_start, 'core_end': core_end,
+                'start': core_start - buffer_s, 'end': core_end + buffer_s,
+                'scenario_names': [],
+            })
+        return windows
+
+    # Tolerance multiplier on target_s: bins may grow up to TARGET_OVERRUN
+    # times the target before closing. Without slack, tiny inter-scenario
+    # gaps push every scenario into its own bin (e.g., five 1h scenarios with
+    # 1m gaps and a 2h target would produce 5 windows instead of 3). 1.5x
+    # keeps file sizes close to expectations while letting the packer absorb
+    # boundary noise.
+    TARGET_OVERRUN = 1.5
+
+    def _scenario_aware_windows(start, end, scenarios, target_s, buffer_s):
+        """Bin-pack scenarios into windows of roughly target_s seconds.
+
+        Algorithm: walk scenarios in chronological order, accumulate into the
+        current window. Close the current window when adding the next scenario
+        would push it past target_s * TARGET_OVERRUN — but always include at
+        least one scenario per window so an oversized scenario doesn't loop
+        forever. Cuts between adjacent windows fall at the midpoint of the
+        gap between the previous window's last scenario and the next window's
+        first; the first window starts at the campaign start, the last window
+        ends at the campaign end (so leading/trailing wall time is captured).
+        """
+        max_bin_s = int(target_s * TARGET_OVERRUN)
+        ordered = sorted(scenarios, key=lambda s: s['start'])
+        bins = []  # each entry: list of scenario dicts in that bin
+        current = []
+        cur_start = None
+        for sc in ordered:
+            if not current:
+                current = [sc]
+                cur_start = sc['start']
+                continue
+            if (sc['end'] - cur_start) > max_bin_s:
+                bins.append(current)
+                current = [sc]
+                cur_start = sc['start']
+            else:
+                current.append(sc)
+        if current:
+            bins.append(current)
+
+        n = len(bins)
+        if n == 1:
+            # Everything packed into one bin — return a single window covering
+            # the full campaign, same shape as the unsplit case above.
+            return [{
+                'index': 1, 'total': 1,
+                'core_start': start, 'core_end': end,
+                'start': start - buffer_s, 'end': end + buffer_s,
+                'scenario_names': [s['name'] for s in bins[0]],
+            }]
+
+        windows = []
+        for idx, bin_scenarios in enumerate(bins):
+            # Cut at midpoint of the inter-scenario gap so adjacent windows
+            # abut without overlap at core level (the buffer adds the visual
+            # overlap on top).
+            if idx == 0:
+                core_start = start
+            else:
+                prev_last = bins[idx - 1][-1]
+                this_first = bin_scenarios[0]
+                core_start = (prev_last['end'] + this_first['start']) // 2
+
+            if idx == n - 1:
+                core_end = end
+            else:
+                this_last = bin_scenarios[-1]
+                next_first = bins[idx + 1][0]
+                core_end = (this_last['end'] + next_first['start']) // 2
+
+            windows.append({
+                'index': idx + 1, 'total': n,
+                'core_start': core_start, 'core_end': core_end,
+                'start': core_start - buffer_s, 'end': core_end + buffer_s,
+                'scenario_names': [s['name'] for s in bin_scenarios],
+            })
+        return windows
+
+    def format_window_label(window):
+        """Human-readable label embedded in the dashboard title."""
+        s = datetime.fromtimestamp(window['core_start'], tz=timezone.utc).strftime('%H:%M')
+        e = datetime.fromtimestamp(window['core_end'], tz=timezone.utc).strftime('%H:%M')
+        names = window.get('scenario_names') or []
+        # Cap displayed scenario names so the title stays readable when a
+        # single window packs many short scenarios.
+        if names:
+            shown = names if len(names) <= 3 else names[:3] + [f'+{len(names) - 3} more']
+            scenarios_part = f" — scenarios: {', '.join(shown)}"
+        else:
+            scenarios_part = ''
+        return f"Window {window['index']} of {window['total']} ({s}–{e} UTC){scenarios_part}"
+
+    def format_window_filename_suffix(window):
+        """Suffix added to the HTML filename for split windows.
+
+        Includes a zero-padded index so files sort in chronological order
+        and the core window times so a reader can pick the right file
+        without opening it.
+        """
+        s = datetime.fromtimestamp(window['core_start'], tz=timezone.utc).strftime('%H-%M')
+        e = datetime.fromtimestamp(window['core_end'], tz=timezone.utc).strftime('%H-%M')
+        width = max(2, len(str(window['total'])))
+        idx = str(window['index']).zfill(width)
+        tot = str(window['total']).zfill(width)
+        return f"-w{idx}-of-{tot}-{s}-to-{e}"
+
+    # -----------------------------------------------------------------------
+    # Main
+    # -----------------------------------------------------------------------
+    def process_dashboard_file(filepath, prom_url, start, end, step, js_libs,
+                                window=None):
+        """Process one Grafana dashboard JSON file, return HTML string.
+
+        If window is provided (a dict from compute_windows), the dashboard
+        title is decorated with the window index and time range so that
+        readers can tell which slice of a long campaign they are viewing.
+        """
+        with open(filepath) as f:
+            dashboard = json.load(f)
+
+        title = dashboard.get('title', os.path.basename(filepath))
+        if window and window['total'] > 1:
+            title = f"{title} — {format_window_label(window)}"
+        panels = extract_panels(dashboard)
+        if not panels:
+            return None
+
+        # Discover all query-based template variables
+        template_vars = find_template_variables(dashboard)
+
+        # Find instance variable for per-instance sections
+        instance_query = None
+        for name, defn in template_vars:
+            if name == 'instance':
+                instance_query = defn
+                break
+
+        instances = []
+        if instance_query:
+            instances = resolve_label_values(prom_url, instance_query, start, end)
+            print(f'    Discovered {len(instances)} instance(s): {instances}')
+
+        sections = []
+
+        # Aggregate section — all template variables set to .* (match all)
+        all_var_values = {name: '.*' for name, _ in template_vars}
+        section_id = _safe_id('all-instances')
+        section_title = 'All Instances' if instances else title
+        chart_htmls, chart_scripts = process_panels(
+            panels, prom_url, start, end, step, all_var_values, 'all')
+        sections.append({
+            'id': section_id,
+            'title': section_title,
+            'chart_htmls': chart_htmls,
+            'chart_scripts': chart_scripts,
+        })
+
+        # Per-instance sections — pin instance, all others stay .*
+        for inst in instances:
+            inst_var_values = {name: '.*' for name, _ in template_vars}
+            inst_var_values['instance'] = inst
+            section_id = _safe_id(f'instance-{inst}')
+            chart_htmls, chart_scripts = process_panels(
+                panels, prom_url, start, end, step, inst_var_values, _safe_id(inst))
+            sections.append({
+                'id': section_id,
+                'title': inst,
+                'chart_htmls': chart_htmls,
+                'chart_scripts': chart_scripts,
+            })
+
+        html_content = generate_html(title, sections, js_libs)
+        return html_content
+
+    def main():
+        parser = argparse.ArgumentParser(
+            description='Export Grafana dashboards as static HTML from Prometheus')
+        parser.add_argument('--prometheus-url', required=True,
+                            help='Prometheus base URL (e.g. http://prometheus:9090)')
+        parser.add_argument('--start', type=int, required=True,
+                            help='Start time (Unix timestamp)')
+        parser.add_argument('--end', type=int, required=True,
+                            help='End time (Unix timestamp)')
+        parser.add_argument('--step', type=int, default=0,
+                            help='Query step in seconds (0 = auto)')
+        parser.add_argument('--dashboard-dirs', required=True,
+                            help='Comma-separated dirs containing Grafana JSON files')
+        parser.add_argument('--output-dir', required=True,
+                            help='Output directory for HTML files')
+        # Windowing: long campaigns produce huge HTML files that are slow
+        # to load. When the campaign duration exceeds --window-hours we
+        # split into multiple files, one per window per dashboard, with
+        # --window-buffer-minutes of overlap on each side so transitions
+        # at boundaries remain visible.
+        parser.add_argument('--window-hours', type=float, default=3.0,
+                            help='Split into windows when duration exceeds this; '
+                                 'set to 0 to disable splitting')
+        parser.add_argument('--window-buffer-minutes', type=float, default=10.0,
+                            help='Buffer added on each side of every window '
+                                 '(also applied to the single-window case)')
+        # Scenario-aware window splitting: the CLI passes per-scenario time
+        # ranges as JSON (list of {name, start, end} with Unix timestamps).
+        # When present, compute_windows bin-packs scenarios into windows so a
+        # scenario's test points never get split across two HTML files. When
+        # empty/absent, we fall back to the legacy even-split algorithm.
+        parser.add_argument('--scenario-boundaries', default='',
+                            help='JSON list of {name, start, end} per scenario; '
+                                 'when provided, window cuts align with scenario '
+                                 'boundaries instead of even time slices')
+        args = parser.parse_args()
+
+        scenarios = []
+        if args.scenario_boundaries:
+            try:
+                scenarios = json.loads(args.scenario_boundaries)
+            except json.JSONDecodeError as e:
+                print(f'  Warning: could not parse --scenario-boundaries '
+                      f'({e}); falling back to even time-split',
+                      file=sys.stderr)
+                scenarios = []
+
+        windows = compute_windows(
+            args.start, args.end, args.window_hours, args.window_buffer_minutes,
+            scenarios=scenarios)
+
+        if len(windows) > 1:
+            mode = 'scenario-aligned' if scenarios else 'even time-split'
+            print(f'  Splitting into {len(windows)} window(s) of '
+                  f'~{(args.end - args.start) / len(windows) / 3600:.2f}h each '
+                  f'(target {args.window_hours}h, buffer {args.window_buffer_minutes}m, '
+                  f'{mode})')
+        else:
+            print(f'  Single window: {args.end - args.start}s '
+                  f'(buffer {args.window_buffer_minutes}m)')
+
+        # Fetch JS libraries once across all windows and dashboards.
+        os.makedirs(args.output_dir, exist_ok=True)
+        js_libs = fetch_js_libraries()
+
+        # Build the list of dashboard files once so we don't re-scan dirs
+        # for every window.
+        dashboard_files = []
+        for dashboard_dir in args.dashboard_dirs.split(','):
+            dashboard_dir = dashboard_dir.strip()
+            if not os.path.isdir(dashboard_dir):
+                print(f'    Warning: {dashboard_dir} is not a directory, skipping',
+                      file=sys.stderr)
+                continue
+            for filename in sorted(os.listdir(dashboard_dir)):
+                if not filename.endswith('.json'):
+                    continue
+                dashboard_files.append((
+                    os.path.join(dashboard_dir, filename),
+                    filename.replace('.json', ''),
+                ))
+
+        total = 0
+        for window in windows:
+            duration = window['end'] - window['start']
+            if args.step > 0:
+                step = args.step
+            elif duration < 3600:
+                step = 15
+            elif duration < 14400:
+                step = 30
+            else:
+                step = 60
+
+            if len(windows) > 1:
+                print(f'  Window {window["index"]}/{window["total"]}: '
+                      f'{window["start"]} -> {window["end"]} ({duration}s, step {step}s)')
+            else:
+                print(f'  Time range: {duration}s, step: {step}s')
+
+            suffix = (format_window_filename_suffix(window)
+                      if window['total'] > 1 else '')
+
+            for filepath, basename in dashboard_files:
+                if window['total'] > 1:
+                    print(f'  Processing {basename} [window {window["index"]}/{window["total"]}]...')
+                else:
+                    print(f'  Processing {basename}...')
+
+                html_content = process_dashboard_file(
+                    filepath, args.prometheus_url, window['start'], window['end'],
+                    step, js_libs, window=window)
+                if not html_content:
+                    print(f'    Skipped (no panels)')
+                    continue
+
+                out_path = os.path.join(
+                    args.output_dir, f'dashboard-{basename}{suffix}.html')
+                with open(out_path, 'w') as f:
+                    f.write(html_content)
+                print(f'    Wrote {out_path}')
+                total += 1
+
+        print(f'  Generated {total} dashboard HTML file(s)')
+
+    if __name__ == '__main__':
+        main()

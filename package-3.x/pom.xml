@@ -1,0 +1,73 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>package-3.x</artifactId>
+	<name>Dimster Packaging (Kafka 3.x)</name>
+	<packaging>pom</packaging>
+
+	<!--
+	Per-flavor packaging module: produces dimster-${project.version}-kafka3.x-bin.tar.gz,
+	a binary tarball bundling dimster-core + dimster-kafka-3.x. The bound Kafka
+	client version is whatever dimster-kafka-3.x is built against (default 3.9.0,
+	overridable via -Dkafka.version=3.7.2 on the build command).
+
+	The assembly descriptor lives in ../package-common/src/assemble/bin.xml (shared
+	with package-4.2.0 and any future per-flavor packages). Each per-flavor module
+	differs only in (a) which dimster-kafka-X it depends on and (b) the finalName
+	suffix that lands in the tarball name.
+	-->
+
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>3.1.0</version>
+				<executions>
+					<execution>
+						<id>distro-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+						<configuration>
+							<attach>true</attach>
+							<tarLongFileMode>posix</tarLongFileMode>
+							<finalName>dimster-${project.version}-kafka3.x</finalName>
+							<descriptors>
+								<descriptor>../package-common/src/assemble/bin.xml</descriptor>
+							</descriptors>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<dependencies>
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>dimster-core</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<!--
+		The per-flavor SPI impl. dimster-spi is pulled in transitively via this
+		(and via dimster-core). kafka-clients is pulled in transitively via this
+		impl module's compile-scope dep on it. Result: the tarball's lib/ contains
+		exactly one KafkaClientFactory impl (3.x) and one kafka-clients version.
+		-->
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>dimster-kafka-3.x</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+	</dependencies>
+
+</project>

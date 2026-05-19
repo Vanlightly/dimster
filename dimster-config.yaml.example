@@ -1,0 +1,167 @@
+# Dimster configuration file
+# Copy to dimster-config.yaml and customize for your setup.
+# dimster-config.yaml is gitignored and will not be committed.
+
+kubernetes:
+  namespace: dimster
+
+# No `image:` block by default — the dimster CLI defaults the image tag to
+# its own version (env!("CARGO_PKG_VERSION")). This keeps the tag in
+# lock-step with whichever CLI binary you run.
+#
+# Every `dimster build` also produces a `<repo>:latest-kafka<kver>` alias
+# pointing at the freshest local build, so setting `tag: latest` here is a
+# valid alternative if you'd rather not pin to a specific version.
+#
+# Override only if you need a custom tag (e.g. a registry pipeline):
+# image:
+#   tag: 0.1.0       # pin to a specific version
+#   # tag: latest    # always resolve to the most recently built image
+
+# Named environments for 'dimster build|deploy|run|teardown <env>'
+#
+# Each environment defines:
+#   image       - container image name/registry (required)
+#   context     - kubectl context to use (optional, defaults to current context)
+#   namespace   - kubernetes namespace to deploy into (optional, defaults to
+#                 the global `kubernetes.namespace` above). Set this per-env
+#                 to run two dimster deploys side-by-side on the same cluster
+#                 — e.g. `local` in `dimster` and `localTwo` in `dimster2`.
+#   distro      - local k8s distribution: minikube | k3d | kind | docker-desktop
+#                 (only consulted when image is local — no registry URL.
+#                  Defaults to minikube when omitted.)
+#   kafka.*     - Kafka cluster settings
+#   workers.*   - Benchmark worker settings
+#   coordinator.* - Coordinator settings
+#
+# 'local' is reserved with tiny defaults (1 replica, 250m CPU, 512Mi memory).
+# Images with plain names (no dots) are loaded into the local cluster via the
+# loader matching `distro:` (minikube image load / k3d image import / kind load
+# docker-image / no-op for docker-desktop & orbstack).
+# Images with registry URLs (contain dots) are pushed to the registry.
+# All environments use the same deployment path — config values are always respected.
+environments:
+  # Reserved environment with tiny defaults for quick local testing.
+  # All values below are the defaults — you only need to list what you override.
+  local:
+    image: dimster
+    context: minikube
+    # namespace: dimster            # Optional per-env override; falls back to kubernetes.namespace.
+    distro: minikube                # Options: minikube | k3d | kind | docker-desktop
+    kafka:
+      version: "4.2.0"
+    #   replicas: 1          # default: 1
+    #   brokerConfig: "run/broker-configs/single-broker.yaml"  # broker config file
+    #   heap: "-Xms256M -Xmx512M"
+    #   requests:
+    #     cpu: "250m"
+    #     memory: "512Mi"
+    # workers:
+    #   replicas: 1          # default: 1
+    #   heap: "-Xms512M -Xmx1G"
+    #   requests:
+    #     cpu: "250m"
+    #     memory: "512Mi"
+    # coordinator:
+    #   heap: "-Xms512M -Xmx1G"
+    #   requests:
+    #     cpu: "250m"
+    #     memory: "512Mi"
+
+  # Example: beefier minikube setup for more realistic local benchmarks.
+  # Any environment with a plain image name (no dots) is loaded into the
+  # local cluster via the loader matching `distro:`.
+  #
+  # Tip: to run two dimster instances in parallel on the same cluster, give
+  # this env a different `namespace:` from `local` above (e.g. `dimster2`).
+  # `dimster build|deploy|run|teardown localBeefy` then operates entirely
+  # within that namespace, leaving a `dimster deploy local` running
+  # alongside it untouched.
+  # localBeefy:
+  #   image: dimster
+  #   context: minikube
+  #   # namespace: dimster2          # Side-by-side with `local` in `dimster`.
+  #   distro: minikube              # Options: minikube | k3d | kind | docker-desktop
+  #   kafka:
+  #     version: "4.2.0"
+  #     replicas: 3
+  #     heap: "-Xms1G -Xmx2G"
+  #     requests:
+  #       cpu: "2"
+  #       memory: "3Gi"
+  #     pvcSize: 10Gi
+  #   workers:
+  #     replicas: 2
+  #     heap: "-Xms1G -Xmx2G"
+  #     requests:
+  #       cpu: "1"
+  #       memory: "2Gi"
+  #   coordinator:
+  #     heap: "-Xms512M -Xmx1G"
+  #     requests:
+  #       cpu: "500m"
+  #       memory: "1Gi"
+
+  # Example: An local deployment with an external Kafka cluster.
+  # Benchmarking components run on minikube, Kafka run in Docker compose.
+  # localExt:
+  #   image: dimster
+  #   context: minikube
+  #   distro: minikube              # Options: minikube | k3d | kind | docker-desktop
+  #   system: "Apache Kafka 4.2 (Docker Compose)"
+  #   workers:
+  #     replicas: 1
+  #     heap: "-Xms256M -Xmx512M"
+  #     requests:
+  #       cpu: "250m"
+  #       memory: "768Mi"
+  #   coordinator:
+  #     heap: "-Xms256M -Xmx512M"
+  #     requests:
+  #       cpu: "250m"
+  #       memory: "768Mi"
+
+  # Example: AWS EKS deployment (see docs/eks-setup.md for full guide)
+  # aws:
+  #   image: 123456789.dkr.ecr.us-west-2.amazonaws.com/dimster
+  #   context: arn:aws:eks:us-west-2:123456789:cluster/my-cluster
+  #   hardware: "kafka=3xm6i.2xlarge, workers=4xm6i.xlarge, storage=ebs/500Gi/provisioned/3000iops/300MBs, region=us-west-2, az=us-west-2b, eks=1.31"
+  #   system: "Apache Kafka 4.2"
+  #   kafka:
+  #     # image: "apache/kafka"  # Docker image without tag (default: apache/kafka)
+  #     version: "4.2.0"
+  #     replicas: 3
+  #     pvcSize: 500Gi
+  #     pvcStorageClass: gp3
+  #     heap: "-Xms8G -Xmx8G"
+  #     requests:
+  #       cpu: "6"
+  #       memory: "24Gi"
+  #     nodeLabel: "role=kafka"
+  #     brokerConfig: "run/broker-configs/default.yaml"  # broker config file
+  #     extraConfig: "num.replica.fetchers=4"  # additional overrides (on top of brokerConfig)
+  #   workers:
+  #     replicas: 2
+  #     heap: "-Xms2G -Xmx4G"
+  #     requests:
+  #       cpu: "2"
+  #       memory: "6Gi"
+  #     nodeLabel: "role=worker"
+  #   coordinator:
+  #     heap: "-Xms512M -Xmx1G"
+  #     requests:
+  #       cpu: "500m"
+  #       memory: "2Gi"
+  #   monitoring:
+  #     nodeLabel: "role=infra"
+  #     prometheus:
+  #       requests:
+  #         cpu: "1"
+  #         memory: "4Gi"
+  #     grafana:
+  #       requests:
+  #         cpu: "1"
+  #         memory: "2Gi"
+
+results:
+  dir: ./results

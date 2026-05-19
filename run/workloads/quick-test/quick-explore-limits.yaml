@@ -1,0 +1,48 @@
+name: explore-limits-quick
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+# Quick explore for testing — fast convergence
+exploreConfig:
+  searchMaxRetries: 2      #  Retries for finding a sustainable throughput
+  minViableRate: 10  # the minimum throughput for a result
+
+  # The constraints -----------
+  e2eLatencyPercentile: 75
+  e2eLatencyThresholdMs: 50
+  publishDelayThresholdMs: 200 # how far behind schedule the publishers can get
+  sustainLeniency: 0.1         # sustain phase is 10% more lenient
+
+  # Phase 1 - RAMP - Rapidly find an unsustainable rate
+  initialRate: 500                # Start here, then double in each interval
+  rampWarmupSeconds: 10           # The number of seconds to stay at initialRate to warm-up producers/consumers
+  rampIntervalSeconds: 10  # Throughput doubling interval
+
+  # Phase 2 - Binary search - Find a candidate sustainable throughput
+  searchDurationSeconds: 90       # Seconds spent at each midpoint
+  searchIntervalSeconds: 10       # interval to check latency constraints
+  stabilizeTimeoutSeconds: 120    # how long to give consumers to clear messages at the end of a search band
+
+  # Phase 3 - Sustain - Try to sustain the discovered throughput
+  sustainDurationSeconds: 300     # The number of seconds to sustain the candidate sustainable throughput
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 1
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  messageSize: 500
+  messageDistributor: "NO_KEY"
+  useRandomizedPayloads: true
+  randomBytesRatio: 0.5
+  randomizedPayloadPoolSize: 50
+
+scenarios:
+  - name: partition-test
+    label: ["1-part", "100-part"]
+    consumersPerGroup: [1, 100]
+    partitionsPerTopic: [1, 100]

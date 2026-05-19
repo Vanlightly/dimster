@@ -1,0 +1,25 @@
+name: run-quick-consumer-scaling-test
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 50
+  messageDistributor: "NO_KEY"
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  producersPerTopic: 6
+  producerRate: 1000
+
+scenarios:
+  - name: scaling-consumers
+    label: [ "1-con", "10-con", "50-con" ]
+    consumersPerGroup: [1, 10, 50]

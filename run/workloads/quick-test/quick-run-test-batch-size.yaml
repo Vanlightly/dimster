@@ -1,0 +1,37 @@
+name: Quick run test - batch.size dimension
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0  # wait between test points for Kafka stabilization and metric scraping
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 4
+  producerRate: 50000
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+    classicConsumerConfig:
+      auto.offset.reset: earliest
+
+scenarios:
+  - name: batch-size
+    label: ["batch-8k", "batch-16k", "batch-32k", "batch-64k", "batch-128k", "batch-256k"]
+    kafkaConfig:
+      producerConfig:
+        linger.ms: 100
+        batch.size: [8192, 16384, 32768, 65536, 131072, 262144]

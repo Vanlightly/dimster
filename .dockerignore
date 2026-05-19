@@ -1,0 +1,77 @@
+# Files excluded from the Docker build context. Keeps `docker build` fast
+# and the produced image free of host-side noise. Anything not listed here
+# is sent to the Docker daemon as part of the build context, so be
+# generous about excluding outputs, ad-hoc archives, and host-only state.
+
+# Git / VCS
+.git/
+.gitignore
+.gitattributes
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+*.iws
+.factorypath
+.DS_Store
+
+# Maven build outputs (the builder stage regenerates these inside the image)
+target/
+*/target/
+log/
+org/
+
+# Rust build artifacts and binaries (not used by the Java engine image)
+cli/target/
+eks-setup-cli/target/
+/dimster
+/eks-setup
+
+# Docs (not shipped in the runtime image)
+docs/
+new-docs/
+ROADMAP.md
+open-topics.md
+CLAUDE.md
+
+# Bundles, ad-hoc archives, and result tarballs that accumulate at root
+*.bundle
+*.tar.gz
+
+# Ad-hoc log directories created during local debugging
+zz_logs/
+zzz_logs/
+zzzlogs/
+zzzzlogs/
+z5logs/
+
+# Benchmark result artifacts
+results/
+run/results/
+
+# Per-user / per-environment configs (must not leak into the image)
+dimster-config*.yaml
+eks-answers*.yaml
+
+# Python tooling
+.venv/
+__pycache__/
+charts/__pycache__/
+
+# Misc
+.java-version
+.claude/
+tasks/
+
+# Allow the host-built per-flavor dimster tarballs through for the
+# host-build path (`dimster build` without --in-docker; see
+# docker/Dockerfile.package, which COPYs the matching package-X tarball
+# based on the KAFKA_FLAVOR build-arg). Must come after the broader
+# target/ and *.tar.gz exclusions above so the negation takes effect.
+# Explicit per-flavor re-includes rather than `package-*/target/...`
+# because the legacy Docker builder treats wildcards in directory
+# components inconsistently with negation rules.
+!package-3.x/target/dimster-*-bin.tar.gz
+!package-4.1/target/dimster-*-bin.tar.gz
+!package-4.2.0/target/dimster-*-bin.tar.gz

@@ -1,0 +1,42 @@
+name: Quick pinned-partitions check
+
+# Exercises the new PINNED_PARTITIONS key distributor: each producer is statically
+# assigned a subset of partitions and round-robins through them on every send.
+#
+# The first scenario uses 10 partitions with 5 producers, so each producer gets
+# exactly 2 partitions (split evenly) and traffic spreads uniformly over all 10.
+# The second scenario uses 5 partitions with 7 producers — producers wrap modulo:
+# producers 0,5 -> [0]; 1,6 -> [1]; 2 -> [2]; 3 -> [3]; 4 -> [4]. Some partitions
+# end up shared by two producers, which is the documented fall-back behavior.
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  printTopology: true
+  cooldownMinutes: 0
+
+runConfig:
+  warmupDurationMinutes: 1
+  testDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageDistributor: "PINNED_PARTITIONS"
+  messageSize: 100
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 5
+  producersPerTopic: 5
+  producerRate: 5000
+
+scenarios:
+  - name: even-split
+    label: ["10p-5prod"]
+    partitionsPerTopic: [10]
+    producersPerTopic: [5]
+  - name: wrap-modulo
+    label: ["5p-7prod"]
+    partitionsPerTopic: [5]
+    producersPerTopic: [7]
+    consumersPerGroup: [5]

@@ -1,0 +1,745 @@
+mod commands;
+mod config;
+mod kubectl;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+use config::{DimsterConfig, Distro};
+use kubectl::Kubectl;
+
+#[derive(Parser)]
+#[command(name = "dimster", about = "Dimster - DIMensional teSTER for Apache Kafka (or compatible)")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Build the project and Docker image
+    Build {
+        /// Environment name
+        env: String,
+
+        /// Run the Maven build inside Docker instead of on the host.
+        /// Default is host-build (faster on Apple Silicon, avoids
+        /// Rosetta JIT issues under amd64 Colima). Use this when you
+        /// don't have a JDK installed or want a fully reproducible
+        /// container build.
+        #[arg(long)]
+        in_docker: bool,
+    },
+
+    /// Deploy Kafka + workers to Kubernetes
+    Deploy {
+        /// Environment name (e.g. local, aws)
+        env: String,
+
+        /// Path to log4j config YAML (overrides environment's logConfig)
+        #[arg(short = 'l', long = "log-config")]
+        log_config: Option<String>,
+
+        /// Deploy only specific components (comma-separated: kafka,workers,coordinator,monitoring)
+        #[arg(short = 'o', long = "only", value_delimiter = ',')]
+        only: Vec<String>,
+    },
+
+    /// Run a benchmark, or modify a running one with `--modify`.
+    ///
+    /// MODIFY MODE: `dimster run <env> --modify <flags>` sends a side-channel
+    /// request to the coordinator to change the in-progress test point.
+    /// Modify accepts:
+    ///   --terminate                end the current test point early
+    ///   --discard-stats            wipe accumulated stats (test-phase only)
+    ///   --run-for-minutes <N>      reset remaining test duration
+    ///   --<workloadField> <value>  override any workload field, e.g.
+    ///                              --producerRate 1000, --producersPerTopic 5
+    ///   --kafkaConfig.<path> <v>   override any Kafka config setting, e.g.
+    ///                              --kafkaConfig.producerConfig.batch.size 65536
+    /// In modify mode -k and -w are ignored.
+    Run {
+        /// Environment name (e.g. local, aws)
+        env: String,
+
+        /// Path to Kafka config YAML (optional if config is embedded in workload)
+        #[arg(short = 'k', long = "kafka-config")]
+        kafka_config: Option<String>,
+
+        /// Path to workload YAML (can be specified multiple times).
+        #[arg(short = 'w', long = "workload")]
+        workloads: Vec<String>,
+    },
+
+    /// Explore performance limits of the Kafka cluster
+    Explore {
+        /// Environment name (e.g. local, aws)
+        env: String,
+
+        /// Path to Kafka config YAML (optional if config is embedded in workload)
+        #[arg(short = 'k', long = "kafka-config")]
+        kafka_config: Option<String>,
+
+        /// Path to explore workload YAML
+        #[arg(short = 'w', long = "workload")]
+        workload: String,
+    },
+
+    /// Run a correctness check
+    Correctness {
+        /// Environment name (e.g. local, aws)
+        env: String,
+
+        /// Path to Kafka config YAML (optional if config is embedded in workload)
+        #[arg(short = 'k', long = "kafka-config")]
+        kafka_config: Option<String>,
+
+        /// Path to correctness workload YAML
+        #[arg(short = 'w', long = "workload")]
+        workload: String,
+    },
+
+    /// Measure backlog drain time
+    DrainBacklog {
+        /// Environment name (e.g. local, aws)
+        env: String,
+
+        /// Path to Kafka config YAML (optional if config is embedded in workload)
+        #[arg(short = 'k', long = "kafka-config")]
+        kafka_config: Option<String>,
+
+        /// Path to drain-backlog workload YAML
+        #[arg(short = 'w', long = "workload")]
+        workload: String,
+    },
+
+    /// Resume a benchmark from the last checkpoint
+    Resume {
+        /// Environment name
+        env: String,
+    },
+
+    /// Reattach to a running benchmark
+    Reattach {
+        /// Environment name
+        env: String,
+    },
+
+    /// Show theoretical resource requirements for workloads
+    Resources {
+        /// Number of brokers in the cluster
+        #[arg(short = 'b', long = "brokers", required = true)]
+        broker_count: u32,
+
+        /// Path to workload YAML (can be specified multiple times)
+        #[arg(short = 'w', long = "workload", required = true)]
+        workloads: Vec<String>,
+
+        /// Path to Kafka config YAML (optional)
+        #[arg(short = 'k', long = "kafka-config")]
+        kafka_config: Option<String>,
+    },
+
+    /// Gracefully stop a running benchmark
+    Stop {
+        /// Environment name
+        env: String,
+    },
+
+    /// Copy results from K8s to local machine
+    Results {
+        /// Environment name
+        env: String,
+
+        /// Output directory (default: from config)
+        output_dir: Option<String>,
+
+        /// Download result JSON files from PVC
+        #[arg(long)]
+        data: bool,
+
+        /// Download coordinator/worker/Kafka logs
+        #[arg(long)]
+        logs: bool,
+
+        /// Export Grafana dashboard snapshots as HTML
+        #[arg(long)]
+        dashboards: bool,
+
+        /// Generate charts from result JSON
+        #[arg(long)]
+        charts: bool,
+
+        /// Capture the full coordinator/worker log files (and any rolled
+        /// .gz backups) without the per-run time filter. Use this when
+        /// debugging post-run state — for example, a worker whose Kafka
+        /// client kept logging after the run's recorded end timestamp.
+        /// No effect on Kafka pod logs (always captured raw) or when
+        /// `--logs` collection is not happening.
+        #[arg(long)]
+        full: bool,
+    },
+
+    /// Generate CSV from local JSON result files
+    Csv {
+        /// Path to JSON result file or directory
+        path: String,
+
+        /// Output file (default: a .csv next to each .json)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Remove resources from Kubernetes
+    Teardown {
+        /// Environment name
+        env: String,
+    },
+
+    /// Generate charts from results
+    Chart {
+        /// Results directory (default: from config)
+        results_dir: Option<String>,
+    },
+
+    /// Compare run result files side-by-side (2-4 files)
+    Compare {
+        /// Labeled result files: LABEL=FILE (2-4 required)
+        #[arg(num_args = 2..=4, value_name = "LABEL=FILE")]
+        files: Vec<String>,
+
+        /// Output directory (default: directory of first file)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Pivot a single result file: scenarios become the comparison axis,
+    /// each array index (test label) becomes its own section
+    Pivot {
+        /// Path to a single run result JSON file
+        file: String,
+
+        /// Output directory (default: directory of input file)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// CSV of 0-indexed scenario positions to include (e.g. "0,3,5").
+        /// Order is preserved, so this also reorders the legend.
+        #[arg(short, long)]
+        scenarios: Option<String>,
+    },
+
+    /// Port-forward Grafana + Prometheus
+    Dashboard {
+        /// Environment name
+        env: String,
+
+        /// Grafana local port (default: 3000)
+        #[arg(default_value = "3000")]
+        grafana_port: u16,
+
+        /// Prometheus local port (default: 9090)
+        #[arg(default_value = "9090")]
+        prometheus_port: u16,
+    },
+
+    /// View logs from worker, coordinator, or kafka pods
+    Logs {
+        /// Environment name
+        env: String,
+
+        /// Component to view logs for (worker, coordinator, kafka)
+        #[arg(default_value = "worker")]
+        component: String,
+
+        /// Follow log output
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Show logs from previous (crashed) container
+        #[arg(short, long)]
+        previous: bool,
+
+        /// Number of lines to show from end of logs
+        #[arg(long)]
+        tail: Option<u32>,
+    },
+
+    /// Download Kafka server log files from broker pods
+    DownloadKafkaLogs {
+        /// Environment name
+        env: String,
+
+        /// Output directory
+        #[arg(short, long, default_value = ".")]
+        output: String,
+    },
+
+    /// Check health of all worker pods
+    Health {
+        /// Environment name
+        env: String,
+    },
+
+    /// Inspect Kafka topics, consumer groups, and share groups
+    Inspect {
+        /// Environment name
+        env: String,
+
+        /// Restrict output to dimster-created topics (`dimster*`) and groups
+        /// (`dimster-grp-*`). Internal/offset topics like `__consumer_offsets`
+        /// are excluded under this filter.
+        #[arg(long)]
+        dimster_only: bool,
+
+        /// Emit only the TOPICS section. Combinable with `--group-offsets`
+        /// and/or `--group-members` to add specific group subsections back in.
+        #[arg(long)]
+        topics: bool,
+
+        /// Within group sections, emit only the OFFSETS subsection (per-group
+        /// header is still shown). Combinable with `--group-members`.
+        #[arg(long)]
+        group_offsets: bool,
+
+        /// Within group sections, emit only the MEMBERS subsection. Combinable
+        /// with `--group-offsets`.
+        #[arg(long)]
+        group_members: bool,
+
+        /// Emit only the METADATA QUORUM section (KRaft leader/voters/observers
+        /// from describeMetadataQuorum). Fails gracefully on ZooKeeper-mode
+        /// clusters with a single error line.
+        #[arg(long)]
+        metadata_quorum: bool,
+    },
+
+    /// Run Kafka CLI tools in a broker pod
+    Kafka {
+        /// Environment name
+        env: String,
+
+        /// Broker number (default: 0)
+        #[arg(default_value = "0")]
+        broker_id: u32,
+
+        /// Command to run (after --)
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+
+    /// Initialize dimster-config.yaml with a starter set of environments:
+    /// one active `local` env (minimal — no kafka/workers/coordinator
+    /// sections, so deploy uses tiny defaults) plus four commented examples
+    /// (minikube/remote × full/external) covering every
+    /// supported shape. Idempotent: env names already present in the file
+    /// are skipped. Creates dimster-config.yaml (with a commented guidance
+    /// header) if it does not exist.
+    Init {
+        /// Local Kubernetes distribution to pre-fill the active `local`
+        /// env with (its `context:` and `distro:` fields). Defaults to
+        /// minikube. The four commented exampleLocal* templates always
+        /// stay literal "minikube" — they're illustrative.
+        #[arg(long, value_enum)]
+        local_k8s_distro: Option<Distro>,
+    },
+}
+
+fn main() {
+    // Intercept `dimster run <env> --modify ...` BEFORE clap runs. The
+    // modify path accepts arbitrary `--<workloadField> <value>` and
+    // `--kafkaConfig.<dotted.path> <value>` flags that clap-derive can't
+    // express statically. If the intercept handles it, we exit; otherwise
+    // we fall through to normal clap parsing.
+    let raw_args: Vec<String> = std::env::args().collect();
+    if let Some(result) = commands::run::try_handle_modify(&raw_args) {
+        if let Err(e) = result {
+            eprintln!("ERROR: {:#}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let cli = Cli::parse();
+
+    if let Err(e) = run_command(cli) {
+        eprintln!("ERROR: {:#}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run_command(cli: Cli) -> Result<()> {
+    let script_dir = find_script_dir()?;
+    let config_path = std::env::var("DIMSTER_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| script_dir.join("dimster-config.yaml"));
+    let config = DimsterConfig::load(&config_path)?;
+    let k8s_dir = script_dir.join("run/deploy/kubernetes");
+
+    // Global stop signal for Ctrl+C. First press sets the flag for graceful
+    // shutdown; second press force-exits for when graceful shutdown hangs.
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+    ctrlc::set_handler(move || {
+        if stop_clone.load(Ordering::Relaxed) {
+            eprintln!("\nForce exit.");
+            std::process::exit(1);
+        }
+        eprintln!("\nInterrupted. Press Ctrl+C again to force exit.");
+        stop_clone.store(true, Ordering::Relaxed);
+    })?;
+
+    match cli.command {
+        Commands::Build { env, in_docker } => {
+            config.get_env(&env)?;
+            commands::build::run(&config, vec![env], &script_dir, in_docker)?;
+        }
+
+        Commands::Deploy { env, log_config, only } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::deploy::run(&kubectl, &config, &env, &k8s_dir, log_config.as_deref(), &only)?;
+        }
+
+        Commands::Run {
+            env,
+            kafka_config,
+            workloads,
+        } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            // The --modify branch is intercepted BEFORE clap runs (see
+            // try_handle_modify in main()). If we reach this Run dispatch,
+            // it's a normal benchmark start.
+            if workloads.is_empty() {
+                anyhow::bail!(
+                    "at least one --workload (-w) is required for a run \
+                     (only --modify can omit it)"
+                );
+            }
+            let env_config = config.get_env(&env)?;
+            // Worker assignment lives under workers.assignment in the env
+            // config — pull each field out so the run request can carry
+            // them through to the coordinator.
+            let assignment = env_config.workers.as_ref().and_then(|w| w.assignment.as_ref());
+            let run_args = commands::run::RunArgs {
+                mode: "run".to_string(),
+                kafka_config,
+                workloads,
+                worker_assignment: assignment.and_then(|a| a.mode.clone()),
+                worker_ratio: assignment.and_then(|a| a.ratio.clone()),
+                producer_workers: assignment.and_then(|a| a.producers),
+                consumer_workers: assignment.and_then(|a| a.consumers),
+                system: env_config.system.clone(),
+                environment: env.clone(),
+                hardware: env_config.hardware.clone(),
+                connection: env_config.connection.clone(),
+                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
+                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                tls_config: env_config.tls_config().cloned(),
+            };
+            let output_dir = config.results.dir.clone();
+            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+        }
+
+        Commands::Explore {
+            env,
+            kafka_config,
+            workload,
+        } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            if !std::path::Path::new(&workload).exists() {
+                anyhow::bail!(
+                    "Explore workload not found: {}",
+                    workload
+                );
+            }
+            let workload_path = workload;
+            let env_config = config.get_env(&env)?;
+            let run_args = commands::run::RunArgs {
+                mode: "explore".to_string(),
+                kafka_config,
+                workloads: vec![workload_path],
+                worker_assignment: None,
+                worker_ratio: None,
+                producer_workers: None,
+                consumer_workers: None,
+                system: env_config.system.clone(),
+                environment: env.clone(),
+                hardware: env_config.hardware.clone(),
+                connection: env_config.connection.clone(),
+                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
+                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                tls_config: env_config.tls_config().cloned(),
+            };
+            let output_dir = config.results.dir.clone();
+            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+        }
+
+        Commands::Correctness {
+            env,
+            kafka_config,
+            workload,
+        } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            if !std::path::Path::new(&workload).exists() {
+                anyhow::bail!(
+                    "Correctness workload not found: {}",
+                    workload
+                );
+            }
+            let workload_path = workload;
+            let env_config = config.get_env(&env)?;
+            let run_args = commands::run::RunArgs {
+                mode: "correctness".to_string(),
+                kafka_config,
+                workloads: vec![workload_path],
+                worker_assignment: None,
+                worker_ratio: None,
+                producer_workers: None,
+                consumer_workers: None,
+                system: env_config.system.clone(),
+                environment: env.clone(),
+                hardware: env_config.hardware.clone(),
+                connection: env_config.connection.clone(),
+                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
+                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                tls_config: env_config.tls_config().cloned(),
+            };
+            let output_dir = config.results.dir.clone();
+            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+        }
+
+        Commands::DrainBacklog {
+            env,
+            kafka_config,
+            workload,
+        } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            if !std::path::Path::new(&workload).exists() {
+                anyhow::bail!(
+                    "Drain-backlog workload not found: {}",
+                    workload
+                );
+            }
+            let workload_path = workload;
+            let env_config = config.get_env(&env)?;
+            let run_args = commands::run::RunArgs {
+                mode: "drain-backlog".to_string(),
+                kafka_config,
+                workloads: vec![workload_path],
+                worker_assignment: None,
+                worker_ratio: None,
+                producer_workers: None,
+                consumer_workers: None,
+                system: env_config.system.clone(),
+                environment: env.clone(),
+                hardware: env_config.hardware.clone(),
+                connection: env_config.connection.clone(),
+                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
+                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                tls_config: env_config.tls_config().cloned(),
+            };
+            let output_dir = config.results.dir.clone();
+            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+        }
+
+        Commands::Resume { env } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            let output_dir = config.results.dir.clone();
+            commands::resume::run(&kubectl, &output_dir, &script_dir, stop, &env)?;
+        }
+
+        Commands::Reattach { env } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            let output_dir = config.results.dir.clone();
+            commands::reattach::run(&kubectl, &output_dir, &script_dir, stop, &env)?;
+        }
+
+        Commands::Resources { broker_count, workloads, kafka_config } => {
+            commands::resources::run(broker_count, &workloads, kafka_config.as_deref())?;
+        }
+
+        Commands::Stop { env } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::stop::run(&kubectl, &stop)?;
+        }
+
+        Commands::Results { env, output_dir, data, logs, dashboards, charts, full } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            let dir = output_dir.unwrap_or_else(|| config.results.dir.clone());
+            commands::results::run(&kubectl, &dir, &script_dir, data, logs, dashboards, charts, full, &stop)?;
+        }
+
+        Commands::Csv { path, output } => {
+            commands::csv::run(&path, output.as_deref())?;
+        }
+
+        Commands::Teardown { env } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::teardown::run(&kubectl, &env, &k8s_dir)?;
+        }
+
+        Commands::Chart { results_dir } => {
+            let dir = results_dir.unwrap_or_else(|| config.results.dir.clone());
+            commands::chart::run(&dir, &script_dir)?;
+        }
+
+        Commands::Compare { files, output } => {
+            commands::compare::run(&files, output.as_deref(), &script_dir)?;
+        }
+
+        Commands::Pivot {
+            file,
+            output,
+            scenarios,
+        } => {
+            commands::pivot::run(
+                &file,
+                output.as_deref(),
+                scenarios.as_deref(),
+                &script_dir,
+            )?;
+        }
+
+        Commands::Dashboard {
+            env,
+            grafana_port,
+            prometheus_port,
+        } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::dashboard::run(&kubectl, grafana_port, prometheus_port, stop)?;
+        }
+
+        Commands::Logs { env, component, follow, previous, tail } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::logs::run(&kubectl, &component, follow, previous, tail)?;
+        }
+
+        Commands::DownloadKafkaLogs { env, output } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::download_kafka_logs::run(&kubectl, &output)?;
+        }
+
+        Commands::Health { env } => {
+            let kubectl = require_kubectl(&config, &env)?;
+            commands::health::run(&kubectl)?;
+        }
+
+        Commands::Inspect {
+            env,
+            dimster_only,
+            topics,
+            group_offsets,
+            group_members,
+            metadata_quorum,
+        } => {
+            let env_config = config.get_env(&env)?;
+            let kubectl = require_kubectl(&config, &env)?;
+            let filters = commands::inspect::InspectFilters {
+                dimster_only,
+                topics,
+                group_offsets,
+                group_members,
+                metadata_quorum,
+            };
+            if env_config.is_external() {
+                // External mode: no kafka-0 pod exists, so we route through a
+                // dedicated long-lived dimster-inspect pod that talks to the
+                // remote cluster via AdminClient. See inspect::run_external.
+                let conn = env_config.connection.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "external mode requires a 'connection:' section in the env config"
+                    )
+                })?;
+                commands::inspect::run_external(&kubectl, conn, &filters)?;
+            } else {
+                commands::inspect::run(&kubectl, &filters)?;
+            }
+        }
+
+        Commands::Kafka {
+            env,
+            broker_id,
+            command,
+        } => {
+            let env_config = config.get_env(&env)?;
+            if env_config.is_external() {
+                anyhow::bail!("The 'kafka' command is not available in external deploy mode (no Kafka pods deployed).");
+            }
+            let kubectl = require_kubectl(&config, &env)?;
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(command)
+            };
+            commands::kafka::run(&kubectl, broker_id, cmd)?;
+        }
+
+        Commands::Init { local_k8s_distro } => {
+            commands::init::run(
+                &config_path,
+                local_k8s_distro.unwrap_or(Distro::Minikube),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Create Kubectl after validating the environment exists in config.
+fn require_kubectl(config: &DimsterConfig, env: &str) -> Result<Kubectl> {
+    config.get_env(env)?;
+    Ok(make_kubectl(config, env))
+}
+
+fn make_kubectl(config: &DimsterConfig, env: &str) -> Kubectl {
+    let context = config.kubectl_context(env);
+    let ns = config.kubectl_namespace(env);
+
+    if let Some(ref ctx) = context {
+        println!("    Using kubectl context: {}", ctx);
+        // SAFETY: We are single-threaded at this point and the env var is only
+        // read by child processes we spawn later.
+        unsafe { std::env::set_var("DIMSTER_K8S_CONTEXT", ctx) };
+    }
+
+    Kubectl::new(context, ns)
+}
+
+/// Find the project root directory (where pom.xml lives).
+fn find_script_dir() -> Result<PathBuf> {
+    // Try the directory of the current executable first
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let mut dir = parent.to_path_buf();
+            for _ in 0..5 {
+                if dir.join("pom.xml").exists() {
+                    return Ok(dir);
+                }
+                if let Some(p) = dir.parent() {
+                    dir = p.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fall back to current directory, walking up
+    let mut dir = std::env::current_dir()?;
+    for _ in 0..5 {
+        if dir.join("pom.xml").exists() {
+            return Ok(dir);
+        }
+        if let Some(p) = dir.parent() {
+            dir = p.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    Ok(std::env::current_dir()?)
+}

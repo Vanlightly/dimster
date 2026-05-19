@@ -1,0 +1,46 @@
+# Intellij
+.idea/
+*.iml
+*.iws
+.factorypath
+
+# Mac
+.DS_Store
+
+# Maven
+log/
+target/
+
+# Python
+.venv/
+__pycache__
+
+# Dimster config (contains environment-specific settings)
+dimster-config*.yaml
+
+# Ignore workload files
+run/**/ignore*.yaml
+
+# Benchmark results
+/results/
+output/
+
+# Rust CLI build artifacts
+cli/target/
+eks-setup-cli/target/
+/dimster
+/eks-setup
+cli/dimster
+eks-setup-cli/eks-setup
+
+# Local git bundles (used for backup / out-of-band sharing)
+*.bundle
+
+# Build artifacts (extracted classes)
+org/
+
+# Environment-specific
+.java-version
+
+# Internal task tracking
+tasks/

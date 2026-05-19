@@ -1,0 +1,2279 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: dimster
+data:
+  clients.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Publish Latency (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_publish_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_publish_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_publish_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_publish_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "End-to-End Latency (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_e2e_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_e2e_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_e2e_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_e2e_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Publish Delay (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_publish_delay_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_publish_delay_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_publish_delay_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_publish_delay_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "E2E Delivery Latency (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_e2e_delivery_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_e2e_delivery_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_e2e_delivery_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_e2e_delivery_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Schedule Latency (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_schedule_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_schedule_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_schedule_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_schedule_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Messages Sent (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_messages_sent_count[1m]))", "legendFormat": "total msg/s" },
+            { "expr": "rate(client_messages_sent_count[1m])", "legendFormat": "{{host}}" }
+          ]
+        },
+        {
+          "title": "Messages Received (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_messages_received_count[1m]))", "legendFormat": "total msg/s" },
+            { "expr": "rate(client_messages_received_count[1m])", "legendFormat": "{{host}}" }
+          ]
+        },
+        {
+          "title": "Bytes Sent (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_bytes_sent_count[1m]))", "legendFormat": "total" },
+            { "expr": "rate(client_bytes_sent_count[1m])", "legendFormat": "{{host}}" }
+          ]
+        },
+        {
+          "title": "Errors",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_producer_errors_count[1m]))", "legendFormat": "producer errors" },
+            { "expr": "sum(rate(client_producer_timeout_errors_count[1m]))", "legendFormat": "timeout errors" },
+            { "expr": "sum(rate(client_consumer_errors_count[1m]))", "legendFormat": "consumer errors" }
+          ]
+        },
+        {
+          "title": "Total Messages (cumulative)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(client_messages_sent_count)", "legendFormat": "sent" },
+            { "expr": "sum(client_messages_received_count)", "legendFormat": "received" }
+          ]
+        },
+        {
+          "title": "Client Counts",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(client_producer_count)", "legendFormat": "producers" },
+            { "expr": "sum(client_consumer_count)", "legendFormat": "consumers" }
+          ]
+        },
+        {
+          "title": "Publish Latency by Worker (p99, ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "client_publish_latency{percentile=\"99\"}", "legendFormat": "{{host}}" }
+          ]
+        },
+        {
+          "title": "E2E Latency by Worker (p99, ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "client_e2e_latency{percentile=\"99\"}", "legendFormat": "{{host}}" }
+          ]
+        },
+
+        {
+          "title": "Consumer Details",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+          "collapsed": false
+        },
+        {
+          "title": "Poll Batch Size (records)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_poll_batch_size{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_poll_batch_size{percentile=\"75\"})", "legendFormat": "p75" },
+            { "expr": "avg(client_poll_batch_size{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "max(client_poll_batch_size{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Poll Rate (/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_consumer_polls_count[1m]))", "legendFormat": "total polls/s" },
+            { "expr": "rate(client_consumer_polls_count[1m])", "legendFormat": "{{host}}" }
+          ]
+        },
+        {
+          "title": "Commit Sync Latency (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_commit_sync_latency{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_commit_sync_latency{percentile=\"75\"})", "legendFormat": "p75" },
+            { "expr": "avg(client_commit_sync_latency{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_commit_sync_latency{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_commit_sync_latency{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Commit Rate (/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_consumer_commit_sync_count[1m]))", "legendFormat": "sync" },
+            { "expr": "sum(rate(client_consumer_commit_async_count[1m]))", "legendFormat": "async" }
+          ]
+        },
+        {
+          "title": "Processing Time (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 73 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(client_processing_time{percentile=\"50\"})", "legendFormat": "p50" },
+            { "expr": "avg(client_processing_time{percentile=\"75\"})", "legendFormat": "p75" },
+            { "expr": "avg(client_processing_time{percentile=\"99\"})", "legendFormat": "p99" },
+            { "expr": "avg(client_processing_time{percentile=\"99.9\"})", "legendFormat": "p99.9" },
+            { "expr": "max(client_processing_time{percentile=\"100\"})", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Consumer Recreations (cumulative)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 73 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" },
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(client_consumer_recreations_count)", "legendFormat": "recreations" }
+          ]
+        },
+
+        {
+          "title": "Per-Partition Details",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 81 },
+          "collapsed": false
+        },
+        {
+          "title": "Messages Received by Partition (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 82 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (rate(client_pp_messages_received_count[1m]))", "legendFormat": "{{partition}}" }
+          ]
+        },
+        {
+          "title": "Messages Sent by Partition (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 90 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (rate(client_pp_messages_sent_count[1m]))", "legendFormat": "{{partition}}" }
+          ]
+        },
+        {
+          "title": "E2E Latency by Partition (p99, ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 98 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (client_pp_e2e_latency{percentile=\"99\"})", "legendFormat": "{{partition}}" }
+          ]
+        },
+        {
+          "title": "Publish Latency by Partition (p99, ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 98 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (client_pp_publish_latency{percentile=\"99\"})", "legendFormat": "{{partition}}" }
+          ]
+        },
+        {
+          "title": "Total Messages Sent by Partition (cumulative)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 106 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (client_pp_messages_sent_count)", "legendFormat": "{{partition}}" }
+          ]
+        },
+        {
+          "title": "Total Messages Received by Partition (cumulative)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 106 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (partition) (client_pp_messages_received_count)", "legendFormat": "{{partition}}" }
+          ]
+        },
+
+        {
+          "title": "Per-Consumer Details",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 114 },
+          "collapsed": false
+        },
+        {
+          "title": "Messages Received by Consumer (rate/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 115 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum by (consumer) (rate(client_pc_messages_received_count[1m]))", "legendFormat": "{{consumer}}" }
+          ]
+        },
+
+        {
+          "title": "Share Group Lag",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 123 },
+          "collapsed": false
+        },
+        {
+          "title": "Share Group Lag (total by group)",
+          "description": "Total lag across all partitions per share group, as reported by the broker",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 124 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "max by (group) (client_share_group_lag_total{})", "legendFormat": "{{group}}" }
+          ]
+        },
+        {
+          "title": "Share Group Lag (by partition)",
+          "description": "Per-partition share group lag",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 124 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "max by (topic, partition) (client_share_group_lag{})", "legendFormat": "{{topic}}-{{partition}}" }
+          ]
+        },
+
+        {
+          "title": "Kafka Producer Client Metrics",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 132 },
+          "collapsed": false
+        },
+        {
+          "title": "Record Queue Time (ms)",
+          "description": "Time records spend in the producer accumulator before being sent — reveals backpressure",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 133 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_producer_metrics_record_queue_time_avg)", "legendFormat": "avg" },
+            { "expr": "max(kafka_producer_metrics_record_queue_time_max)", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Request Latency (ms)",
+          "description": "Round-trip time of produce requests to the broker",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 133 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_producer_metrics_request_latency_avg)", "legendFormat": "avg" },
+            { "expr": "max(kafka_producer_metrics_request_latency_max)", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Throttle Time (ms)",
+          "description": "Time the broker throttled the producer due to quota enforcement",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 141 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_producer_metrics_produce_throttle_time_avg)", "legendFormat": "avg" }
+          ]
+        },
+        {
+          "title": "Batching",
+          "description": "Producer batch sizing — useful for tuning batch.size and linger.ms",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 141 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_producer_metrics_batch_size_avg)", "legendFormat": "batch size (bytes)" },
+            { "expr": "avg(kafka_producer_metrics_records_per_request_avg)", "legendFormat": "records/request" }
+          ]
+        },
+        {
+          "title": "Buffer Pool (bytes)",
+          "description": "Producer buffer pool pressure — low available bytes indicates the producer can't keep up",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 149 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_producer_metrics_buffer_available_bytes)", "legendFormat": "available" },
+            { "expr": "avg(kafka_producer_metrics_buffer_total_bytes)", "legendFormat": "total" }
+          ]
+        },
+        {
+          "title": "Send & Retry Rates (/s)",
+          "description": "Producer record send and retry throughput",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 149 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_producer_metrics_record_send_rate)", "legendFormat": "records sent/s" },
+            { "expr": "sum(kafka_producer_metrics_record_retry_rate)", "legendFormat": "retries/s" }
+          ]
+        },
+
+        {
+          "title": "Kafka Consumer Client Metrics",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 157 },
+          "collapsed": false
+        },
+        {
+          "title": "Fetch Latency (ms)",
+          "description": "Round-trip time of fetch requests to the broker",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 158 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_consumer_fetch_manager_metrics_fetch_latency_avg or kafka_consumer_share_fetch_manager_metrics_fetch_latency_avg)", "legendFormat": "avg" },
+            { "expr": "max(kafka_consumer_fetch_manager_metrics_fetch_latency_max or kafka_consumer_share_fetch_manager_metrics_fetch_latency_max)", "legendFormat": "max" }
+          ]
+        },
+        {
+          "title": "Fetch Throttle Time (ms)",
+          "description": "Time the broker throttled fetch requests due to quota enforcement",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 158 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_consumer_fetch_manager_metrics_fetch_throttle_time_avg or kafka_consumer_share_fetch_manager_metrics_fetch_throttle_time_avg)", "legendFormat": "avg" }
+          ]
+        },
+        {
+          "title": "Fetch & Consumption Rates (/s)",
+          "description": "Consumer fetch request rate, record consumption rate, and records per fetch",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 166 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_fetch_manager_metrics_fetch_rate or kafka_consumer_share_fetch_manager_metrics_fetch_rate)", "legendFormat": "fetch req/s" },
+            { "expr": "sum(kafka_consumer_fetch_manager_metrics_records_consumed_rate or kafka_consumer_share_fetch_manager_metrics_records_consumed_rate)", "legendFormat": "records/s" },
+            { "expr": "avg(kafka_consumer_fetch_manager_metrics_records_per_request_avg or kafka_consumer_share_fetch_manager_metrics_records_per_request_avg)", "legendFormat": "records/request" }
+          ]
+        },
+        {
+          "title": "Fetch Size (bytes)",
+          "description": "Average fetch response size — useful for tuning fetch.max.bytes",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 166 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_consumer_fetch_manager_metrics_fetch_size_avg or kafka_consumer_share_fetch_manager_metrics_fetch_size_avg)", "legendFormat": "avg" }
+          ]
+        },
+        {
+          "title": "Network Ingress (Bps)",
+          "description": "Consumer incoming byte rate from the network layer (shared by classic and share consumers)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 174 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_metrics_incoming_byte_rate)", "legendFormat": "total" },
+            { "expr": "kafka_consumer_metrics_incoming_byte_rate", "legendFormat": "{{client}}" }
+          ]
+        },
+        {
+          "title": "Consumer Lag (records)",
+          "description": "Max consumer lag across all assigned partitions (classic consumer groups only — share groups use broker-reported lag)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 174 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "max(kafka_consumer_fetch_manager_metrics_records_lag_max)", "legendFormat": "max lag" }
+          ]
+        },
+        {
+          "title": "Connection Count",
+          "description": "Number of active connections to brokers — drops indicate disconnects, growth may signal connection leaks",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 182 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_metrics_connection_count)", "legendFormat": "connections" }
+          ]
+        },
+        {
+          "title": "Connection Churn (/s)",
+          "description": "Rate of connections created and closed — spikes indicate reconnect storms or broker instability",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 182 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_metrics_connection_creation_rate)", "legendFormat": "created/s" },
+            { "expr": "sum(kafka_consumer_metrics_connection_close_rate)", "legendFormat": "closed/s" }
+          ]
+        },
+        {
+          "title": "I/O Ratio",
+          "description": "Fraction of time spent performing I/O vs waiting — low io_ratio with high io_wait_ratio means consumers are idle",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 190 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg(kafka_consumer_metrics_io_ratio)", "legendFormat": "io ratio" },
+            { "expr": "avg(kafka_consumer_metrics_io_wait_ratio)", "legendFormat": "io wait ratio" }
+          ]
+        },
+        {
+          "title": "Request / Response Rate (/s)",
+          "description": "Overall request and response throughput at the network layer",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 190 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_metrics_request_rate)", "legendFormat": "requests/s" },
+            { "expr": "sum(kafka_consumer_metrics_response_rate)", "legendFormat": "responses/s" }
+          ]
+        },
+        {
+          "title": "Per-Broker Request Latency (ms)",
+          "description": "Request latency per broker node — identifies slow brokers or uneven load",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 198 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "avg by (node_id) (kafka_consumer_node_metrics_request_latency_avg)", "legendFormat": "avg node-{{node_id}}" },
+            { "expr": "max by (node_id) (kafka_consumer_node_metrics_request_latency_max)", "legendFormat": "max node-{{node_id}}" }
+          ]
+        },
+
+        {
+          "title": "Kafka Share Group Metrics",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 206 },
+          "collapsed": false
+        },
+        {
+          "title": "Acknowledgement Send Rate (/s)",
+          "description": "Rate of share group acknowledgements sent to brokers — tracks consumer processing throughput",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 207 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_share_fetch_manager_metrics_acknowledgements_send_rate)", "legendFormat": "ack send/s" }
+          ]
+        },
+        {
+          "title": "Acknowledgement Error Rate (/s)",
+          "description": "Rate of failed share group acknowledgements — non-zero values indicate ack processing failures",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 207 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_share_fetch_manager_metrics_acknowledgements_error_rate)", "legendFormat": "ack errors/s" }
+          ]
+        },
+        {
+          "title": "Last Heartbeat (seconds ago)",
+          "description": "Time since last successful heartbeat — growth indicates consumers at risk of being fenced",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 215 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "max(kafka_consumer_share_coordinator_metrics_last_heartbeat_seconds_ago)", "legendFormat": "max" },
+            { "expr": "avg(kafka_consumer_share_coordinator_metrics_last_heartbeat_seconds_ago)", "legendFormat": "avg" }
+          ]
+        },
+        {
+          "title": "Rebalance Rate & Total",
+          "description": "Share group rebalance frequency — frequent rebalances severely impact drain throughput",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 215 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "max(kafka_consumer_share_coordinator_metrics_rebalance_rate_per_hour)", "legendFormat": "rebalances/hour" },
+            { "expr": "sum(kafka_consumer_share_coordinator_metrics_rebalance_total)", "legendFormat": "total rebalances" }
+          ]
+        },
+        {
+          "title": "Poll Idle Ratio & Time Between Polls (ms)",
+          "description": "Poll idle ratio (fraction of time idle between polls) and time between polls — low idle ratio means consumer is saturated, high time-between-polls risks rebalance",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 223 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "poll idle ratio" },
+                "properties": [{ "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "left" }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "avg time between polls" },
+                "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.axisPlacement", "value": "right" }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "max time between polls" },
+                "properties": [{ "id": "unit", "value": "ms" }, { "id": "custom.axisPlacement", "value": "right" }]
+              }
+            ]
+          },
+          "targets": [
+            { "expr": "avg(kafka_consumer_share_metrics_poll_idle_ratio_avg)", "legendFormat": "poll idle ratio" },
+            { "expr": "avg(kafka_consumer_share_metrics_time_between_poll_avg)", "legendFormat": "avg time between polls" },
+            { "expr": "max(kafka_consumer_share_metrics_time_between_poll_max)", "legendFormat": "max time between polls" }
+          ]
+        },
+        {
+          "title": "Internal Queue Sizes",
+          "description": "Share consumer internal queue depths — growth indicates back-pressure between the application thread and the background network thread",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 223 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never", "spanNulls": true }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(kafka_consumer_share_metrics_background_event_queue_size)", "legendFormat": "background event queue" },
+            { "expr": "sum(kafka_consumer_share_metrics_application_event_queue_size)", "legendFormat": "application event queue" }
+          ]
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "timezone": "utc",
+      "templating": {
+        "list": [
+          {
+            "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" },
+            "hide": 0,
+            "includeAll": false,
+            "name": "DS_PROMETHEUS",
+            "options": [],
+            "query": "prometheus",
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "Dimster - Client Metrics",
+      "uid": "dimster-clients"
+    }
+  kafka.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {"title": "Cluster Health", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 0}, "collapsed": false},
+        {
+          "title": "Active Controllers",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}, {"color": "red", "value": 2}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "max(kafka_controller_kafkacontroller_activecontrollercount_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {
+          "title": "Offline Partitions",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "max(kafka_controller_kafkacontroller_offlinepartitionscount_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {
+          "title": "Under-Replicated",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 10}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_replicamanager_underreplicatedpartitions_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {
+          "title": "Under Min ISR",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_replicamanager_underminisrpartitioncount_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {
+          "title": "Total Partitions",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_replicamanager_partitioncount_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {
+          "title": "Active Brokers",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "max(kafka_controller_kafkacontroller_activebrokercount_value)", "legendFormat": ""}
+          ],
+          "options": {"colorMode": "background", "graphMode": "none", "textMode": "value"}
+        },
+        {"title": "Throughput", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 5}, "collapsed": false},
+        {
+          "title": "Bytes In (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": [{"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "custom.lineWidth", "value": 2}]}]
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "total"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_bytesinpersec_count{topic=\"\", instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Bytes Out (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": [{"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "custom.lineWidth", "value": 2}]}]
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "total"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_bytesoutpersec_count{topic=\"\", instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Messages In (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": [{"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "custom.lineWidth", "value": 2}]}]
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "total"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_messagesinpersec_count{topic=\"\", instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Request Rate by Type",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"Produce.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "Produce"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"Fetch,.*\", instance=~\"$instance\"}[1m])) - sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"FetchFollower.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "FetchConsumer"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"FetchFollower.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "FetchFollower"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"Fetch,.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "Fetch"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"Metadata.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "Metadata"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"ListOffsets.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "ListOffsets"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"OffsetCommit.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "OffsetCommit"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"OffsetFetch.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "OffsetFetch"}
+          ]
+        },
+        {"title": "Produce Request Performance", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 22}, "collapsed": false},
+        {
+          "title": "Produce - Total Time (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 23},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "mean"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_99thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "p99"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_999thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "p99.9"},
+            {"expr": "max(kafka_network_requestmetrics_totaltimems_max{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "max"}
+          ]
+        },
+        {
+          "title": "Produce - Time Breakdown Mean (ms)",
+          "description": "Average time spent in each phase of a Produce request",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 23},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Request Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Local"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Remote (replica wait)"},
+            {"expr": "avg(kafka_network_requestmetrics_responsequeuetimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Response Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_mean{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Response Send"}
+          ]
+        },
+        {
+          "title": "Produce - Queue & Remote Time p99 (ms)",
+          "description": "p99 queue wait and remote (replica ack) time \u2014 the two biggest contributors to tail latency",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 23},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_99thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Request Queue p99"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_99thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Remote p99"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_99thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Local p99"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_99thpercentile{request=\"Produce\", instance=~\"$instance\"})", "legendFormat": "Response Send p99"}
+          ]
+        },
+        {"title": "Fetch Request Performance", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 31}, "collapsed": false},
+        {
+          "title": "FetchConsumer - Total Time (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "mean"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_99thpercentile{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "p99"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_999thpercentile{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "p99.9"},
+            {"expr": "max(kafka_network_requestmetrics_totaltimems_max{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "max"}
+          ]
+        },
+        {
+          "title": "FetchConsumer - Time Breakdown Mean (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 32},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "Request Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "Local"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "Remote (fetch wait)"},
+            {"expr": "avg(kafka_network_requestmetrics_responsequeuetimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "Response Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_mean{request=\"FetchConsumer\", instance=~\"$instance\"})", "legendFormat": "Response Send"}
+          ]
+        },
+        {
+          "title": "FetchFollower - Total Time (ms)",
+          "description": "Replication fetch performance \u2014 high values indicate slow followers",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 32},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_mean{request=\"FetchFollower\", instance=~\"$instance\"})", "legendFormat": "mean"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_99thpercentile{request=\"FetchFollower\", instance=~\"$instance\"})", "legendFormat": "p99"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_999thpercentile{request=\"FetchFollower\", instance=~\"$instance\"})", "legendFormat": "p99.9"},
+            {"expr": "max(kafka_network_requestmetrics_totaltimems_max{request=\"FetchFollower\", instance=~\"$instance\"})", "legendFormat": "max"}
+          ]
+        },
+        {"title": "Replication", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 40}, "collapsed": false},
+        {
+          "title": "Under-Replicated Partitions",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 41},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_server_replicamanager_underreplicatedpartitions_value{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "ISR Shrinks & Expands (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 41},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "rate(kafka_server_replicamanager_isrshrinkspersec_count{instance=~\"$instance\"}[5m])", "legendFormat": "shrinks {{instance}}"},
+            {"expr": "rate(kafka_server_replicamanager_isrexpandspersec_count{instance=~\"$instance\"}[5m])", "legendFormat": "expands {{instance}}"},
+            {"expr": "rate(kafka_server_replicamanager_failedisrupdatespersec_count{instance=~\"$instance\"}[5m])", "legendFormat": "failed {{instance}}"}
+          ]
+        },
+        {
+          "title": "Leader Count per Broker",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 41},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_server_replicamanager_leadercount_value{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Replication Bytes In (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 49},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_replicationbytesinpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "total"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_replicationbytesinpersec_count{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Replication Bytes Out (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 49},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_replicationbytesoutpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "total"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_replicationbytesoutpersec_count{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Reassignment Bytes In (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 49},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "rate(kafka_server_brokertopicmetrics_reassignmentbytesinpersec_count{instance=~\"$instance\"}[1m])", "legendFormat": "in {{instance}}"},
+            {"expr": "rate(kafka_server_brokertopicmetrics_reassignmentbytesoutpersec_count{instance=~\"$instance\"}[1m])", "legendFormat": "out {{instance}}"}
+          ]
+        },
+        {
+          "title": "Replica Fetcher Lag (by topic)",
+          "description": "Sum of replica fetcher lag per user topic across all partitions. Measures how far behind follower replicas are from the leader.",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 57},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (topic) (kafka_server_fetcherlagmetrics_value{name=\"ConsumerLag\", topic!~\"__.*\", instance=~\"$instance\"})", "legendFormat": "{{topic}}"}
+          ]
+        },
+        {
+          "title": "Replica Fetcher Max Lag",
+          "description": "Maximum single-partition replica fetcher lag per broker",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 57},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "max by (instance) (kafka_server_replicafetchermanager_maxlag_value{instance=~\"$instance\"})", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {"title": "Leader Elections", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 65}, "collapsed": false},
+        {
+          "title": "Leader Election Rate",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 66},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_controller_controllerstats_electionfromeligibleleaderreplicaspersec_oneminuterate{instance=~\"$instance\"}", "legendFormat": "eligible {{instance}}"}
+          ]
+        },
+        {
+          "title": "Unclean Leader Elections (rate/s)",
+          "description": "Non-zero values indicate data loss risk \u2014 an unclean leader was elected",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 66},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_controller_controllerstats_uncleanleaderelectionspersec_oneminuterate{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Preferred Replica Imbalance",
+          "description": "Number of partitions where the leader is not the preferred replica",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 66},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_controller_kafkacontroller_preferredreplicaimbalancecount_value{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {"title": "Topic-Level Throughput", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 74}, "collapsed": false},
+        {
+          "title": "Bytes In by Topic (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 75},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (topic) (rate(kafka_server_brokertopicmetrics_bytesinpersec_count{topic!=\"\", instance=~\"$instance\"}[1m]))", "legendFormat": "{{topic}}"}
+          ]
+        },
+        {
+          "title": "Bytes Out by Topic (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 75},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (topic) (rate(kafka_server_brokertopicmetrics_bytesoutpersec_count{topic!=\"\", instance=~\"$instance\"}[1m]))", "legendFormat": "{{topic}}"}
+          ]
+        },
+        {
+          "title": "Messages In by Topic (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 75},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (topic) (rate(kafka_server_brokertopicmetrics_messagesinpersec_count{topic!=\"\", instance=~\"$instance\"}[1m]))", "legendFormat": "{{topic}}"}
+          ]
+        },
+        {"title": "Consumer Groups & Lag", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 83}, "collapsed": false},
+        {
+          "title": "Group Rebalance Rate",
+          "description": "Rate of consumer and share group rebalances",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 84},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_rebalance_rate{instance=~\"$instance\"})", "legendFormat": "consumer group rebalance/s"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_share_group_rebalance_rate{instance=~\"$instance\"})", "legendFormat": "share group rebalance/s"}
+          ]
+        },
+        {
+          "title": "Partition Log End Offset (by topic)",
+          "description": "Highest offset per partition \u2014 useful to observe partition growth rate",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 84},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (topic) (kafka_log_log_value{name=\"LogEndOffset\", topic!~\"__.*\", instance=~\"$instance\"})", "legendFormat": "{{topic}}"}
+          ]
+        },
+        {
+          "title": "Consumer Group States",
+          "description": "Number of consumer groups in each state over time",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 84},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_count{state=\"Stable\", instance=~\"$instance\"})", "legendFormat": "stable"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_count{state=\"Reconciling\", instance=~\"$instance\"})", "legendFormat": "reconciling"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_count{state=\"Assigning\", instance=~\"$instance\"})", "legendFormat": "assigning"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_count{state=\"Empty\", instance=~\"$instance\"})", "legendFormat": "empty"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_consumer_group_count{state=\"Dead\", instance=~\"$instance\"})", "legendFormat": "dead"}
+          ]
+        },
+        {"title": "Share Groups", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 92}, "collapsed": false},
+        {
+          "title": "Share Fetch - Total Time (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 93},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "mean"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_99thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "p99"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_999thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "p99.9"},
+            {"expr": "max(kafka_network_requestmetrics_totaltimems_max{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "max"}
+          ]
+        },
+        {
+          "title": "Share Fetch - Time Breakdown Mean (ms)",
+          "description": "Average time spent in each phase of a ShareFetch request",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 93},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Request Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Local"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Remote"},
+            {"expr": "avg(kafka_network_requestmetrics_responsequeuetimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Response Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_mean{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Response Send"}
+          ]
+        },
+        {
+          "title": "Share Fetch - Queue & Remote p99 (ms)",
+          "description": "p99 queue wait and remote time for ShareFetch requests",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 93},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_99thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Request Queue p99"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_99thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Remote p99"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_99thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Local p99"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_99thpercentile{request=\"ShareFetch\", instance=~\"$instance\"})", "legendFormat": "Response Send p99"}
+          ]
+        },
+        {
+          "title": "Share Request Rates",
+          "description": "Request rate for ShareFetch and ShareAcknowledge operations",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 101},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"ShareFetch.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "ShareFetch"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"ShareAcknowledge.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "ShareAcknowledge"},
+            {"expr": "sum(rate(kafka_network_requestmetrics_requestspersec_count{request=~\"ShareGroupHeartbeat.*\", instance=~\"$instance\"}[1m]))", "legendFormat": "ShareGroupHeartbeat"}
+          ]
+        },
+        {
+          "title": "Share Fetch/Ack Throughput",
+          "description": "Broker-level share fetch and acknowledge request rates",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 101},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_brokertopicmetrics_totalsharefetchrequestspersec_oneminuterate{instance=~\"$instance\"})", "legendFormat": "total share fetch req/s"},
+            {"expr": "sum(kafka_server_brokertopicmetrics_totalshareacknowledgementrequestspersec_oneminuterate{instance=~\"$instance\"})", "legendFormat": "total share ack req/s"}
+          ]
+        },
+        {
+          "title": "Failed Share Requests",
+          "description": "Rate of failed share fetch and acknowledge requests",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 101},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_brokertopicmetrics_failedsharefetchrequestspersec_oneminuterate{instance=~\"$instance\"})", "legendFormat": "failed share fetch"},
+            {"expr": "sum(kafka_server_brokertopicmetrics_failedshareacknowledgementrequestspersec_oneminuterate{instance=~\"$instance\"})", "legendFormat": "failed share ack"}
+          ]
+        },
+        {
+          "title": "Share Acknowledge - Total Time (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 109},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "mean"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_99thpercentile{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "p99"},
+            {"expr": "avg(kafka_network_requestmetrics_totaltimems_999thpercentile{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "p99.9"},
+            {"expr": "max(kafka_network_requestmetrics_totaltimems_max{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "max"}
+          ]
+        },
+        {
+          "title": "Share Acknowledge - Time Breakdown Mean (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 109},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg(kafka_network_requestmetrics_requestqueuetimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "Request Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_localtimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "Local"},
+            {"expr": "avg(kafka_network_requestmetrics_remotetimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "Remote"},
+            {"expr": "avg(kafka_network_requestmetrics_responsequeuetimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "Response Queue"},
+            {"expr": "avg(kafka_network_requestmetrics_responsesendtimems_mean{request=\"ShareAcknowledge\", instance=~\"$instance\"})", "legendFormat": "Response Send"}
+          ]
+        },
+        {
+          "title": "Share Purgatory Size",
+          "description": "Requests waiting in the ShareFetch delayed operation purgatory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 109},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_server_delayedoperationpurgatory_purgatorysize_value{operation=\"ShareFetch\", instance=~\"$instance\"}", "legendFormat": "purgatory {{instance}}"},
+            {"expr": "kafka_server_delayedoperationpurgatory_numdelayedoperations_value{operation=\"ShareFetch\", instance=~\"$instance\"}", "legendFormat": "delayed ops {{instance}}"}
+          ]
+        },
+        {
+          "title": "Share Group States",
+          "description": "Number of share groups in each state over time",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 117},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_group_coordinator_metrics_share_group_count{state=\"Stable\", instance=~\"$instance\"})", "legendFormat": "stable"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_share_group_count{state=\"Empty\", instance=~\"$instance\"})", "legendFormat": "empty"},
+            {"expr": "sum(kafka_server_group_coordinator_metrics_share_group_count{state=\"Dead\", instance=~\"$instance\"})", "legendFormat": "dead"}
+          ]
+        },
+        {
+          "title": "Share Group Rebalance Rate",
+          "description": "Rate of share group rebalances",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 117},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(kafka_server_group_coordinator_metrics_share_group_rebalance_rate{instance=~\"$instance\"})", "legendFormat": "rebalance/s"}
+          ]
+        },
+        {"title": "Share Partition Metrics", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 125}, "collapsed": false},
+        {
+          "title": "Share Fetch Lock Time (ms)",
+          "description": "Time spent acquiring locks during share fetch, per partition",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 126},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_mean{name=\"FetchLockTimeMs\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "mean {{group}}"},
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_99thpercentile{name=\"FetchLockTimeMs\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "p99 {{group}}"},
+            {"expr": "max by (group) (kafka_server_sharepartitionmetrics_max{name=\"FetchLockTimeMs\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "max {{group}}"}
+          ]
+        },
+        {
+          "title": "Share Fetch Lock Ratio (%)",
+          "description": "Percentage of fetch time spent on lock acquisition, per partition",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 126},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_mean{name=\"FetchLockRatio\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "mean {{group}}"},
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_99thpercentile{name=\"FetchLockRatio\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "p99 {{group}}"},
+            {"expr": "max by (group) (kafka_server_sharepartitionmetrics_max{name=\"FetchLockRatio\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "max {{group}}"}
+          ]
+        },
+        {
+          "title": "In-Flight Batch Message Count",
+          "description": "Messages currently in-flight per share partition",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 126},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_mean{name=\"InFlightBatchMessageCount\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "mean {{group}}"},
+            {"expr": "avg by (group) (kafka_server_sharepartitionmetrics_99thpercentile{name=\"InFlightBatchMessageCount\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "p99 {{group}}"}
+          ]
+        },
+        {
+          "title": "In-Flight Messages",
+          "description": "Total messages currently in-flight per share partition",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 134},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (group) (kafka_server_sharepartitionmetrics_value{name=\"InFlightMessageCount\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "{{group}}"}
+          ]
+        },
+        {
+          "title": "In-Flight Batches",
+          "description": "Total batches currently in-flight per share partition",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 134},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (group) (kafka_server_sharepartitionmetrics_value{name=\"InFlightBatchCount\", instance=~\"$instance\", group=~\"$share_group\"})", "legendFormat": "{{group}}"}
+          ]
+        },
+        {"title": "Request Errors", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 142}, "collapsed": false},
+        {
+          "title": "Failed Requests (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 143},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_failedproducerequestspersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "failed produce"},
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_failedfetchrequestspersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "failed fetch"},
+            {"expr": "sum(rate(kafka_server_brokertopicmetrics_bytesrejectedpersec_count{instance=~\"$instance\"}[1m]))", "legendFormat": "bytes rejected/s"}
+          ]
+        },
+        {
+          "title": "Request Errors by Type (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 143},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (request, error) (rate(kafka_network_requestmetrics_errorspersec_count{instance=~\"$instance\"}[1m])) > 0", "legendFormat": "{{request}} / {{error}}"}
+          ]
+        },
+        {
+          "title": "Request Bytes (mean)",
+          "description": "Mean request payload size by request type",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 143},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_network_requestmetrics_requestbytes_mean{request=\"Produce\", instance=~\"$instance\"}", "legendFormat": "Produce {{instance}}"},
+            {"expr": "kafka_network_requestmetrics_requestbytes_mean{request=\"FetchConsumer\", instance=~\"$instance\"}", "legendFormat": "FetchConsumer {{instance}}"},
+            {"expr": "kafka_network_requestmetrics_requestbytes_mean{request=\"FetchFollower\", instance=~\"$instance\"}", "legendFormat": "FetchFollower {{instance}}"}
+          ]
+        },
+        {"title": "Log & Disk", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 151}, "collapsed": false},
+        {
+          "title": "Log Flush Rate (flushes/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 152},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_log_logflushstats_logflushrateandtimems_oneminuterate{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Log Flush Time (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 152},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_log_logflushstats_logflushrateandtimems_50thpercentile{instance=~\"$instance\"}", "legendFormat": "p50 {{instance}}"},
+            {"expr": "kafka_log_logflushstats_logflushrateandtimems_99thpercentile{instance=~\"$instance\"}", "legendFormat": "p99 {{instance}}"},
+            {"expr": "kafka_log_logflushstats_logflushrateandtimems_999thpercentile{instance=~\"$instance\"}", "legendFormat": "p99.9 {{instance}}"},
+            {"expr": "kafka_log_logflushstats_logflushrateandtimems_max{instance=~\"$instance\"}", "legendFormat": "max {{instance}}"}
+          ]
+        },
+        {"title": "JVM Memory", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 160}, "collapsed": false},
+        {
+          "title": "Heap Memory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 161},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "jvm_heap_memory_used{instance=~\"$instance\"}", "legendFormat": "used {{instance}}"},
+            {"expr": "jvm_heap_memory_committed{instance=~\"$instance\"}", "legendFormat": "committed {{instance}}"},
+            {"expr": "jvm_heap_memory_max{instance=~\"$instance\"}", "legendFormat": "max {{instance}}"}
+          ]
+        },
+        {
+          "title": "Heap Memory Pools",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 161},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "jvm_memory_pool_bytes_used{pool=~\"G1 Eden Space|G1 Old Gen|G1 Survivor Space\", instance=~\"$instance\"}", "legendFormat": "{{pool}} {{instance}}"}
+          ]
+        },
+        {
+          "title": "Non-Heap & Buffer Pools",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 161},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "jvm_nonheap_memory_used{instance=~\"$instance\"}", "legendFormat": "non-heap used {{instance}}"},
+            {"expr": "jvm_buffer_pool_used_bytes{pool=\"direct\", instance=~\"$instance\"}", "legendFormat": "direct buffers {{instance}}"},
+            {"expr": "jvm_buffer_pool_used_bytes{pool=\"mapped\", instance=~\"$instance\"}", "legendFormat": "mapped buffers {{instance}}"}
+          ]
+        },
+        {"title": "JVM GC & Threads", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 169}, "collapsed": false},
+        {
+          "title": "GC Pause Time (rate s/s)",
+          "description": "Fraction of time spent in GC \u2014 values approaching 1.0 indicate GC pressure",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 170},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "rate(jvm_gc_collection_seconds_sum{gc=\"G1 Young Generation\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Young {{instance}}"},
+            {"expr": "rate(jvm_gc_collection_seconds_sum{gc=\"G1 Old Generation\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Old {{instance}}"},
+            {"expr": "rate(jvm_gc_collection_seconds_sum{gc=\"G1 Concurrent GC\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Concurrent {{instance}}"}
+          ]
+        },
+        {
+          "title": "GC Pause Count (rate/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 170},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "rate(jvm_gc_collection_seconds_count{gc=\"G1 Young Generation\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Young {{instance}}"},
+            {"expr": "rate(jvm_gc_collection_seconds_count{gc=\"G1 Old Generation\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Old {{instance}}"},
+            {"expr": "rate(jvm_gc_collection_seconds_count{gc=\"G1 Concurrent GC\", instance=~\"$instance\"}[1m])", "legendFormat": "G1 Concurrent {{instance}}"}
+          ]
+        },
+        {
+          "title": "Threads by State",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 170},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 30, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal"}}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (state) (jvm_threads_state{state=~\"RUNNABLE|BLOCKED|WAITING|TIMED_WAITING\", instance=~\"$instance\"})", "legendFormat": "{{state}}"}
+          ]
+        },
+        {"title": "Process", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 178}, "collapsed": false},
+        {
+          "title": "Process CPU (rate s/s)",
+          "description": "CPU seconds consumed per second \u2014 1.0 = one full core",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 179},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "rate(process_cpu_seconds_total{instance=~\"$instance\"}[1m])", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Process Resident Memory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 179},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "process_resident_memory_bytes{instance=~\"$instance\"}", "legendFormat": "RSS {{instance}}"},
+            {"expr": "process_virtual_memory_bytes{instance=~\"$instance\"}", "legendFormat": "Virtual {{instance}}"}
+          ]
+        },
+        {
+          "title": "Open File Descriptors",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 179},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "process_open_fds{instance=~\"$instance\"}", "legendFormat": "open {{instance}}"},
+            {"expr": "process_max_fds{instance=~\"$instance\"}", "legendFormat": "max {{instance}}"}
+          ]
+        },
+        {"title": "Network & Handler Saturation", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 187}, "collapsed": false},
+        {
+          "title": "Network Processor Avg Idle %",
+          "description": "Fraction of time network threads are idle \u2014 values approaching 0 indicate network thread saturation",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 188},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.3}, {"color": "green", "value": 0.5}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_network_socketserver_networkprocessoravgidlepercent_value{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+          ]
+        },
+        {
+          "title": "Request Handler Avg Idle %",
+          "description": "Fraction of time request handler threads are idle \u2014 values approaching 0 indicate broker CPU saturation",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 188},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.3}, {"color": "green", "value": 0.5}]},
+              "color": {"mode": "thresholds"}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_server_requesthandlerpool_requesthandleravgidlepercent_oneminuterate{instance=~\"$instance\"}", "legendFormat": "request handler {{instance}}"},
+            {"expr": "kafka_server_requesthandlerpool_brokerrequesthandleravgidlepercent_oneminuterate{instance=~\"$instance\"}", "legendFormat": "broker handler {{instance}}"},
+            {"expr": "kafka_server_requesthandlerpool_controllerrequesthandleravgidlepercent_oneminuterate{instance=~\"$instance\"}", "legendFormat": "controller handler {{instance}}"}
+          ]
+        },
+        {
+          "title": "Memory Pool (Network Buffers)",
+          "description": "Network buffer pool usage \u2014 high used values indicate network memory pressure",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 188},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "kafka_network_socketserver_memorypoolused_value{instance=~\"$instance\"}", "legendFormat": "used {{instance}}"},
+            {"expr": "kafka_network_socketserver_memorypoolavailable_value{instance=~\"$instance\"}", "legendFormat": "available {{instance}}"}
+          ]
+        },
+        {"title": "Purgatory", "type": "row", "gridPos": {"h": 1,"w": 24,"x": 0,"y": 196}, "collapsed": false},
+        {
+          "title": "Purgatory Size",
+          "description": "Number of requests waiting in delayed operation purgatory",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 197},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (operation) (kafka_server_delayedoperationpurgatory_purgatorysize_value{instance=~\"$instance\"})", "legendFormat": "{{operation}}"}
+          ]
+        },
+        {
+          "title": "Delayed Operations",
+          "description": "Number of delayed operations currently pending",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 197},
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": true}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {"expr": "sum by (operation) (kafka_server_delayedoperationpurgatory_numdelayedoperations_value{instance=~\"$instance\"})", "legendFormat": "{{operation}}"}
+          ]
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "timezone": "utc",
+      "templating": {
+        "list": [
+          {"current": {"selected": false,"text": "Prometheus","value": "Prometheus"},"hide": 0,"includeAll": false,"name": "DS_PROMETHEUS","options": [],"query": "prometheus","type": "datasource"},
+          {"current": {"selected": true,"text": "All","value": "$__all"},"datasource": {"type": "prometheus","uid": "${DS_PROMETHEUS}"},"definition": "label_values(kafka_server_replicamanager_partitioncount_value, instance)","hide": 0,"includeAll": true,"label": "Broker","multi": true,"name": "instance","options": [],"query": {"query": "label_values(kafka_server_replicamanager_partitioncount_value, instance)","refId": "StandardVariableQuery"},"refresh": 1,"regex": "","sort": 1,"type": "query"},
+          {"current": {"selected": true,"text": "All","value": "$__all"},"datasource": {"type": "prometheus","uid": "${DS_PROMETHEUS}"},"definition": "label_values(kafka_server_sharepartitionmetrics_value, group)","hide": 0,"includeAll": true,"label": "Share Group","multi": false,"name": "share_group","options": [],"query": {"query": "label_values(kafka_server_sharepartitionmetrics_value, group)","refId": "StandardVariableQuery"},"refresh": 2,"regex": "","sort": 0,"type": "query"}
+        ]
+      },
+      "time": {"from": "now-30m","to": "now"},
+      "title": "Dimster - Kafka Broker",
+      "uid": "dimster-kafka"
+    }
+

@@ -1,0 +1,26 @@
+name: run-quick-test-share
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 1
+
+runConfig:
+  testDurationMinutes: 40
+  warmupDurationMinutes: 20
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 1000
+  consumerType: SHARE_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  producersPerTopic: 1
+  producerRate: 100000
+
+scenarios:
+  - name: cons-per-group
+    label: [ "1-con", "2-con", "4-con", "8-con", "16-con", "32-con", "64-con" ]
+    consumersPerGroup: [1, 2, 4, 8, 16, 32, 64]

@@ -1,0 +1,44 @@
+Dimster
+Copyright 2024 Jack Vanlightly
+
+This product includes software originally developed as part of the
+OpenMessaging Benchmark project (https://github.com/openmessaging/benchmark),
+licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+The following source files were originally copied from OpenMessaging
+Benchmark. Some are substantively unchanged; others have been modified
+or heavily rewritten. Each file carries an in-file header indicating
+its provenance and the applicable license.
+
+Near-identical to the OpenMessaging Benchmark original (Apache 2.0):
+  - dimster-core/src/main/java/dev/dimster/utils/PaddingDecimalFormat.java
+  - dimster-core/src/main/java/dev/dimster/utils/payload/PayloadException.java
+  - dimster-core/src/main/java/dev/dimster/utils/payload/PayloadReader.java
+  - dimster-core/src/main/java/dev/dimster/utils/payload/FilePayloadReader.java
+
+Derived from an OpenMessaging Benchmark file and modified
+(still under Apache 2.0 in respect of the surviving original code):
+  - dimster-core/src/main/java/dev/dimster/utils/UniformRateLimiter.java
+  - dimster-core/src/main/java/dev/dimster/utils/Timer.java
+  - dimster-core/src/main/java/dev/dimster/utils/RandomGenerator.java
+  - dimster-core/src/main/java/dev/dimster/utils/distributor/MessageDistributor.java
+        (from KeyDistributor.java)
+  - dimster-core/src/main/java/dev/dimster/utils/distributor/MessageDistributorType.java
+        (from KeyDistributorType.java)
+  - dimster-core/src/main/java/dev/dimster/utils/distributor/NoKeyDistributor.java
+  - dimster-core/src/main/java/dev/dimster/utils/distributor/KeyRoundRobin.java
+  - dimster-core/src/main/java/dev/dimster/utils/distributor/RandomNano.java
+  - dimster-core/src/main/java/dev/dimster/worker/commands/CountersStats.java
+
+Originally derived from an OpenMessaging Benchmark file and
+substantially rewritten:
+  - dimster-core/src/main/java/dev/dimster/worker/commands/CumulativeLatencies.java
+  - dimster-core/src/main/java/dev/dimster/worker/commands/PeriodStats.java
+  - dimster-core/src/main/java/dev/dimster/worker/commands/ConsumerAssignment.java
+  - dimster-core/src/main/java/dev/dimster/worker/commands/ProducerWorkAssignment.java
+
+The Dimster source code as a whole is licensed under the MIT License
+(see LICENSE). The Apache 2.0 license applies to the OpenMessaging
+Benchmark-derived files listed above, in respect of any original
+OpenMessaging Benchmark code they contain.

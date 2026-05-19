@@ -1,0 +1,28 @@
+name: Consumer group correctness check (concurrent)
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldowmMinutes: 1
+
+correctnessConfig:
+  testMode: CONCURRENT
+  testDurationMinutes: 10
+  gracePeriodSeconds: 600
+  detectDuplicates: true
+  detectOutOfOrder: true
+  enableCrc: true
+  failOnLoss: true
+  failOnDuplicates: false
+  failOnOutOfOrder: true
+  failOnCrc: true
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageSize: 24
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  producersPerTopic: 10
+  producerRate: 200000

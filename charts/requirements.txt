@@ -1,0 +1,2 @@
+# No external dependencies required.
+# Chart generators use only Python stdlib + Chart.js via CDN.

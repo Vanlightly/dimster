@@ -1,0 +1,56 @@
+package dev.dimster;
+
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
+/**
+ * Top-level "what produced this result" block, serialized as the
+ * {@code metadata} field on every engine result JSON
+ * (RunResult, ExploreResult, CorrectnessResult, DrainBacklogResult).
+ *
+ * Lives as a shared class — rather than as four identical inner classes
+ * on each result type — because all four result types stamp the same
+ * provenance fields, and a future fifth result type must not be able to
+ * silently omit any of them. In particular, {@link #dimsterVersion} is
+ * populated in the no-arg constructor from {@link Version#get()}, so
+ * any caller that does {@code new ResultMetadata()} cannot accidentally
+ * ship a result with no version string. This was the whole point of
+ * adding the field — to make every result self-describing for
+ * reproducibility once we start cutting git tags.
+ *
+ * The {@link JsonPropertyOrder} puts {@code dimsterVersion} first so
+ * it's the first thing a human sees when opening a result file, and so
+ * it's adjacent to the other identifying fields rather than buried
+ * after the timestamps.
+ */
+@JsonPropertyOrder({
+        "dimsterVersion",
+        "name",
+        "kafkaConfigName",
+        "environment",
+        "system",
+        "hardware",
+        "beginTime",
+        "endTime",
+})
+public class ResultMetadata {
+
+    /**
+     * Dimster version that produced this result, e.g. {@code "0.1.0"} or
+     * {@code "0.1.0-SNAPSHOT"}. Pulled from {@link Version#get()} at
+     * construction time. Will be {@link Version#UNKNOWN} if the build
+     * resource was missing — see the Version class for diagnosis hints.
+     */
+    public String dimsterVersion;
+
+    public String name;
+    public String kafkaConfigName;
+    public String environment;
+    public String system;
+    public String hardware;
+    public String beginTime;
+    public String endTime;
+
+    public ResultMetadata() {
+        this.dimsterVersion = Version.get();
+    }
+}

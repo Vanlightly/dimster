@@ -1,0 +1,88 @@
+# AWS EC2 instance type specifications
+# Used by eks-setup to suggest heap, CPU, and memory defaults.
+# Add new instance types here — no recompilation needed.
+# ebsBandwidthMBs = EBS baseline bandwidth in MB/s
+# networkBaselineGbps = network baseline bandwidth in Gbps (from AWS API)
+
+# Burstable — t3 (EBS only, good for infra/monitoring nodes)
+t3.medium:  { vcpu: 2, memoryGib: 4,  arch: x86_64, ebsBandwidthMBs: 43,   networkBaselineGbps: 0.256 }
+t3.large:   { vcpu: 2, memoryGib: 8,  arch: x86_64, ebsBandwidthMBs: 87,   networkBaselineGbps: 0.512 }
+t3.xlarge:  { vcpu: 4, memoryGib: 16, arch: x86_64, ebsBandwidthMBs: 87,   networkBaselineGbps: 1.024 }
+
+# Compute optimized — c7i / c7g (EBS only, good for infra/monitoring nodes)
+c7i.large:   { vcpu: 2, memoryGib: 4,  arch: x86_64, ebsBandwidthMBs: 156,  networkBaselineGbps: 0.781 }
+c7i.xlarge:  { vcpu: 4, memoryGib: 8,  arch: x86_64, ebsBandwidthMBs: 312,  networkBaselineGbps: 1.562 }
+c7i.2xlarge: { vcpu: 8, memoryGib: 16, arch: x86_64, ebsBandwidthMBs: 625,  networkBaselineGbps: 3.125 }
+c7g.large:   { vcpu: 2, memoryGib: 4,  arch: arm64,  ebsBandwidthMBs: 156,  networkBaselineGbps: 0.937 }
+c7g.xlarge:  { vcpu: 4, memoryGib: 8,  arch: arm64,  ebsBandwidthMBs: 312,  networkBaselineGbps: 1.875 }
+c7g.2xlarge: { vcpu: 8, memoryGib: 16, arch: arm64,  ebsBandwidthMBs: 625,  networkBaselineGbps: 3.75 }
+
+# General purpose — m6i / m6g (EBS only)
+m6i.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: x86_64, ebsBandwidthMBs: 156,  networkBaselineGbps: 1.562 }
+m6i.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: x86_64, ebsBandwidthMBs: 312,  networkBaselineGbps: 3.125 }
+m6i.4xlarge: { vcpu: 16, memoryGib: 64,  arch: x86_64, ebsBandwidthMBs: 625,  networkBaselineGbps: 6.25 }
+m6i.8xlarge: { vcpu: 32, memoryGib: 128, arch: x86_64, ebsBandwidthMBs: 1250, networkBaselineGbps: 12.5 }
+m6g.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: arm64,  ebsBandwidthMBs: 148,  networkBaselineGbps: 1.25 }
+m6g.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: arm64,  ebsBandwidthMBs: 297,  networkBaselineGbps: 2.5 }
+m6g.4xlarge: { vcpu: 16, memoryGib: 64,  arch: arm64,  ebsBandwidthMBs: 594,  networkBaselineGbps: 5.0 }
+m6g.8xlarge: { vcpu: 32, memoryGib: 128, arch: arm64,  ebsBandwidthMBs: 1188, networkBaselineGbps: 12.0 }
+
+# General purpose + network optimized — m6in (EBS only, high network baseline)
+m6in.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: x86_64, ebsBandwidthMBs: 390,  networkBaselineGbps: 6.25 }
+m6in.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: x86_64, ebsBandwidthMBs: 781,  networkBaselineGbps: 12.5 }
+m6in.4xlarge: { vcpu: 16, memoryGib: 64,  arch: x86_64, ebsBandwidthMBs: 1562, networkBaselineGbps: 25.0 }
+m6in.8xlarge: { vcpu: 32, memoryGib: 128, arch: x86_64, ebsBandwidthMBs: 3125, networkBaselineGbps: 50.0 }
+
+# General purpose — m7i / m7g
+m7i.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: x86_64, ebsBandwidthMBs: 156,  networkBaselineGbps: 1.562 }
+m7i.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: x86_64, ebsBandwidthMBs: 312,  networkBaselineGbps: 3.125 }
+m7i.4xlarge: { vcpu: 16, memoryGib: 64,  arch: x86_64, ebsBandwidthMBs: 625,  networkBaselineGbps: 6.25 }
+m7i.8xlarge: { vcpu: 32, memoryGib: 128, arch: x86_64, ebsBandwidthMBs: 1250, networkBaselineGbps: 12.5 }
+m7g.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: arm64,  ebsBandwidthMBs: 156,  networkBaselineGbps: 1.876 }
+m7g.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: arm64,  ebsBandwidthMBs: 312,  networkBaselineGbps: 3.75 }
+m7g.4xlarge: { vcpu: 16, memoryGib: 64,  arch: arm64,  ebsBandwidthMBs: 625,  networkBaselineGbps: 7.5 }
+m7g.8xlarge: { vcpu: 32, memoryGib: 128, arch: arm64,  ebsBandwidthMBs: 1250, networkBaselineGbps: 15.0 }
+
+# General purpose — m8i / m8g
+m8i.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: x86_64, ebsBandwidthMBs: 156,  networkBaselineGbps: 1.875 }
+m8i.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: x86_64, ebsBandwidthMBs: 312,  networkBaselineGbps: 3.75 }
+m8i.4xlarge: { vcpu: 16, memoryGib: 64,  arch: x86_64, ebsBandwidthMBs: 625,  networkBaselineGbps: 7.5 }
+m8i.8xlarge: { vcpu: 32, memoryGib: 128, arch: x86_64, ebsBandwidthMBs: 1250, networkBaselineGbps: 15.0 }
+m8g.xlarge:  { vcpu: 4,  memoryGib: 16,  arch: arm64,  ebsBandwidthMBs: 156,  networkBaselineGbps: 1.875 }
+m8g.2xlarge: { vcpu: 8,  memoryGib: 32,  arch: arm64,  ebsBandwidthMBs: 312,  networkBaselineGbps: 3.75 }
+m8g.4xlarge: { vcpu: 16, memoryGib: 64,  arch: arm64,  ebsBandwidthMBs: 625,  networkBaselineGbps: 7.5 }
+m8g.8xlarge: { vcpu: 32, memoryGib: 128, arch: arm64,  ebsBandwidthMBs: 1250, networkBaselineGbps: 15.0 }
+
+# Storage optimized — i3 (NVMe) - old CPU generation
+i3.xlarge:   { vcpu: 4,  memoryGib: 30,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 950,  ebsBandwidthMBs: 106,  networkBaselineGbps: 1.25 }
+i3.2xlarge:  { vcpu: 8,  memoryGib: 61,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 1900, ebsBandwidthMBs: 212,  networkBaselineGbps: 2.5 }
+i3.4xlarge:  { vcpu: 16, memoryGib: 122, arch: x86_64, nvmeCount: 2, nvmeSizeGb: 1900, ebsBandwidthMBs: 437,  networkBaselineGbps: 5.0 }
+i3.8xlarge:  { vcpu: 32, memoryGib: 244, arch: x86_64, nvmeCount: 4, nvmeSizeGb: 1900, ebsBandwidthMBs: 875,  networkBaselineGbps: 12.0 }
+
+# Storage + network optimized — i3en (NVMe, high density) - old CPU generation
+i3en.xlarge:  { vcpu: 4,  memoryGib: 32,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 2500, ebsBandwidthMBs: 144, networkBaselineGbps: 4.2 }
+i3en.2xlarge: { vcpu: 8,  memoryGib: 64,  arch: x86_64, nvmeCount: 2, nvmeSizeGb: 2500, ebsBandwidthMBs: 288, networkBaselineGbps: 8.4 }
+i3en.3xlarge: { vcpu: 12, memoryGib: 96,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 7500, ebsBandwidthMBs: 475, networkBaselineGbps: 12.5 }
+i3en.6xlarge: { vcpu: 24, memoryGib: 192, arch: x86_64, nvmeCount: 2, nvmeSizeGb: 7500, ebsBandwidthMBs: 594, networkBaselineGbps: 25.0 }
+
+# Storage optimized — i4i / i4g (NVMe)
+i4i.xlarge:  { vcpu: 4,  memoryGib: 32,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 937,  ebsBandwidthMBs: 156,  networkBaselineGbps: 1.875 }
+i4i.2xlarge: { vcpu: 8,  memoryGib: 64,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 1875, ebsBandwidthMBs: 312,  networkBaselineGbps: 4.687 }
+i4i.4xlarge: { vcpu: 16, memoryGib: 128, arch: x86_64, nvmeCount: 1, nvmeSizeGb: 3750, ebsBandwidthMBs: 625,  networkBaselineGbps: 9.375 }
+i4i.8xlarge: { vcpu: 32, memoryGib: 256, arch: x86_64, nvmeCount: 2, nvmeSizeGb: 3750, ebsBandwidthMBs: 1250, networkBaselineGbps: 18.75 }
+i4g.xlarge:  { vcpu: 4,  memoryGib: 32,  arch: arm64,  nvmeCount: 1, nvmeSizeGb: 937,  ebsBandwidthMBs: 156,  networkBaselineGbps: 1.875 }
+i4g.2xlarge: { vcpu: 8,  memoryGib: 64,  arch: arm64,  nvmeCount: 1, nvmeSizeGb: 1875, ebsBandwidthMBs: 312,  networkBaselineGbps: 4.687 }
+i4g.4xlarge: { vcpu: 16, memoryGib: 128, arch: arm64,  nvmeCount: 1, nvmeSizeGb: 3750, ebsBandwidthMBs: 625,  networkBaselineGbps: 9.375 }
+i4g.8xlarge: { vcpu: 32, memoryGib: 256, arch: arm64,  nvmeCount: 2, nvmeSizeGb: 3750, ebsBandwidthMBs: 1250, networkBaselineGbps: 18.75 }
+
+# Storage optimized — i7i (NVMe)
+i7i.xlarge:  { vcpu: 4,  memoryGib: 32,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 468,  ebsBandwidthMBs: 156,  networkBaselineGbps: 2.343 }
+i7i.2xlarge: { vcpu: 8,  memoryGib: 64,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 937,  ebsBandwidthMBs: 312,  networkBaselineGbps: 4.687 }
+i7i.4xlarge: { vcpu: 16, memoryGib: 128, arch: x86_64, nvmeCount: 1, nvmeSizeGb: 1875, ebsBandwidthMBs: 625,  networkBaselineGbps: 9.375 }
+i7i.8xlarge: { vcpu: 32, memoryGib: 256, arch: x86_64, nvmeCount: 1, nvmeSizeGb: 3750, ebsBandwidthMBs: 1250, networkBaselineGbps: 25.0 }
+
+# Storage + networked optimized — i7ie (NVMe)
+i7ie.xlarge:  { vcpu: 4,  memoryGib: 32,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 312, ebsBandwidthMBs: 156, networkBaselineGbps: 4.166 }
+i7ie.2xlarge: { vcpu: 8,  memoryGib: 64,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 625,  ebsBandwidthMBs: 312, networkBaselineGbps: 8.333 }
+i7ie.3xlarge: { vcpu: 12, memoryGib: 96,  arch: x86_64, nvmeCount: 1, nvmeSizeGb: 7500, ebsBandwidthMBs: 468, networkBaselineGbps: 12.5 }
+i7ie.6xlarge: { vcpu: 24, memoryGib: 192, arch: x86_64, nvmeCount: 2, nvmeSizeGb: 7500, ebsBandwidthMBs: 937, networkBaselineGbps: 12.5 }

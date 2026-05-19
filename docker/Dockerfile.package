@@ -1,0 +1,30 @@
+# Packages a host-built Dimster tarball into the runtime image.
+#
+# Pairs with the host-build path in cli/src/commands/build.rs (the
+# default `dimster build <env>` mode). Maven runs on the host, producing
+# package-${KAFKA_FLAVOR}/target/dimster-*-bin.tar.gz; this Dockerfile then
+# unpacks that tarball into /benchmark.
+#
+# For the in-container build (no host JDK required), use Dockerfile
+# instead — selected via `dimster build <env> --in-docker`.
+#
+# The runtime stage matches the runtime stage of the multi-stage
+# Dockerfile so the produced images are interchangeable.
+FROM dimster-base:latest
+
+# Which per-flavor tarball to install. Set explicitly by the CLI via
+# `docker build --build-arg KAFKA_FLAVOR=<flavor>` once per flavor it
+# wants to ship. No default value: a default would make the Docker build
+# log line read "ARG KAFKA_FLAVOR=4.2.0" even when an override was
+# passed, which is confusing — and a bare `docker build` without
+# --build-arg would silently install the default flavor instead of
+# failing loudly.
+ARG KAFKA_FLAVOR
+
+COPY package-${KAFKA_FLAVOR}/target/dimster-*-bin.tar.gz /tmp/dimster.tar.gz
+
+RUN tar -xzf /tmp/dimster.tar.gz -C / \
+ && mv /dimster-* /benchmark \
+ && rm /tmp/dimster.tar.gz
+
+WORKDIR /benchmark

@@ -1,0 +1,39 @@
+name: Quick run test - transactions (time-based commit)
+
+engineConfig:
+  perPartitionMetrics: true   # Producer/consumer metrics with partition-level reporting
+  perConsumerMetrics: true    # Per-consumer metrics (disable for large consumer counts)
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1      # The duration of each test point with latency recording
+  warmupDurationMinutes: 1    # The initial duration of each test point without latency recording
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  producersPerTopic: 10
+  producerRate: 1000
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+      enable.idempotence: true
+      dimster.transactions: true
+    classicConsumerConfig:
+      auto.offset.reset: earliest
+      enable.auto.commit: false
+      dimster.commit.mode: CommitAsync
+
+scenarios:
+  - name: txn-duration
+    kafkaConfig:
+      producerConfig:
+        dimster.transactions.max.txn.duration.ms: [50, 200, 1000]

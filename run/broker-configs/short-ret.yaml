@@ -1,0 +1,21 @@
+name: default
+
+# Default multi-broker Kafka server properties.
+# These are appended to the base server.properties template (last-wins),
+# so they override any matching defaults in the ConfigMap.
+properties:
+  num.partitions: 1
+  default.replication.factor: 3
+  min.insync.replicas: 2
+  offsets.topic.replication.factor: 3
+  transaction.state.log.replication.factor: 3
+  transaction.state.log.min.isr: 2
+  socket.send.buffer.bytes: 131072
+  socket.receive.buffer.bytes: 131072
+  socket.request.max.bytes: 104857600
+  log.retention.minutes: 5
+  log.segment.bytes: 104857600
+  group.share.max.size: 1000
+  group.share.max.record.lock.duration.ms: 180000
+  group.share.max.share.sessions: 10000
+  

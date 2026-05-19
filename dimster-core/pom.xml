@@ -1,0 +1,124 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>dimster-core</artifactId>
+
+	<properties>
+		<log4j.version>2.17.1</log4j.version>
+	</properties>
+
+	<dependencies>
+		<!--
+		dimster-core deliberately does NOT declare a direct kafka-clients dep.
+		It compiles against the SPI's transitive kafka-clients (pinned at 3.7.x
+		baseline in dimster-spi/pom.xml), so any reference to a 4.2-only Kafka
+		type fails the dimster-core compile - exactly the compile-time enforcement
+		of the version boundary the multi-version refactor was about. The actual
+		kafka-clients version on the runtime classpath comes from whichever
+		dimster-kafka-X impl module is bundled by the per-flavor package
+		(package-3.x, package-4.2.0, ...) - Maven's nearest-wins picks the
+		impl's depth-2 dep over the spi's depth-3 transitive 3.7.x.
+		-->
+		<dependency>
+			<groupId>dev.dimster</groupId>
+			<artifactId>dimster-spi</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.hdrhistogram</groupId>
+			<artifactId>HdrHistogram</artifactId>
+			<version>2.1.12</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-core</artifactId>
+			<version>${log4j.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-slf4j-impl</artifactId>
+			<version>${log4j.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.jaxrs</groupId>
+			<artifactId>jackson-jaxrs-base</artifactId>
+			<version>${jackson.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.jaxrs</groupId>
+			<artifactId>jackson-jaxrs-json-provider</artifactId>
+			<version>${jackson.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-annotations</artifactId>
+			<version>${jackson.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.beust</groupId>
+			<artifactId>jcommander</artifactId>
+			<version>1.48</version>
+		</dependency>
+
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.13.1</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<!--
+		Resource filtering is enabled so dimster-version.properties can have
+		${project.version} substituted at build time. The properties file is
+		the single source of truth that the Version class reads at runtime to
+		stamp every result JSON with the Dimster version that produced it —
+		critical for result reproducibility once we start cutting git tags.
+		Filtering is scoped to src/main/resources (the build's default
+		location) so other modules' resources are untouched.
+		-->
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
+			</resource>
+		</resources>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>2.10</version>
+				<executions>
+					<execution>
+						<id>build-classpath</id>
+						<phase>generate-sources</phase>
+						<goals>
+							<goal>build-classpath</goal>
+						</goals>
+						<configuration>
+							<outputFile>target/classpath.txt</outputFile>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

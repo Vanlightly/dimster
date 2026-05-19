@@ -1,0 +1,26 @@
+name: run-classic-consumers-scaling-5-120MBs
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 1
+
+runConfig:
+  testDurationMinutes: 40
+  warmupDurationMinutes: 20
+
+baseWorkload:
+  topics: 10
+  partitionsPerTopic: 6
+  keyDistributor: "KEY_ROUND_ROBIN"
+  messageSize: 1000
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 2
+  consumersPerGroup: 6
+  producersPerTopic: 4
+  producerRate: 10000
+
+scenarios:
+  - name: producer-rate
+    label: [ "5000-msg/s", "10000-msg/s", "40000-msg/s", "80000-msg/s", "120000-msg/s" ]
+    producerRate: [5000, 10000, 40000, 80000, 120000]

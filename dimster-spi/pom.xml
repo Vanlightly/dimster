@@ -1,0 +1,65 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>dimster-spi</artifactId>
+	<name>Dimster SPI</name>
+	<packaging>jar</packaging>
+
+	<!--
+	Service Provider Interface for dimster's Kafka client layer.
+
+	Why this module exists:
+	The Kafka client API surface differs between releases - share-group APIs
+	(KafkaShareConsumer, AcknowledgeType, ListShareGroupOffsetsSpec, GroupType.SHARE,
+	alterShareGroupOffsets, ...) only exist in 4.2+, and even between point releases
+	such as 4.2.0 vs 4.2.1, signatures drift. To compile and benchmark against multiple
+	Kafka versions from the same dimster-core source tree, we extract the narrow
+	version-touching surface into this SPI. dimster-core depends only on this module;
+	per-version impl modules (dimster-kafka-3.7, dimster-kafka-4.2.0, ...) provide
+	concrete implementations that delegate to their respective kafka-clients version.
+	The right impl is bound at startup via java.util.ServiceLoader.
+
+	Why kafka-clients is a compile-scope dep pinned to the OLDEST supported
+	version (3.7.x):
+	The SPI deliberately reuses Kafka's stable value types (TopicPartition,
+	OffsetAndMetadata, Metric, MetricName, ProducerRecord, RecordMetadata, NewTopic,
+	Callback) instead of inventing parallel mirror types. These have been API-stable
+	across many Kafka releases. Pinning the SPI's own dep to 3.7.x is what
+	guarantees we never accidentally reference a type that doesn't exist in the
+	oldest version we support - the dimster-spi module would refuse to compile if
+	someone added a 4.2-only type to an interface signature.
+
+	The compile scope means kafka-clients 3.7.x transitively flows to dimster-core
+	(which has no direct kafka-clients dep of its own), giving its wrapper code a
+	stable subset of types to compile against. At runtime in a per-flavor package
+	(e.g. package-4.2.0), the per-version impl module declares its own
+	kafka-clients at compile scope at depth 2 (e.g. 4.2.0); the spi-transitive
+	3.7.x is at depth 3. Maven's nearest-wins resolution picks the depth-2 version,
+	so the runtime classpath gets exactly one kafka-clients (the per-flavor one)
+	while compile-time only sees the 3.7.x stable subset.
+	-->
+
+	<properties>
+		<!-- Oldest Kafka client version this SPI supports. Anything in the SPI must
+		     compile against this version; if a 4.2+ type slips into a signature, the
+		     module fails to build, which is the early-warning we want. -->
+		<kafka.spi.baseline.version>3.7.2</kafka.spi.baseline.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.apache.kafka</groupId>
+			<artifactId>kafka-clients</artifactId>
+			<version>${kafka.spi.baseline.version}</version>
+		</dependency>
+	</dependencies>
+
+</project>

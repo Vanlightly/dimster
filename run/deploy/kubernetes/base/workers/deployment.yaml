@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benchmark-worker
+  namespace: dimster
+  labels:
+    app: benchmark-worker
+spec:
+  replicas: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: benchmark-worker
+  template:
+    metadata:
+      labels:
+        app: benchmark-worker
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: dimster:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              cd /benchmark
+              bin/benchmark-worker --port 8080
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics-bk
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          env:
+            - name: HEAP_OPTS
+              value: "-Xms2G -Xmx4G"
+            - name: DIMSTER_LOG_FILE
+              value: "/dimster/logs/worker.log"
+          volumeMounts:
+            # emptyDir-backed log directory. Survives the Ctrl+C cycle (CLI
+            # detach/reattach) but not pod restarts — that's an accepted
+            # trade-off; `kubectl logs --previous` covers single restarts as
+            # a fallback. RWO results PVC can't be shared across worker
+            # replicas so a per-pod emptyDir is the simplest approach.
+            - name: dimster-logs
+              mountPath: /dimster/logs
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "500m"
+              memory: "4Gi"
+      volumes:
+        - name: dimster-logs
+          emptyDir: {}

@@ -1,0 +1,47 @@
+name: Share correctness check (concurrent)
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldowmMinutes: 1
+
+correctnessConfig:
+  testMode: CONCURRENT
+  testDurationMinutes: 30
+  gracePeriodSeconds: 900
+  detectDuplicates: true
+  detectOutOfOrder: true
+  enableCrc: true
+  failOnLoss: true
+  failOnDuplicates: false
+  failOnOutOfOrder: true
+  failOnCrc: true
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageSize: 1000
+  consumerGroupsPerTopic: 1
+  consumerType: SHARE_GROUP
+  consumersPerGroup: 10
+  producersPerTopic: 20
+  producerRate: 200000
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+      enable.idempotence: true
+    classicConsumerConfig:
+      auto.offset.reset: earliest
+      enable.auto.commit: false
+      dimster.commit.mode: CommitAsync
+      dimster.commit.linger.ms: 0
+    shareConsumerConfig:
+      max.poll.records: 500
+      share.acknowledgement.mode: implicit
+      share.acquire.mode: batch_optimized
+      dimster.commit.mode: Poll
+      dimster.commit.linger.ms: 0
+

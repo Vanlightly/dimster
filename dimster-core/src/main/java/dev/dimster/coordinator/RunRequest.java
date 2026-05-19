@@ -1,0 +1,30 @@
+package dev.dimster.coordinator;
+
+import java.util.List;
+import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record RunRequest(
+    String mode,
+    String kafkaConfigYaml,
+    Map<String, String> workloads,
+    List<String> workers,
+    String topology,
+    String workerRatio,
+    Integer producerWorkers,
+    Integer consumerWorkers,
+    String outputDir,
+    String system,
+    String environment,
+    String hardware,
+    // CLI-chosen results subdirectory name (yyyy-MM-dd-HH-mm-ss). When set,
+    // CoordinatorServer writes results into {outputDir}/{resultsSubdir}
+    // instead of generating its own timestamp. Lets the CLI stage workload/
+    // kafka/broker config captures into the same directory the coordinator
+    // will fill with result JSONs. Optional for backwards compatibility:
+    // older clients that don't send this field still get the original
+    // server-generated timestamp behavior.
+    String resultsSubdir
+) {}

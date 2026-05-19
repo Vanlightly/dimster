@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-jmx-config
+  namespace: dimster
+data:
+  jmx-exporter.yml: |
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      # Broker topic metrics (with topic label)
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>(\w+)
+        name: kafka_server_brokertopicmetrics_$1_$3
+        labels:
+          topic: $2
+        type: GAUGE
+      # Broker topic metrics (aggregate)
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+)><>(\w+)
+        name: kafka_server_brokertopicmetrics_$1_$2
+        type: GAUGE
+
+      # Request metrics (with error label)
+      - pattern: kafka.network<type=RequestMetrics, name=(.+), request=(.+), error=(.+)><>(\w+)
+        name: kafka_network_requestmetrics_$1_$4
+        labels:
+          request: $2
+          error: $3
+        type: GAUGE
+      # Request metrics (without error label)
+      - pattern: kafka.network<type=RequestMetrics, name=(.+), request=(.+)><>(\w+)
+        name: kafka_network_requestmetrics_$1_$3
+        labels:
+          request: $2
+        type: GAUGE
+
+      # Request handler pool
+      - pattern: kafka.server<type=KafkaRequestHandlerPool, name=(.+)><>(\w+)
+        name: kafka_server_requesthandlerpool_$1_$2
+        type: GAUGE
+
+      # Socket server
+      - pattern: kafka.network<type=SocketServer, name=(.+)><>(\w+)
+        name: kafka_network_socketserver_$1_$2
+        type: GAUGE
+
+      # Network processor
+      - pattern: kafka.network<type=Processor, name=(.+), networkProcessor=(.+)><>(\w+)
+        name: kafka_network_processor_$1_$3
+        labels:
+          processor: $2
+        type: GAUGE
+
+      # Delayed operation purgatory
+      - pattern: kafka.server<type=DelayedOperationPurgatory, name=(.+), delayedOperation=(.+)><>(\w+)
+        name: kafka_server_delayedoperationpurgatory_$1_$3
+        labels:
+          operation: $2
+        type: GAUGE
+
+      # Replica manager
+      - pattern: kafka.server<type=ReplicaManager, name=(.+)><>(\w+)
+        name: kafka_server_replicamanager_$1_$2
+        type: GAUGE
+
+      # Replica fetcher
+      - pattern: kafka.server<type=ReplicaFetcherManager, name=(.+), clientId=(.+)><>(\w+)
+        name: kafka_server_replicafetchermanager_$1_$3
+        labels:
+          clientid: $2
+        type: GAUGE
+
+      # Log flush stats
+      - pattern: kafka.log<type=LogFlushStats, name=(.+)><>(\w+)
+        name: kafka_log_logflushstats_$1_$2
+        type: GAUGE
+
+      # Log cleaner
+      - pattern: kafka.log<type=LogCleaner, name=(.+)><>(\w+)
+        name: kafka_log_logcleaner_$1_$2
+        type: GAUGE
+      - pattern: kafka.log<type=LogCleanerManager, name=(.+)><>(\w+)
+        name: kafka_log_logcleanermanager_$1_$2
+        type: GAUGE
+
+      # Partition metrics
+      - pattern: kafka.cluster<type=Partition, name=(.+), topic=(.+), partition=(.+)><>(\w+)
+        name: kafka_cluster_partition_$1_$4
+        labels:
+          topic: $2
+          partition: $3
+        type: GAUGE
+
+      # Controller metrics
+      - pattern: kafka.controller<type=KafkaController, name=(.+)><>(\w+)
+        name: kafka_controller_kafkacontroller_$1_$2
+        type: GAUGE
+      - pattern: kafka.controller<type=ControllerStats, name=(.+)><>(\w+)
+        name: kafka_controller_controllerstats_$1_$2
+        type: GAUGE
+
+      # Group coordinator
+      - pattern: kafka.coordinator.group<type=GroupMetadataManager, name=(.+)><>(\w+)
+        name: kafka_coordinator_group_groupmetadatamanager_$1_$2
+        type: GAUGE
+
+      # Transaction coordinator
+      - pattern: kafka.coordinator.transaction<type=TransactionMarkerChannelManager, name=(.+)><>(\w+)
+        name: kafka_coordinator_transaction_markerchannel_$1_$2
+        type: GAUGE
+
+      # KafkaServer metrics (broker state, yammer metrics count)
+      - pattern: kafka.server<type=KafkaServer, name=(.+)><>(\w+)
+        name: kafka_server_kafkaserver_$1_$2
+        type: GAUGE
+
+      # JVM metrics
+      - pattern: java.lang<type=Memory><HeapMemoryUsage>(\w+)
+        name: jvm_heap_memory_$1
+        type: GAUGE
+      - pattern: java.lang<type=Memory><NonHeapMemoryUsage>(\w+)
+        name: jvm_nonheap_memory_$1
+        type: GAUGE
+      - pattern: java.lang<type=GarbageCollector, name=(.+)><>CollectionCount
+        name: jvm_gc_collection_count
+        labels:
+          gc: $1
+        type: COUNTER
+      - pattern: java.lang<type=GarbageCollector, name=(.+)><>CollectionTime
+        name: jvm_gc_collection_time_ms
+        labels:
+          gc: $1
+        type: COUNTER
+      - pattern: java.lang<type=Threading><>ThreadCount
+        name: jvm_thread_count
+        type: GAUGE
+      - pattern: java.lang<type=OperatingSystem><>(\w+)
+        name: jvm_os_$1
+        type: GAUGE
+
+      # Share group coordinator
+      - pattern: kafka.coordinator.share<type=(.+), name=(.+)><>(\w+)
+        name: kafka_coordinator_share_$1_$2_$3
+        type: GAUGE
+
+      # Catch-all for any remaining metrics
+      - pattern: ".*"

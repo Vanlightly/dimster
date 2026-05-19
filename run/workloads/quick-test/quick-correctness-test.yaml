@@ -1,0 +1,29 @@
+name: Quick correctness check
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+correctnessConfig:
+  testMode: CONCURRENT
+  testDurationMinutes: 2
+  gracePeriodSeconds: 120
+  detectDuplicates: true
+  detectOutOfOrder: true
+  enableCrc: true
+  failOnLoss: true
+  failOnDuplicates: false
+  failOnOutOfOrder: true
+  failOnCrc: true
+
+baseWorkload:
+  topics: 2
+  partitionsPerTopic: 6
+  messageDistributor: "NO_KEY"
+  messageSize: 100
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 1
+  producerRate: 1000
