@@ -184,9 +184,13 @@ Highlights:
 - [Deployment](docs/deployment/README.md) — what Dimster expects from any cluster; per-target guides.
 - [CLI Reference](docs/reference/cli.md) · [`dimster-config.yaml`](docs/reference/dimster-config.md) · [Workload Reference](docs/reference/workloads.md).
 
-## Inspiration
+## AI assisted development and inspiration
 
-Heavily inspired by [OpenMessaging Benchmark](https://github.com/openmessaging/benchmark), but diverges on a few things:
+Dimster has been developed with a mix of by-hand coding and Claude Code. The Java-based benchmark framework code has had a lot of oversight and review of AI-generated code, with the CLI, k8s manifests and charting being primarily delegated to Claude. Claude wrote most of the docs with human edits, you may find some em-dashes in there sorry!
+
+While Claude assisted in development, Dimster has been run extensively by humans and users should find it to be very reliable. Open an issue if you encounter any problems.
+
+The benchmark framework design is heavily inspired by [OpenMessaging Benchmark](https://github.com/openmessaging/benchmark), but diverges on a few things:
 
 - **Kafka-centric**, built as an in-house perf tool at Confluent for Kafka testing. For other systems, use OpenMessaging Benchmark.
 - **Dimensional testing as a first-class primitive**.
