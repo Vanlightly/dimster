@@ -18,6 +18,16 @@ All results are shareable assets:
 - Logs of all Kafka brokers, workers and the coordinator
 - Grafana dashboards converted to HTML files
 
+Latency charts examples:
+
+![e2e latency ](./docs/images/cg-vs-sg-50mbs-e2e-dist.png)
+
+*Fig 1. End-to-end latencies distribution*
+
+![e2e latency ](./docs/images/cg-vs-sg-50mbs-e2e-over-time.png)
+
+*Fig 2. End-to-end latencies over time*
+
 Run fully automated test suites or use interactive mode to shape the workload as it runs.
 
 > **Status: 0.x — early, expect change.** Workload schema, CLI flags, and deployment manifests may shift between minor versions. See [CHANGELOG.md](CHANGELOG.md) for what's changed. Always rebuild the CLI and Dimster framework after a `git pull`.
@@ -26,7 +36,7 @@ Run fully automated test suites or use interactive mode to shape the workload as
 
 A Dimster test campaign is formed from one or more scenarios, where each scenario consists of one or more test points which varies a selected dimension or dimensions. Each scenario generates a set of charts where the test points are the data series. Use this format to ask questions.
 
-**"How does end-to-end latency change as I scale share consumers from 1 to 50?"**
+### "How does end-to-end latency change as I scale share consumers from 1 to 50?"
 
 `dimster run <env> -w workload.yaml` executes the test points.
 
@@ -47,7 +57,7 @@ scenarios:
 
 One set of charts with 6 data series.
 
-**"How does linger.ms and batch.size impact throughput and latency?"**
+### "How does linger.ms and batch.size impact throughput and latency?"
 
 One test campaign with two scenarios exploring `batch.size` as a dimension and then `linger.ms` as a dimension.
 
@@ -71,7 +81,7 @@ scenarios:
 
 Two sets of charts with 6 and 3 data series.
 
-**"How do CONSUMER_GROUP consumers compare to SHARE_GROUP at three throughput levels?"**
+### "How do CONSUMER_GROUP consumers compare to SHARE_GROUP at three throughput levels?"
 
 ```yaml
 scenarios:
@@ -91,25 +101,59 @@ scenarios:
 
 Three sets of charts with two data series.
 
-**"What's the highest throughput my cluster sustains under p75 ≤ 50 ms?"**
+###  "What's the highest throughput my cluster sustains under p75 ≤ 50 ms?"
 
 `dimster explore` ramps the rate, binary-searches for the breaking point, then sustains the discovered ceiling. Create multiple scenarios and test points, fully automated.
 
-**"Does `acks=1` actually lose messages under broker churn?"**
+![Sustainable throughput](./docs/images/explore-sharegroup-1-part-throughput.png)
+
+*Fig 3. Peak sustainable throughput on a single partition as consumers scale out*
+
+
+### "Does `acks=1` actually lose messages under broker churn?"
 
 `dimster correctness` produces sequentially-keyed payloads and checks every one for loss, duplication, ordering, and CRC integrity — pass/fail with per-detector counts.
 
-**How fast can my consumers drain a backlog under load?**
+### How fast can my consumers drain a backlog under load?
 
 `dimster drain-backlog` builds a backlog then starts consumers to time how long it takes to drain it. Optionally configure a producer load while the drain takes place.
 
-**What hardware requirements in terms of network and disk bandwidth does my benchmark require?**
+![Backlog drain](./docs/images/backlog-drain-under-load.png)
+
+*Fig 4. Backlog drain under load*
+
+### What hardware requirements in terms of network and disk bandwidth does my benchmark require?
 
 `dimster resources` takes your workload file and tells you the amount of resources needed to run it.
 
+```
+./dimster resources -b 3 -w run/workloads/run-test/run-200MBs-classic-vs-share.yaml
+
+=== Workload: 200MBs-classic-vs-share (run) ===
+
+  Scenario: 200-MB/s (RF=3)
+
+  LABEL                     INGRESS       REP IN      REP OUT     CONS OUT       NET IN      NET OUT    NET TOTAL      DISK WR
+  consumer-group         200.0 MB/s   400.0 MB/s   400.0 MB/s   200.0 MB/s   600.0 MB/s   600.0 MB/s     1.2 GB/s   600.0 MB/s
+  share-group            200.0 MB/s   400.0 MB/s   400.0 MB/s   200.0 MB/s   600.0 MB/s   600.0 MB/s     1.2 GB/s   600.0 MB/s
+
+  Per broker (3 brokers):
+  LABEL                     INGRESS       REP IN      REP OUT     CONS OUT       NET IN      NET OUT    NET TOTAL      DISK WR
+  consumer-group          66.7 MB/s   133.3 MB/s   133.3 MB/s    66.7 MB/s   200.0 MB/s   200.0 MB/s   400.0 MB/s   200.0 MB/s
+  share-group             66.7 MB/s   133.3 MB/s   133.3 MB/s    66.7 MB/s   200.0 MB/s   200.0 MB/s   400.0 MB/s   200.0 MB/s
+
+  Peak: with 3 brokers, each broker must handle up to 400.0 MB/s network and 200.0 MB/s disk write
+  Peak aggregate: 1.2 GB/s network total, 600.0 MB/s disk write total
+
+  Note: per-broker numbers assume uniform load distribution and do not account
+  for increased load when brokers are offline. This is not a capacity planning tool.
+```
+
 ## What a campaign produces
 
-*[Chart screenshot — TODO]*
+![Dimster result dir](./docs/images/dimster-results.png)
+
+*Fig 5. A result directory*
 
 Every run writes a single timestamped folder containing everything you need to reproduce, share, or publish the result:
 
@@ -122,6 +166,8 @@ Every run writes a single timestamped folder containing everything you need to r
 If you can ship the folder, someone else can read the result. If you have the workload YAML, you can re-run it.
 
 ## Version & compatibility
+
+Choose the broker version and the client versions. All versions 3.0+ are supported.
 
 ## Getting started
 

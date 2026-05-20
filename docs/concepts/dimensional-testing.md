@@ -105,32 +105,42 @@ scenarios:
 
 Charts are generated from the results, including throughputs and latencies. Each set of charts is duplicated for each scenario and the test points are series on each chart.
 
-For example, the following test campaign has a single scenario with `linger.ms` as a dimension of 4 test points.
+For example, the following test campaign has a single scenario with `consumersPerGroup` as a dimension of 6 test points.
 
 ```yaml
-name: Quick run test - linger.ms dimension
-
 runConfig:
-  testDurationMinutes: 2
+  testDurationMinutes: 4
   warmupDurationMinutes: 1
 
 baseWorkload:
   topics: 1
-  partitionsPerTopic: 6
-  messageDistributor: "NO_KEY"
-  messageSize: 1000
-  consumerType: CONSUMER_GROUP
+  partitionsPerTopic: 10
+  keyDistributor: "KEY_ROUND_ROBIN"
+  messageSize: 500
+  consumerType: SHARE_GROUP
   consumerGroupsPerTopic: 1
-  consumersPerGroup: 6
-  producersPerTopic: 6
-  producerRate: 1000
+  consumersPerGroup: 1
+  producersPerTopic: 10
+  producerRate: 100000
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+      enable.idempotence: true
+      linger.ms: 0
+    shareConsumerConfig:
+      max.poll.records: 500
+      share.acknowledgement.mode: implicit
+      share.acquire.mode: batch_optimized
+      dimster.commit.mode: Poll
 
 scenarios:
-  - name: linger-ms
-    label: ["linger-0ms", "linger-10ms", "linger-50ms", "linger-100ms"]
-    kafkaConfig:
-      producerConfig:
-        linger.ms: [0, 10, 50, 100]
+  - name: 500k-msgs-defaults
+    producerRate: 500000
+    label: [ "10-con", "50-con", "100-con", "250-con", "500-con", "1000-con" ]
+    consumersPerGroup: [10, 50, 100, 250, 500, 1000]
 ```
 
 This produced the followed e2e latency distribution plot:
@@ -139,17 +149,17 @@ This produced the followed e2e latency distribution plot:
 
 *Fig 1. End-to-end latencies of the four test points*
 
-You can select a portion of the x-axis to see a specific range in more detail:
+The e2e latency of 1000 consumers dominated. You can unselect a subset of series to see the remaining series better:
 
-![e2e latency all](../images/e2e_latency_chart_zoomed.png)
+![e2e latency series subset](../images/e2e_latency_chart_series.png)
 
-*Fig 2. End-to-end latencies of the four test points, zoomed into a sub-range of latencies*
+*Fig 2. End-to-end latencies with 1000 consumers unselected*
 
-Or select only a subset of the test points:
+You can also select a portion of the x-axis to see a specific range in more detail:
 
-![e2e latency all](../images/e2e_latency_chart_series.png)
+![e2e latency zoomed](../images/e2e_latency_chart_zoomed.png)
 
-*Fig 3. End-to-end latencies of two of the test points*
+*Fig 3. End-to-end latencies of the four test points, zoomed into a sub-range of latencies*
 
 Charts and result rows identify each test point by its label. Two pieces compose the final label:
 
