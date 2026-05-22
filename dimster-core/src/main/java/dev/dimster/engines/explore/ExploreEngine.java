@@ -743,6 +743,16 @@ public class ExploreEngine extends BaseEngine {
                 consecutiveBad = 0;
                 goodChecks++;
             }
+
+            // Early exit if it's mathematically impossible to reach 80% good
+            int remaining = totalChecks - totalChecked;
+            int bestPossibleGood = goodChecks + remaining;
+            if (bestPossibleGood < totalChecks * 0.8) {
+                int badChecks = totalChecked - goodChecks;
+                log.info("    Early exit: too many bad checks ({}/{}), cannot reach 80% good",
+                        badChecks, totalChecked);
+                return false;
+            }
         }
 
         // Survived the full window — check overall health
@@ -844,7 +854,8 @@ public class ExploreEngine extends BaseEngine {
                         latFormat.format(measured.e2eLatencyAtPercentile),
                         CATASTROPHIC_E2E_MULTIPLIER,
                         latFormat.format(threshold));
-                break;
+                return new SustainResult(false, goodIntervals, totalChecked,
+                        aggPublishLatency, aggE2eLatency, aggE2eDeliveryLatency);
             }
 
             // Early exit if it's mathematically impossible to reach 80% good
