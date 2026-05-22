@@ -867,20 +867,31 @@ public class LocalWorker implements Worker {
         // pending sends — but waiting first reduces the number of sends
         // that race against close.
         try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        // Phase 2: close + remove. close() is blocking and flushes any
-        // remaining in-flight sends.
+        // Phase 2: snapshot matching wrappers, drop them from `producers`
+        // before closing (so readers don't see closing-but-still-listed
+        // wrappers), then close in parallel. close() is blocking and flushes
+        // any remaining in-flight sends; doing them concurrently keeps a
+        // many-producer restart from serialising on per-producer flush time.
+        Set<String> toRemove = new HashSet<>(producerNames);
+        List<KafkaProducerWrapper> toClose = new ArrayList<>();
         for (Iterator<KafkaProducerWrapper> it = producers.iterator(); it.hasNext(); ) {
             KafkaProducerWrapper p = it.next();
-            if (producerNames.contains(p.clientName())) {
-                try {
-                    p.close();
-                    log.info("REMOVE-PRODUCER {} closed", p.clientName());
-                } catch (Exception e) {
-                    log.warn("REMOVE-PRODUCER {} close failed: {}", p.clientName(), e.toString());
-                }
+            if (toRemove.contains(p.clientName())) {
+                toClose.add(p);
                 it.remove();
             }
         }
+        // Wrap so per-name success / failure logging survives the parallel
+        // close (closeInParallel's own catch only carries the label).
+        List<AutoCloseable> wrapped = toClose.stream().map(p -> (AutoCloseable) () -> {
+            try {
+                p.close();
+                log.info("REMOVE-PRODUCER {} closed", p.clientName());
+            } catch (Exception e) {
+                log.warn("REMOVE-PRODUCER {} close failed: {}", p.clientName(), e.toString());
+            }
+        }).toList();
+        closeInParallel("producers", wrapped);
         // Clean up stoppedProducerNames for ALL requested names, not just
         // those whose wrappers we found. A name can appear in the request
         // without a corresponding wrapper if a prior failed
@@ -939,20 +950,30 @@ public class LocalWorker implements Worker {
         // consumerSet. We rebuild consumerSet rather than mutate so the
         // record's invariants stay intact.
         Set<String> toRemove = new HashSet<>(consumerNames);
-        // Close wrappers first so poll loops exit promptly.
+        // Snapshot matching wrappers and drop them from `consumers` before
+        // closing — readers like getHealth / updateKafkaMetricsSources won't
+        // see closing-but-still-listed wrappers — then close in parallel.
+        List<AutoCloseable> toClose = new ArrayList<>();
         for (Iterator<AutoCloseable> it = consumers.iterator(); it.hasNext(); ) {
             AutoCloseable c = it.next();
             String name = consumerName(c);
             if (name != null && toRemove.contains(name)) {
-                try {
-                    c.close();
-                    log.info("REMOVE-CONSUMER {} closed", name);
-                } catch (Exception e) {
-                    log.warn("REMOVE-CONSUMER {} close failed: {}", name, e.toString());
-                }
+                toClose.add(c);
                 it.remove();
             }
         }
+        // Wrap so per-name success / failure logging survives the parallel
+        // close (closeInParallel's own catch only carries the label).
+        List<AutoCloseable> wrapped = toClose.stream().map(c -> (AutoCloseable) () -> {
+            String name = consumerName(c);
+            try {
+                c.close();
+                log.info("REMOVE-CONSUMER {} closed", name);
+            } catch (Exception e) {
+                log.warn("REMOVE-CONSUMER {} close failed: {}", name, e.toString());
+            }
+        }).toList();
+        closeInParallel("consumers", wrapped);
         if (consumerSet != null) {
             List<VirtualConsumer> kept = new ArrayList<>();
             for (VirtualConsumer vc : consumerSet.consumers()) {
