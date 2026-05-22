@@ -19,3 +19,13 @@ non-breaking changes only.
 ## [0.1.0]
 
 Initial public release.
+
+## [0.1.1]
+
+### Added
+
+- Users can set environment variables in Kafka pods via the Dimster config.
+
+### Changed
+
+- Restarting producers and consumers as part of a --modify command now restarts them in parallel, rather than sequentially.

@@ -237,6 +237,12 @@ pub struct KafkaEnvConfig {
     pub pvc_size: Option<String>,
     pub pvc_storage_class: Option<String>,
     pub heap: Option<String>,
+    /// Arbitrary environment variables to set on broker pods. Env var names
+    /// are case-sensitive and passed through verbatim (e.g. "KAFKA_OPTS",
+    /// "CUSTOM_VAR"). When both `heap` and `env.KAFKA_HEAP_OPTS` are set,
+    /// the explicit env map value wins.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     #[serde(default)]
     pub requests: Option<ResourceRequests>,
     pub broker_config: Option<String>,

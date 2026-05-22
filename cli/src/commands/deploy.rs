@@ -405,6 +405,24 @@ fn deploy(
         // Derive KAFKA_CPU (integer cores for thread calculation) from K8s CPU value
         let kafka_cpu_cores = cpu_to_cores(kafka_cpu);
 
+        // Build merged env var map:
+        // 1. Start with heap as KAFKA_HEAP_OPTS (if set)
+        // 2. Overlay kafka.env (if set) — explicit wins over sugar
+        let mut user_env: HashMap<String, String> = HashMap::new();
+        if let Some(h) = kafka.and_then(|k| k.heap.as_deref()) {
+            user_env.insert("KAFKA_HEAP_OPTS".to_string(), h.to_string());
+        }
+        if let Some(k) = kafka {
+            for (name, value) in &k.env {
+                user_env.insert(name.clone(), value.clone());
+            }
+        }
+
+        // Effective heap value: user_env if present (handles env override), else kafka_heap default
+        let effective_kafka_heap = user_env.get("KAFKA_HEAP_OPTS")
+            .map(|s| s.as_str())
+            .unwrap_or(kafka_heap);
+
         patches.push_str(&format!(
             r#"  - target:
       kind: StatefulSet
@@ -431,7 +449,7 @@ fn deploy(
         path: /spec/template/spec/containers/0/env/2
         value:
           name: KAFKA_HEAP_OPTS
-          value: "{kafka_heap}"
+          value: "{effective_kafka_heap}"
       - op: replace
         path: /spec/template/spec/containers/0/env/3
         value:
@@ -442,6 +460,52 @@ fn deploy(
         value: {kafka_storage}
 "#
         ));
+
+        // If user_env contains KAFKA_OPTS, replace env/4 with JMX agent + user opts.
+        // The JMX agent is always prepended to preserve Grafana metrics.
+        if let Some(user_opts) = user_env.get("KAFKA_OPTS") {
+            let combined_opts = format!(
+                "-javaagent:/opt/jmx-exporter/jmx_prometheus_javaagent.jar=9404:/opt/jmx-exporter/config.yml {}",
+                user_opts
+            );
+            patches.push_str(&format!(
+                r#"  - target:
+      kind: StatefulSet
+      name: kafka
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env/4
+        value:
+          name: KAFKA_OPTS
+          value: "{}"
+"#,
+                combined_opts
+            ));
+        }
+
+        // Patch in any additional env vars from kafka.env that aren't hardcoded above.
+        // The hardcoded indices are: 0=KAFKA_REPLICAS, 1=KAFKA_CLUSTER_ID, 2=KAFKA_HEAP_OPTS,
+        // 3=KAFKA_CPU, 4=KAFKA_OPTS. Skip those and add everything else starting at index 5.
+        let hardcoded = ["KAFKA_REPLICAS", "KAFKA_CLUSTER_ID", "KAFKA_HEAP_OPTS", "KAFKA_CPU", "KAFKA_OPTS"];
+        let mut extra_env_index = 5;
+        for (name, value) in user_env.iter() {
+            if !hardcoded.contains(&name.as_str()) {
+                patches.push_str(&format!(
+                    r#"  - target:
+      kind: StatefulSet
+      name: kafka
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/{}
+        value:
+          name: {}
+          value: "{}"
+"#,
+                    extra_env_index, name, value
+                ));
+                extra_env_index += 1;
+            }
+        }
 
         // Kafka node affinity
         if let Some(label) = kafka_node_label {

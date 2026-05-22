@@ -52,7 +52,13 @@ environments:
       version: "4.2.0"
     #   replicas: 1          # default: 1
     #   brokerConfig: "run/broker-configs/single-broker.yaml"  # broker config file
-    #   heap: "-Xms256M -Xmx512M"
+    #   heap: "-Xms256M -Xmx512M"  # Shorthand for env.KAFKA_HEAP_OPTS
+    #   env:  # Arbitrary environment variables for the broker pods
+    #     # If both heap and env.KAFKA_HEAP_OPTS are set, env wins.
+    #     # The JMX exporter agent is automatically prepended to KAFKA_OPTS.
+    #     KAFKA_JVM_PERFORMANCE_OPTS: "-server -XX:+UseG1GC -XX:MaxGCPauseMillis=50"
+    #     KAFKA_OPTS: "-XX:+AlwaysPreTouch"  # JMX agent automatically prepended
+    #     CUSTOM_VAR: "some-value"
     #   requests:
     #     cpu: "250m"
     #     memory: "512Mi"
@@ -133,7 +139,12 @@ environments:
   #     replicas: 3
   #     pvcSize: 500Gi
   #     pvcStorageClass: gp3
-  #     heap: "-Xms8G -Xmx8G"
+  #     heap: "-Xms8G -Xmx8G"  # Shorthand for env.KAFKA_HEAP_OPTS
+  #     # env:  # Arbitrary environment variables for the broker pods
+  #     #   # If both heap and env.KAFKA_HEAP_OPTS are set, env wins.
+  #     #   # The JMX exporter agent is automatically prepended to KAFKA_OPTS.
+  #     #   KAFKA_JVM_PERFORMANCE_OPTS: "-server -XX:+UseG1GC -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=16M"
+  #     #   KAFKA_OPTS: "-XX:+AlwaysPreTouch"  # JMX agent automatically prepended
   #     requests:
   #       cpu: "6"
   #       memory: "24Gi"

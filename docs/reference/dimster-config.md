@@ -41,6 +41,8 @@ environments:
       pvcSize: <string>         # Per-broker PVC size (e.g. "500Gi")
       pvcStorageClass: <string> # Kubernetes StorageClass for broker PVCs
       heap: <string>            # JVM heap flags
+      env:                      # Arbitrary environment variables for broker pods
+        <ENV_VAR_NAME>: <value>
       requests:                 # Kubernetes resource requests/limits
         cpu: <string>
         memory: <string>
@@ -153,7 +155,8 @@ Kafka broker deployment settings. Only used when `deploy` is `full`.
 | `version` | string | -- | Kafka version (e.g. `4.2.0`). Used as the image tag. The default `apache/kafka` repository's oldest published tag is `3.7` — to benchmark against an older broker, point `image` at a different repository (e.g. a Bitnami or custom build). |
 | `pvcSize` | string | -- | Persistent volume size per broker (e.g. `"500Gi"`). |
 | `pvcStorageClass` | string | -- | Kubernetes StorageClass name for broker PVCs. |
-| `heap` | string | -- | JVM heap flags (e.g. `"-Xms8G -Xmx8G"`). |
+| `heap` | string | -- | JVM heap flags (e.g. `"-Xms8G -Xmx8G"`). Shorthand for `env.KAFKA_HEAP_OPTS`. |
+| `env` | map | -- | Arbitrary environment variables set on broker pods. Keys are env var names (case-sensitive, e.g. `KAFKA_OPTS`, `CUSTOM_VAR`). When both `heap` and `env.KAFKA_HEAP_OPTS` are set, the explicit `env` value wins. Use for JVM tuning, custom Docker images, or any broker startup config that requires env vars. See [Environment Variables and JVM Options](#environment-variables-and-jvm-options). |
 | `requests.cpu` | string | -- | CPU request/limit. Also sets the `KAFKA_CPU` env var (integer cores, used for Kafka thread calculations). Accepts millicores (e.g. `"250m"`) or whole cores (e.g. `"6"`). |
 | `requests.memory` | string | -- | Memory request/limit (e.g. `"16Gi"`). |
 | `brokerConfig` | string | -- | Path to a broker config YAML file. Properties are injected as `KAFKA_EXTRA_CONFIG` at deploy time. See [Broker Configuration](#broker-configuration). |
@@ -311,6 +314,63 @@ kafka:
 ### Single-broker mode
 
 When `replicas` is 1 and no `brokerConfig` is specified, Dimster automatically applies a single-broker ConfigMap with adjusted replication factors (all set to 1). If you specify a `brokerConfig` with `replicas: 1`, the automatic single-broker config is skipped and your broker config is used instead -- make sure it sets appropriate replication factors for a single broker.
+
+---
+
+## Environment Variables and JVM Options
+
+The `kafka.env` field lets you set arbitrary environment variables on broker pods. This is useful for:
+
+- JVM tuning (when using the `apache/kafka` image or similar)
+- Custom startup scripts that read env vars
+- Overriding image-specific defaults
+- Working with non-Apache Kafka images (e.g. Confluent, Redpanda) that use different env var names
+
+### Using env with apache/kafka
+
+The `apache/kafka` image's `kafka-run-class.sh` script reads several env vars to control JVM behavior:
+
+- **`KAFKA_HEAP_OPTS`** — heap size (e.g. `"-Xms8G -Xmx8G"`). Shorthand: use `kafka.heap` instead of setting this directly.
+- **`KAFKA_JVM_PERFORMANCE_OPTS`** — GC selector and performance flags. Upstream default: `"-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent -XX:MaxInlineLevel=15"`. Set this to replace the defaults (e.g. switch to ZGC, tune G1 parameters).
+- **`KAFKA_OPTS`** — arbitrary JVM flags. The JMX exporter agent (`-javaagent:/opt/jmx-exporter/jmx_prometheus_javaagent.jar=9404:/opt/jmx-exporter/config.yml`) is automatically prepended when you set this via `env`, so Grafana metrics always work. Any flags you specify are appended after the agent.
+- **`KAFKA_GC_LOG_OPTS`** — GC logging config. Upstream default writes to `$LOG_DIR/kafkaServer-gc.log` with rotation. Override to change log path or rotation settings.
+
+**Example: Replace GC and add diagnostics**
+
+```yaml
+kafka:
+  heap: "-Xms8G -Xmx8G"
+  env:
+    KAFKA_JVM_PERFORMANCE_OPTS: "-server -XX:+UseZGC"
+    KAFKA_OPTS: "-XX:+AlwaysPreTouch -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/kafka-data/heap-dumps/"
+```
+
+Note: The JMX exporter agent is automatically prepended to `KAFKA_OPTS`, so you only need to specify your additional flags.
+
+**Example: Use heap shorthand + tune G1**
+
+The `heap` field is just sugar for `env.KAFKA_HEAP_OPTS`. If you set both, the explicit `env` value wins:
+
+```yaml
+kafka:
+  heap: "-Xms8G -Xmx8G"  # Shorthand
+  env:
+    KAFKA_JVM_PERFORMANCE_OPTS: "-server -XX:+UseG1GC -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=16M -XX:+AlwaysPreTouch"
+```
+
+### Non-Apache images
+
+For custom Docker images that don't use the standard Kafka env var names, set whatever vars your image expects:
+
+```yaml
+kafka:
+  image: myregistry/custom-kafka
+  version: "1.0"
+  env:
+    CUSTOM_HEAP_SIZE: "8G"
+    CUSTOM_GC_TYPE: "G1"
+    MY_FEATURE_FLAG: "enabled"
+```
 
 ---
 
