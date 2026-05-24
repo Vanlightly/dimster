@@ -477,6 +477,7 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
     let mut discard_stats = false;
     let mut skip_phase = false;
     let mut run_for_minutes: Option<i64> = None;
+    let mut restart_consumers_count: Option<i64> = None;
     let mut workload_overrides: HashMap<String, Value> = HashMap::new();
     let mut kafka_overrides: HashMap<String, Value> = HashMap::new();
 
@@ -493,30 +494,81 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
                     "--run-for-minutes value must be an integer, got {}", v))?);
                 continue;
             }
+            "--restart-consumers" => {
+                let v = iter.next().ok_or_else(|| anyhow::anyhow!(
+                    "--restart-consumers requires a value"))?;
+                let count = v.parse::<i64>().map_err(|_| anyhow::anyhow!(
+                    "--restart-consumers value must be an integer, got {}", v))?;
+                if count < 0 {
+                    bail!("--restart-consumers must be >= 0, got {}", count);
+                }
+                restart_consumers_count = Some(count);
+                continue;
+            }
+            "--set" => {
+                // Parse key=value pairs until we hit another flag or end of args
+                while let Some(arg) = iter.next() {
+                    if arg.starts_with("--") {
+                        bail!("--set expects key=value pairs, got flag: {}", arg);
+                    }
+
+                    let (key, value_raw) = arg.split_once('=').ok_or_else(|| anyhow::anyhow!(
+                        "--set expects key=value format, got: {}", arg))?;
+
+                    if key.is_empty() {
+                        bail!("--set: key cannot be empty in: {}", arg);
+                    }
+
+                    let value = coerce_value(value_raw);
+
+                    if let Some(path) = key.strip_prefix("kafkaConfig.") {
+                        if path.is_empty() {
+                            bail!("--set kafkaConfig requires a path, e.g. kafkaConfig.producerConfig.batch.size=65536");
+                        }
+                        kafka_overrides.insert(path.to_string(), value);
+                    } else {
+                        // Whitelist of valid workload field names (from TestPoint record)
+                        const VALID_WORKLOAD_FIELDS: &[&str] = &[
+                            "topics",
+                            "partitionsPerTopic",
+                            "producersPerTopic",
+                            "consumerGroupsPerTopic",
+                            "consumersPerGroup",
+                            "messageSize",
+                            "producerRate",
+                            "messageDistributor",
+                            "messageDistributorSkew",
+                            "consumerType",
+                            "consumerProcMsMin",
+                            "consumerProcMsMax",
+                        ];
+
+                        if !VALID_WORKLOAD_FIELDS.contains(&key) {
+                            bail!("not a supported workload field: {}. Valid fields: {}",
+                                  key, VALID_WORKLOAD_FIELDS.join(", "));
+                        }
+
+                        workload_overrides.insert(key.to_string(), value);
+                    }
+                }
+                continue;
+            }
             _ => {}
         }
-        // Generalized --<name> <value> handling.
-        let name = flag.strip_prefix("--").ok_or_else(|| anyhow::anyhow!(
-            "unexpected modify arg (expected --flag): {}", flag))?;
-        let value_raw = iter.next().ok_or_else(|| anyhow::anyhow!(
-            "--{} requires a value", name))?;
-        let value = coerce_value(value_raw);
-        if let Some(path) = name.strip_prefix("kafkaConfig.") {
-            if path.is_empty() {
-                bail!("--kafkaConfig requires a path, e.g. --kafkaConfig.producerConfig.batch.size");
-            }
-            kafka_overrides.insert(path.to_string(), value);
-        } else {
-            workload_overrides.insert(name.to_string(), value);
-        }
+
+        // If we get here, it's an unrecognized flag
+        bail!("unrecognized modify flag: {}. Valid action flags: --terminate, --discard-stats, \
+               --skip-phase, --run-for-minutes, --restart-consumers, --set", flag);
     }
 
     // Client-side combo validation — mirrors the coordinator-side rules so
     // the operator gets a fast, descriptive error instead of a 409 round-trip.
     let has_field_overrides = !workload_overrides.is_empty() || !kafka_overrides.is_empty();
-    if !has_field_overrides && !terminate && !discard_stats && !skip_phase && run_for_minutes.is_none() {
+    if !has_field_overrides && !terminate && !discard_stats && !skip_phase
+       && run_for_minutes.is_none() && restart_consumers_count.is_none() {
         bail!("--modify requires at least one workload override, --kafkaConfig.* override, \
-               or action flag (--terminate / --discard-stats / --run-for-minutes / --skip-phase)");
+               or action flag (--terminate / --discard-stats / --run-for-minutes / \
+               --skip-phase / --restart-consumers)");
     }
     if terminate && (has_field_overrides || discard_stats || skip_phase || run_for_minutes.is_some()) {
         bail!("--terminate must be sent alone (no other --modify fields with it)");
@@ -534,6 +586,10 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
             bail!("--run-for-minutes must be > 0, got {}", m);
         }
     }
+    if restart_consumers_count.is_some() && (has_field_overrides || discard_stats
+       || terminate || skip_phase || run_for_minutes.is_some()) {
+        bail!("--restart-consumers must be sent alone (no other --modify fields with it)");
+    }
 
     // Build the ModifyRequest JSON. Note the Java-side record uses
     // camelCase field names; Jackson with JsonIgnoreProperties tolerates
@@ -549,6 +605,8 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         skip_phase: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         run_for_minutes: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        restart_consumers_count: Option<i64>,
         #[serde(skip_serializing_if = "HashMap::is_empty")]
         workload_overrides: HashMap<String, Value>,
         #[serde(skip_serializing_if = "HashMap::is_empty")]
@@ -559,6 +617,7 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         discard_stats,
         skip_phase,
         run_for_minutes,
+        restart_consumers_count,
         workload_overrides,
         kafka_config_overrides: kafka_overrides,
     };

@@ -120,6 +120,53 @@ public class TestPointMutator {
         return new MutationPlan(mutated, newTopology, actions);
     }
 
+    /**
+     * Build a MutationPlan for the --restart-consumers N action flag.
+     * Restarts exactly N consumers (or all consumers if N >= total count)
+     * without changing the total consumer count. Consumers are selected
+     * by index order: consumers with consumerIdx in [0, N) are restarted.
+     *
+     * @param current           the active test point
+     * @param currentTopology   the active topology
+     * @param requestedCount    how many consumers to restart (from --restart-consumers flag)
+     * @return a MutationPlan containing only the RestartConsumers action
+     * @throws IllegalArgumentException if the request is invalid
+     */
+    public MutationPlan planConsumerRestart(TestPoint current,
+                                           VirtualTopology currentTopology,
+                                           int requestedCount) {
+        if (requestedCount < 0) {
+            throw new IllegalArgumentException("restartConsumersCount must be >= 0, got "
+                    + requestedCount);
+        }
+
+        int totalConsumers = currentTopology.consumers().size();
+        if (totalConsumers == 0) {
+            throw new IllegalArgumentException("no consumers to restart " +
+                    "(topology has 0 consumers)");
+        }
+
+        // If N >= total, restart all consumers; allow N=0 as no-op
+        int actualCount = Math.min(requestedCount, totalConsumers);
+        if (actualCount == 0) {
+            return new MutationPlan(current, currentTopology, List.of());
+        }
+
+        // Select consumers [0..actualCount) by consumerIdx using existing helper
+        List<VirtualConsumer> toRestart = filterConsumersByMaxIdx(currentTopology, actualCount);
+
+        // Build RestartConsumers action with current test point's consumer settings
+        List<DiffAction> actions = new ArrayList<>();
+        actions.add(new DiffAction.RestartConsumers(
+                new ConsumerSet(toRestart, current.consumerType(),
+                        current.consumerProcMsMin(), current.consumerProcMsMax()),
+                String.format("--restart-consumers %d (restarting %d of %d consumers)",
+                        requestedCount, actualCount, totalConsumers)));
+
+        // Return plan with unchanged test point and topology
+        return new MutationPlan(current, currentTopology, actions);
+    }
+
     // ─── Step 1a: workload override application ────────────────────────
 
     /**

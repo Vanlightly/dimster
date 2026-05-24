@@ -516,6 +516,7 @@ public class WorkloadEngine extends BaseEngine {
         }
         boolean discardStats = Boolean.TRUE.equals(req.discardStats());
         Integer runForMinutes = req.runForMinutes();
+        Integer restartConsumersCount = req.restartConsumersCount();
         boolean hasWorkloadOverrides = req.workloadOverrides() != null
                 && !req.workloadOverrides().isEmpty();
         boolean hasKafkaConfigOverrides = req.kafkaConfigOverrides() != null
@@ -523,9 +524,11 @@ public class WorkloadEngine extends BaseEngine {
         boolean hasFieldOverrides = hasWorkloadOverrides || hasKafkaConfigOverrides;
 
         // Cross-kind validation up front.
-        if (!hasFieldOverrides && !terminate && !discardStats && !skipPhase && runForMinutes == null) {
+        if (!hasFieldOverrides && !terminate && !discardStats && !skipPhase && runForMinutes == null
+                && restartConsumersCount == null) {
             return ModifyResult.rejected("at least one workload/kafka override or " +
-                    "action flag (terminate, discardStats, runForMinutes, skipPhase) must be supplied");
+                    "action flag (terminate, discardStats, runForMinutes, skipPhase, " +
+                    "restartConsumersCount) must be supplied");
         }
         if (terminate && (hasFieldOverrides || discardStats || skipPhase || runForMinutes != null)) {
             return ModifyResult.rejected("terminate must be sent alone " +
@@ -555,6 +558,20 @@ public class WorkloadEngine extends BaseEngine {
             return ModifyResult.rejected("skipPhase has no effect during the test phase; " +
                     "use --terminate to end the current test point early");
         }
+        if (restartConsumersCount != null) {
+            if (restartConsumersCount < 0) {
+                return ModifyResult.rejected("restartConsumersCount must be >= 0, got "
+                        + restartConsumersCount);
+            }
+            if (hasFieldOverrides || discardStats || terminate || skipPhase || runForMinutes != null) {
+                return ModifyResult.rejected("restartConsumersCount must be sent alone " +
+                        "(no other modify fields)");
+            }
+            if (!testPhaseActive) {
+                return ModifyResult.rejected("restartConsumersCount is only valid during the test " +
+                        "phase (warmup is in progress or no test point is running)");
+            }
+        }
 
         // Build the per-call modifications log entry; populated as we go.
         RunResult.Modification logEntry = new RunResult.Modification();
@@ -583,6 +600,32 @@ public class WorkloadEngine extends BaseEngine {
             currentModifications.add(logEntry);
             log.info(summary.toString());
             return ModifyResult.ok(summary.toString());
+        }
+        if (restartConsumersCount != null) {
+            TestPointMutator.MutationPlan plan;
+            try {
+                plan = new TestPointMutator(topologyPlanner,
+                        size -> buildPayloads(base, size))
+                        .planConsumerRestart(testPoint, plannedTopology, restartConsumersCount);
+            } catch (IllegalArgumentException e) {
+                log.warn("MODIFY rejected: {}", e.getMessage());
+                return ModifyResult.rejected(e.getMessage());
+            }
+
+            DiffApplier.Result applyResult = new DiffApplier(worker).apply(plan);
+            logEntry.actions = applyResult.appliedActions().isEmpty()
+                    ? null
+                    : new java.util.ArrayList<>(applyResult.appliedActions());
+
+            String countDesc = restartConsumersCount >= plannedTopology.consumers().size()
+                    ? "all " + plannedTopology.consumers().size()
+                    : String.valueOf(restartConsumersCount);
+            summary.append(" restartConsumersCount=").append(countDesc);
+
+            logEntry.restartConsumersCount = restartConsumersCount;
+            currentModifications.add(logEntry);
+            log.info(summary.toString());
+            return applyResult.modifyResult();
         }
         if (discardStats) {
             discardStatsRequested = true;

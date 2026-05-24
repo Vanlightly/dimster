@@ -87,6 +87,8 @@ public class RunResult {
         public Boolean discardStats;
         @JsonInclude(JsonInclude.Include.NON_NULL)
         public Integer runForMinutes;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public Integer restartConsumersCount;
         // Human-readable description of each worker action the diff
         // applier issued, in the order it issued them. E.g.
         //   "adjust-publish-rate to 5000.0"

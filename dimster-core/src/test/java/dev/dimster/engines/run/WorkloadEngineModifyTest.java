@@ -224,11 +224,11 @@ public class WorkloadEngineModifyTest {
         for (int i = 0; i < kvPairs.length; i += 2) {
             map.put((String) kvPairs[i], kvPairs[i + 1]);
         }
-        return new ModifyRequest(null, null, null, null, map, null);
+        return new ModifyRequest(null, null, null, null, null, map, null);
     }
 
     private static ModifyRequest kafkaReq(String dottedPath, Object value) {
-        return new ModifyRequest(null, null, null, null, null, Map.of(dottedPath, value));
+        return new ModifyRequest(null, null, null, null, null, null, Map.of(dottedPath, value));
     }
 
     // ─── Validation: empty + no-test-point ────────────────────────────
@@ -245,7 +245,7 @@ public class WorkloadEngineModifyTest {
     public void rejectsEmptyRequest() throws Exception {
         WorkloadEngine engine = newEngine(new RecordingWorker());
         setBooleanField(engine, "testPointActive", true);
-        ModifyResult r = engine.applyModification(new ModifyRequest(null, null, null, null, null, null));
+        ModifyResult r = engine.applyModification(new ModifyRequest(null, null, null, null, null, null, null));
         assertFalse(r.accepted());
     }
 
@@ -265,7 +265,7 @@ public class WorkloadEngineModifyTest {
         WorkloadEngine engine = newEngine(worker);
         setBooleanField(engine, "testPointActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(true, null, null, null, null, null));
+                new ModifyRequest(true, null, null, null, null, null, null));
         assertTrue(r.message(), r.accepted());
         assertEquals(null, worker.lastRate);
         Field f = WorkloadEngine.class.getDeclaredField("terminateRequested");
@@ -278,7 +278,7 @@ public class WorkloadEngineModifyTest {
         WorkloadEngine engine = newEngine(new RecordingWorker());
         setBooleanField(engine, "testPointActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(true, null, null, null, Map.of("producerRate", 1000.0), null));
+                new ModifyRequest(true, null, null, null, null, Map.of("producerRate", 1000.0), null));
         assertFalse(r.accepted());
         assertTrue(r.message(), r.message().toLowerCase().contains("terminate"));
     }
@@ -288,7 +288,7 @@ public class WorkloadEngineModifyTest {
         WorkloadEngine engine = newEngine(new RecordingWorker());
         setBooleanField(engine, "testPointActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(true, true, null, null, null, null));
+                new ModifyRequest(true, true, null, null, null, null, null));
         assertFalse(r.accepted());
     }
 
@@ -296,7 +296,7 @@ public class WorkloadEngineModifyTest {
     public void terminateRejectedWhenNoTestPointActive() {
         WorkloadEngine engine = newEngine(new RecordingWorker());
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(true, null, null, null, null, null));
+                new ModifyRequest(true, null, null, null, null, null, null));
         assertFalse(r.accepted());
     }
 
@@ -308,7 +308,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", false);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, true, null, null, null, null));
+                new ModifyRequest(null, true, null, null, null, null, null));
         assertFalse(r.accepted());
         assertTrue(r.message(), r.message().toLowerCase().contains("test phase"));
     }
@@ -319,7 +319,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, true, null, null, null, null));
+                new ModifyRequest(null, true, null, null, null, null, null));
         assertTrue(r.message(), r.accepted());
         Field flag = WorkloadEngine.class.getDeclaredField("discardStatsRequested");
         flag.setAccessible(true);
@@ -332,7 +332,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, true, 30, null, null, null));
+                new ModifyRequest(null, true, 30, null, null, null, null));
         assertTrue(r.message(), r.accepted());
         Field ext = WorkloadEngine.class.getDeclaredField("runForMinutesRequested");
         ext.setAccessible(true);
@@ -345,7 +345,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, null, 30, null, null, null));
+                new ModifyRequest(null, null, 30, null, null, null, null));
         assertTrue(r.message(), r.accepted());
     }
 
@@ -355,7 +355,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, true, 0, null, null, null));
+                new ModifyRequest(null, true, 0, null, null, null, null));
         assertFalse(r.accepted());
     }
 
@@ -365,7 +365,7 @@ public class WorkloadEngineModifyTest {
         setBooleanField(engine, "testPointActive", true);
         setBooleanField(engine, "testPhaseActive", true);
         ModifyResult r = engine.applyModification(
-                new ModifyRequest(null, true, null, null, Map.of("producerRate", 1000.0), null));
+                new ModifyRequest(null, true, null, null, null, Map.of("producerRate", 1000.0), null));
         assertFalse(r.accepted());
     }
 

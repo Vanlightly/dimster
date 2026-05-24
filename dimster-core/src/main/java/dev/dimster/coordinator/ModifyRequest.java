@@ -47,6 +47,11 @@ public record ModifyRequest(
         // `terminate` to end the test point early. Must be sent alone.
         // The only action accepted while ramp-up is in progress.
         Boolean skipPhase,
+        // Restart exactly N consumers (if N < total) or all consumers
+        // (if N >= total) without changing the total consumer count.
+        // Action flag; must be sent alone (no other fields set).
+        // Consumers are selected by index order (0..N-1). Test-phase only.
+        Integer restartConsumersCount,
 
         // ---- generalized workload field overrides ----
         // Keys are TestPoint field names in camelCase: producerRate,

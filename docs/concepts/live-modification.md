@@ -10,58 +10,54 @@ A `dimster run <env> --modify ...` invocation does **not** start a new benchmark
 
 There are three categories of change:
 
-### 1. Workload field overrides
+### 1. Field overrides with --set
 
-Any field on the workload — the same fields you'd set in the workload YAML's `baseWorkload` — can be overridden with `--<fieldName> <value>`:
-
-```bash
-./dimster run localBeefy --modify --producerRate 50000
-./dimster run localBeefy --modify --producersPerTopic 8
-./dimster run localBeefy --modify --consumersPerGroup 4
-./dimster run localBeefy --modify --messageSize 2000
-./dimster run localBeefy --modify --messageDistributor PINNED_PARTITIONS
-./dimster run localBeefy --modify --consumerProcMsMin 50 --consumerProcMsMax 100
-```
-
-Field names use the same camelCase as the YAML.
-
-### 2. Kafka config overrides
-
-Any Kafka client config setting can be overridden via a flattened dotted path under `--kafkaConfig.<path>`:
+Workload and Kafka config fields can be set using `--set key=value` syntax. Multiple key=value pairs can follow a single `--set` flag:
 
 ```bash
-./dimster run localBeefy --modify --kafkaConfig.producerConfig.batch.size 65536
-./dimster run localBeefy --modify --kafkaConfig.producerConfig.linger.ms 5
-./dimster run localBeefy --modify --kafkaConfig.classicConsumerConfig.max.poll.records 200
-./dimster run localBeefy --modify --kafkaConfig.shareConsumerConfig.share.acquire.mode batch_optimized
-./dimster run localBeefy --modify --kafkaConfig.commonConfig.request.timeout.ms 60000
+./dimster run localBeefy --modify --set producerRate=50000
+./dimster run localBeefy --modify --set producersPerTopic=8 consumersPerGroup=4
+./dimster run localBeefy --modify --set messageSize=2000 messageDistributor=PINNED_PARTITIONS
+./dimster run localBeefy --modify --set consumerProcMsMin=50 consumerProcMsMax=100
 ```
 
-The first segment after `kafkaConfig.` selects the sub-section (`producerConfig`, `classicConsumerConfig`, `shareConsumerConfig`, `commonConfig`, `topicConfig`); the rest is the leaf key and may itself contain dots — Kafka config keys are dotted strings.
+Workload field names use the same camelCase as the YAML. Kafka config uses dotted paths prefixed with `kafkaConfig.`:
 
-### 3. Action flags
+```bash
+./dimster run localBeefy --modify --set kafkaConfig.producerConfig.batch.size=65536
+./dimster run localBeefy --modify --set kafkaConfig.producerConfig.linger.ms=5
+./dimster run localBeefy --modify --set kafkaConfig.classicConsumerConfig.max.poll.records=200
+./dimster run localBeefy --modify --set kafkaConfig.shareConsumerConfig.share.acquire.mode=batch_optimized
+./dimster run localBeefy --modify --set kafkaConfig.commonConfig.request.timeout.ms=60000
+```
 
-Four flags trigger engine-internal actions rather than parameter changes:
+Workload and Kafka config can be mixed in a single `--set`:
 
-| Flag                    | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--terminate`           | Ends the current test point immediately as if its duration limit had been reached. Aggregate results are recorded and the run advances to the next test point (if any). Distinct from `dimster stop` which ends the entire run. Must be sent alone.                                                                                                                                                                                   |
-| `--skip-phase`          | Ends the current ramp-up or warm-up phase early and proceeds straight to the next phase of the same test point — useful when the operator can see the cluster has already settled. In ramp-up: jumps directly to the full `producerRate` and starts warm-up. In warm-up: starts the recorded test phase. Rejected during the test phase (use `--terminate` to end the test point). The only flag accepted during ramp-up. Must be sent alone. |
-| `--discard-stats`       | Wipes the per-period stats and cumulative histograms accumulated so far in the current test phase, and resets worker recorders. Effectively converts the elapsed test phase into additional warmup so subsequent measurement starts fresh. Test phase only (rejected during warmup) and cannot be combined with field overrides. Often paired with `--run-for-minutes` to also reset the remaining duration.                          |
-| `--run-for-minutes <N>` | Resets the test phase remaining duration to N minutes from the moment the engine processes the request. Stands alone (extends the current test phase) or pairs with `--discard-stats` (wipes stats AND gives a fresh N-minute window). Test phase only.                                                                                                                                                                               |
+```bash
+./dimster run localBeefy --modify --set producerRate=100000 kafkaConfig.producerConfig.batch.size=65536
+```
+
+### 2. Action flags
+
+Five flags trigger engine-internal actions rather than parameter changes:
+
+| Flag                      | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                |
+|---------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--terminate`             | Ends the current test point immediately as if its duration limit had been reached. Aggregate results are recorded and the run advances to the next test point (if any). Distinct from `dimster stop` which ends the entire run. Must be sent alone.                                                                                                                                                                                   |
+| `--skip-phase`            | Ends the current ramp-up or warm-up phase early and proceeds straight to the next phase of the same test point — useful when the operator can see the cluster has already settled. In ramp-up: jumps directly to the full `producerRate` and starts warm-up. In warm-up: starts the recorded test phase. Rejected during the test phase (use `--terminate` to end the test point). The only flag accepted during ramp-up. Must be sent alone. |
+| `--discard-stats`         | Wipes the per-period stats and cumulative histograms accumulated so far in the current test phase, and resets worker recorders. Effectively converts the elapsed test phase into additional warmup so subsequent measurement starts fresh. Test phase only (rejected during warmup) and cannot be combined with field overrides. Often paired with `--run-for-minutes` to also reset the remaining duration.                          |
+| `--run-for-minutes <N>`   | Resets the test phase remaining duration to N minutes from the moment the engine processes the request. Stands alone (extends the current test phase) or pairs with `--discard-stats` (wipes stats AND gives a fresh N-minute window). Test phase only.                                                                                                                                                                               |
+| `--restart-consumers <N>` | Restarts N consumers (or all consumers if N >= total count) without changing the total consumer count. Consumers are selected deterministically by index (0..N-1). Useful for simulating consumer failures or testing resilience. Test phase only. Must be sent alone.                                                                                                                                                                |
 
 ### Combining flags
 
-Workload and Kafka-config overrides can be freely combined in a single `--modify` call:
+Multiple field overrides can be combined with `--set`:
 
 ```bash
-./dimster run localBeefy --modify \
-    --producerRate 100000 \
-    --producersPerTopic 8 \
-    --kafkaConfig.producerConfig.batch.size 65536
+./dimster run localBeefy --modify --set producerRate=100000 producersPerTopic=8 kafkaConfig.producerConfig.batch.size=65536
 ```
 
-Action flags cannot be combined with workload or Kafka config overrides.
+Action flags (`--terminate`, `--skip-phase`, `--discard-stats`, `--run-for-minutes`, `--restart-consumers`) cannot be combined with `--set` field overrides. The exception is `--discard-stats` which can pair with `--run-for-minutes`.
 
 ### Scope: current test point only
 
@@ -88,16 +84,6 @@ A modification is rejected (HTTP 409 from the coordinator, "ERROR: Modify reject
 - A request validation rule fails (negative `producerRate`, partial proc-ms, invalid combinations of action flags, etc.).
 - The change is one of a small set that's still unsupported: changing `topics` count, `partitionsPerTopic`, `consumerGroupsPerTopic`, `consumerType`, `kafkaConfig.replicationFactor`, or `kafkaConfig.topicConfig.*`. Each rejects with a clear "not yet supported" message. Use standard multi-test-point test campaigns for these.
 
-Phase-availability matrix for the action flags:
-
-| Flag              | Ramp-up        | Warm-up | Test phase                              |
-|-------------------|----------------|---------|-----------------------------------------|
-| `--skip-phase`    | ✅              | ✅       | ❌ (use `--terminate`)                   |
-| `--terminate`     | ✅              | ✅       | ✅                                       |
-| Field overrides   | ❌              | ✅       | ✅                                       |
-| `--discard-stats` | ❌              | ❌       | ✅                                       |
-| `--run-for-minutes` | ❌            | ❌       | ✅ (or alongside a field override)       |
-
 ## How to track execution
 
 When a `--modify` is accepted, the coordinator translates it into a sequence of discrete actions against the workers and executes them in order. 
@@ -105,7 +91,7 @@ When a `--modify` is accepted, the coordinator translates it into a sequence of 
 For example, changing from 1 producer to 20:
 
 ```bash
-./dimster run local --modify --producersPerTopic 20
+./dimster run local --modify --set producersPerTopic=20
 ==> Sending modify to coordinator pod: benchmark-coordinator-5dbf8dc9dd-vgztn
 {"workloadOverrides":{"producersPerTopic":20}}
 {"status":"accepted","message":"1 actions applied"}
@@ -212,15 +198,15 @@ The pattern:
 2. Start the run as usual: `dimster run localBeefy -w workload.yaml`. Watch the coordinator log.
 3. Once the test starts producing stable stats, ramp the rate up in steps from a second terminal:
    ```bash
-   ./dimster run localBeefy --modify --producerRate 50000
+   ./dimster run localBeefy --modify --set producerRate=50000
    # wait ~30-60s, watch latency in the original window
-   ./dimster run localBeefy --modify --producerRate 100000
+   ./dimster run localBeefy --modify --set producerRate=100000
    # wait ~30s-60s
-   ./dimster run localBeefy --modify --producerRate 200000
+   ./dimster run localBeefy --modify --set producerRate=200000
    ```
 4. When you see latency degrade or back up (publish delay rising, end-to-end latency spiking), back off:
    ```bash
-   ./dimster run localBeefy --modify --producerRate 150000
+   ./dimster run localBeefy --modify --set producerRate=150000
    ```
 5. Once you've located a rough knee, you can start measuring real stats by discarding the accumulated stats so far and setting a new running time: 
    ```bash
@@ -249,15 +235,15 @@ The 30 minutes of clean measurement become the headline numbers for this test po
 
 ## Workflow: simulating bursty traffic
 
-`--producerRate 0` pauses producers; a subsequent non-zero value resumes them. So a single test point can simulate a burst-quiet-burst pattern that no fixed-rate workload could produce:
+Setting `producerRate=0` pauses producers; a subsequent non-zero value resumes them. So a single test point can simulate a burst-quiet-burst pattern that no fixed-rate workload could produce:
 
 ```bash
 # At minute 2 of the test phase, stop the producers
-./dimster run localBeefy --modify --producerRate 0
+./dimster run localBeefy --modify --set producerRate=0
 # At minute 4, restart at full rate
-./dimster run localBeefy --modify --producerRate 100000
+./dimster run localBeefy --modify --set producerRate=100000
 # At minute 6, stop again
-./dimster run localBeefy --modify --producerRate 0
+./dimster run localBeefy --modify --set producerRate=0
 ```
 
 Useful for watching how the consumer side drains a backlog after a producer outage, or for measuring how quickly broker request latency recovers when load drops to zero. The drain shape ends up captured in the test point's regular periodic stats — no extra plumbing needed.
@@ -271,13 +257,13 @@ Increase the consumer processing time mid-test to simulate slower downstream con
 # (test point starts with consumerProcMsMin=0, consumerProcMsMax=0)
 
 # Inject a slow consumer simulation
-./dimster run localBeefy --modify --consumerProcMsMin 50 --consumerProcMsMax 100
+./dimster run localBeefy --modify --set consumerProcMsMin=50 consumerProcMsMax=100
 
 # After a few minutes, recover
-./dimster run localBeefy --modify --consumerProcMsMin 0 --consumerProcMsMax 0
+./dimster run localBeefy --modify --set consumerProcMsMin=0 consumerProcMsMax=0
 ```
 
-The consumer simulation runs per-record sleeps inside the consumer loop on the worker, so it directly reduces consumer throughput. Combined with a fixed `--producerRate`, this lets you measure how much backlog builds at a given producer/consumer mismatch.
+The consumer simulation runs per-record sleeps inside the consumer loop on the worker, so it directly reduces consumer throughput. Combined with a fixed `producerRate`, this lets you measure how much backlog builds at a given producer/consumer mismatch.
 
 ## Workflow: terminating early
 

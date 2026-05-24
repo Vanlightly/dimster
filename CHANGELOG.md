@@ -29,3 +29,10 @@ Initial public release.
 ### Changed
 
 - Restarting producers and consumers as part of a --modify command now restarts them in parallel, rather than sequentially.
+
+## [0.2.0]
+
+### Changed
+
+- Live-interaction: Changes to workload fields now done via the --set sub-command and workload fields use field=value format (breaking change).
+- Live-interaction: Rejects unrecognized sub-commands and unsupported workload fields.
