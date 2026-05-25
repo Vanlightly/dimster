@@ -10,85 +10,58 @@ use serde::Deserialize;
 /// to flip the implicit default for existing configs.
 pub const DEFAULT_KAFKA_VERSION: &str = "4.2.0";
 
+/// Available Kafka client flavors, in ascending version order. Each entry
+/// defines a flavor module that can be used for versions >= the min version
+/// and < the next flavor's min version (or unbounded if it's the last entry).
+/// The tuple is (min_major, min_minor, min_patch, flavor_name).
+static KAFKA_FLAVORS: &[(u32, u32, u32, &str)] = &[
+    (3, 0, 0, "3.x"),   // 3.0.0 <= v < 4.1.0
+    (4, 1, 0, "4.1"),   // 4.1.0 <= v < 4.2.0
+    (4, 2, 0, "4.2.0"), // 4.2.0 <= v (highest available flavor)
+];
+
 /// Maps a concrete kafka-clients version string (e.g. "3.7.2", "4.1.0",
-/// "4.2.0") to the dimster-kafka-X impl module that should be built against
-/// it. The first element of the returned tuple is the flavor suffix used
-/// throughout the build pipeline (Maven module name, Docker build-arg,
-/// .dockerignore re-include); the second element is the version itself,
-/// passed back through to Maven as `-Dkafka.version=<version>` and used as
-/// the docker image tag suffix.
+/// "4.2.0", "4.3.0") to the dimster-kafka-X impl module that should be built
+/// against it. Returns (flavor, version) where flavor is the module suffix
+/// (e.g. "3.x", "4.1", "4.2.0") and version is the requested version string
+/// passed through unchanged.
 ///
-/// Mapping rules (current set of impl modules):
-///   3.x.y          → ("3.x", version)        any 3.x.y release
-///   4.0.y          → ("3.x", version)        4.0 routes to the 3.x flavor:
-///                                            classic consumer/producer/admin
-///                                            APIs are stable, and the 3.x
-///                                            module throws on share-group
-///                                            methods (which is the correct
-///                                            semantic for 4.0 anyway since
-///                                            its admin share-group APIs are
-///                                            incomplete). Lets you benchmark
-///                                            classic workloads on a 4.0
-///                                            broker; share-group workloads
-///                                            fail fast like on 3.x.
-///   4.1.y          → ("4.1", version)        any 4.1.y release
-///   4.2.0          → ("4.2.0", "4.2.0")      pinned point release (per-version
-///                                            module due to share-group API drift
-///                                            inside the 4.2 line)
-///   anything else  → error
+/// Automatically matches the requested version to the highest available flavor
+/// that is <= the requested version. This means:
+///   - 3.x.y versions use the "3.x" flavor
+///   - 4.0.y versions use the "3.x" flavor (4.0 < 4.1, so uses highest below)
+///   - 4.1.y versions use the "4.1" flavor
+///   - 4.2.y and above (4.3.x, 4.4.x, etc.) use the "4.2.0" flavor
 ///
-/// Adding a new client line (e.g. 4.3): create dimster-kafka-4.3 and
-/// package-4.3 modules per the Phase 1 plan, add the matching `.dockerignore`
-/// re-include line, then extend the match arm below.
+/// To add support for a new Kafka line: create the dimster-kafka-X module,
+/// add the .dockerignore re-include, then add an entry to KAFKA_FLAVORS above.
 pub fn parse_kafka_client_version(version: &str) -> Result<(&'static str, &str)> {
     let parts: Vec<&str> = version.split('.').collect();
-    let major = parts.first().copied().unwrap_or("");
-    let minor = parts.get(1).copied().unwrap_or("");
+    if parts.len() < 3 {
+        bail!(
+            "Invalid Kafka version '{}'. Expected format: major.minor.patch",
+            version
+        );
+    }
 
-    match (major, minor) {
-        // 3.x line: any minor.patch covered by the same impl module.
-        ("3", m) if !m.is_empty() => Ok(("3.x", version)),
+    let major: u32 = parts[0].parse().context("Invalid major version number")?;
+    let minor: u32 = parts[1].parse().context("Invalid minor version number")?;
+    let patch: u32 = parts[2].parse().context("Invalid patch version number")?;
 
-        // 4.0 line: route to dimster-kafka-3.x. 4.0 has KafkaShareConsumer
-        // but is missing the admin-side share-group APIs (listShareGroupOffsets,
-        // alterShareGroupOffsets, deleteShareGroups), so dimster's share-group
-        // workloads can't run against 4.0 either way. The 3.x module compiles
-        // cleanly against 4.0.0 (it only uses APIs stable since 2.x and throws
-        // UnsupportedOperationException on share-group methods), so a user
-        // pointing kafka_client_version at 4.0.x gets a working classic-only
-        // build with the same fail-fast semantics as 3.x for share-group
-        // workloads.
-        ("4", "0") if !parts.get(2).copied().unwrap_or("").is_empty() => {
-            Ok(("3.x", version))
+    // Find the highest flavor where flavor_version <= requested_version
+    let mut best_flavor: Option<&'static str> = None;
+    for &(min_major, min_minor, min_patch, flavor) in KAFKA_FLAVORS {
+        if (major, minor, patch) >= (min_major, min_minor, min_patch) {
+            best_flavor = Some(flavor);
+        } else {
+            break; // flavors are sorted ascending, so we can stop early
         }
+    }
 
-        // 4.1.x line: any patch covered by one impl module.
-        ("4", "1") if !parts.get(2).copied().unwrap_or("").is_empty() => {
-            Ok(("4.1", version))
-        }
-
-        // 4.2 line: per-point-version modules required because of API drift
-        // (this was the original motivating problem for the multi-version SPI).
-        // Currently only 4.2.0 is shipped; 4.2.1 etc. would each need a
-        // dedicated dimster-kafka-4.2.X module.
-        ("4", "2") => {
-            if version == "4.2.0" {
-                Ok(("4.2.0", version))
-            } else {
-                bail!(
-                    "Kafka {} requires a dedicated dimster-kafka-{} impl module \
-                     (only dimster-kafka-4.2.0 is currently shipped). The 4.2 \
-                     line uses per-point-version modules because the share-group \
-                     APIs drift between 4.2 patch releases. See \
-                     docs/concepts/kafka-versioning.md for how to add one.",
-                    version, version
-                )
-            }
-        }
-
-        _ => bail!(
-            "Unsupported Kafka version '{}'. Supported lines: 3.x, 4.0.x, 4.1.x, 4.2.0. \
-             See docs/concepts/kafka-versioning.md.",
+    match best_flavor {
+        Some(flavor) => Ok((flavor, version)),
+        None => bail!(
+            "Kafka version {} is older than the minimum supported version (3.0.0)",
             version
         ),
     }
@@ -639,25 +612,26 @@ mod tests {
         }
     }
 
-    /// 4.2.x point versions other than 4.2.0 require their own impl module
-    /// because the share-group API drifts between 4.2 patches (the original
-    /// motivating problem for the multi-version SPI).
+    /// 4.2.x and higher versions (4.3.x, 4.4.x, etc.) all use the 4.2.0 flavor
+    /// (the highest available flavor).
     #[test]
-    fn kafka_flavor_42x_other_than_420_errors_pointing_at_dedicated_module() {
-        let env = Environment {
-            kafka_client_version: Some("4.2.1".into()),
-            ..Default::default()
-        };
-        let err = env.kafka_flavor().unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("4.2.1 requires a dedicated dimster-kafka-4.2.1"), "msg: {msg}");
+    fn kafka_flavor_42x_and_higher_use_420_flavor() {
+        for v in &["4.2.1", "4.3.0", "4.4.5", "4.10.0"] {
+            let env = Environment {
+                kafka_client_version: Some((*v).into()),
+                ..Default::default()
+            };
+            let (flavor, version) = env.kafka_flavor().unwrap();
+            assert_eq!(flavor, "4.2.0", "version {v}");
+            assert_eq!(version, *v, "version {v}");
+        }
     }
 
-    /// Typos and unsupported lines fail loudly at command time rather
-    /// than as a confusing "ImagePullBackOff" later.
+    /// Invalid version formats and versions below 3.0.0 error loudly at
+    /// command time rather than as a confusing "ImagePullBackOff" later.
     #[test]
-    fn kafka_flavor_unsupported_line_errors() {
-        for v in &["4.5.7", "5.0.0", "garbage", "3"] {
+    fn kafka_flavor_invalid_versions_error() {
+        for v in &["garbage", "3", "2.8.0"] {
             let env = Environment {
                 kafka_client_version: Some((*v).into()),
                 ..Default::default()
@@ -665,9 +639,24 @@ mod tests {
             let err = env.kafka_flavor().unwrap_err();
             let msg = format!("{err}");
             assert!(
-                msg.contains("Unsupported Kafka version") || msg.contains("not supported"),
+                msg.contains("Invalid") || msg.contains("minimum supported"),
                 "version {v}: msg {msg}"
             );
+        }
+    }
+
+    /// Future Kafka versions (beyond our highest flavor) automatically use
+    /// the highest available flavor.
+    #[test]
+    fn kafka_flavor_future_versions_use_highest_flavor() {
+        for v in &["4.3.0", "5.0.0", "6.1.2", "10.0.0"] {
+            let env = Environment {
+                kafka_client_version: Some((*v).into()),
+                ..Default::default()
+            };
+            let (flavor, version) = env.kafka_flavor().unwrap();
+            assert_eq!(flavor, "4.2.0", "version {v} should use highest flavor");
+            assert_eq!(version, *v, "version {v}");
         }
     }
 
