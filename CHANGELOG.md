@@ -36,3 +36,9 @@ Initial public release.
 
 - Live-interaction: Changes to workload fields now done via the --set sub-command and workload fields use field=value format (breaking change).
 - Live-interaction: Rejects unrecognized sub-commands and unsupported workload fields.
+
+## [0.3.0]
+
+### Added
+
+- The consumerProcParallelism workload field to simulate parallel processing of records in consumers
