@@ -60,6 +60,8 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
 
     private volatile int procMsMin;
     private volatile int procMsMax;
+    private volatile int procConcurrency;
+    private volatile ProcessingTimeSimulator processingTimeSimulator;
 
     /** When true, every consumed record is logged with its partition + timestamp.
      *  Wired in from {@code engineConfig.printMessages}; the upstream
@@ -79,6 +81,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                                      String name,
                                      int procMsMin,
                                      int procMsMax,
+                                     int procConcurrency,
                                      boolean printMessages) {
         this.consumer = consumer;
         this.callback = callback;
@@ -95,6 +98,8 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                 (String) consumerConfig.getOrDefault(POLL_TIMEOUT_CONFIG, POLL_TIMEOUT_DEFAULT)));
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
+        this.procConcurrency = procConcurrency;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procConcurrency);
 
         if (explicitAck) {
             consumer.setAckCallback(this);
@@ -116,6 +121,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
     public void setProcessingTime(int minMs, int maxMs) {
         this.procMsMin = minMs;
         this.procMsMax = maxMs;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procConcurrency);
     }
 
     private void pollLoop() {
@@ -130,75 +136,45 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                     callback.pollCompleted(records.count());
                     callback.batchReceived(name, records.count());
 
-                    // Decide once per batch whether to aggregate per-record sleeps.
-                    // See KafkaConsumerWrapper.AGGREGATE_PROC_TIME_THRESHOLD_MS for
-                    // the rationale (Thread.sleep variance dominates at sub-10ms).
-                    boolean useAggregate = procMsMax > 0
-                            && ((procMsMin + procMsMax) / 2)
-                                    < KafkaConsumerWrapper.AGGREGATE_PROC_TIME_THRESHOLD_MS;
-                    long aggregateSleepMs = 0;
-
-                    // Process the records --------------
+                    // Convert records to list for index-based access
+                    var recordList = new java.util.ArrayList<org.apache.kafka.clients.consumer.ConsumerRecord<String, byte[]>>();
                     for (var record : records) {
+                        recordList.add(record);
+                    }
 
-                        // Print the messages if configured --------
-                        if (printMessages) {
-                            long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
-                            byte[] value = record.value();
-                            String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
-                            log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
-                                    record.topic(), record.partition(),
-                                    record.offset(), record.timestamp(), e2eLatencyMs, msgType);
-                        }
+                    // Process the records with simulated processing time --------------
+                    processingTimeSimulator.processBatch(
+                            recordList.size(),
+                            closing,
+                            callback,
+                            (startIdx, endIdx) -> {
+                                // Process messages in range [startIdx, endIdx)
+                                for (int i = startIdx; i < endIdx; i++) {
+                                    var record = recordList.get(i);
 
-                        // Records stats -------------
-                        callback.messageReceived(record.value(), record.topic(), record.partition(),
-                                record.timestamp(), deliveryTime);
+                                    // Print the messages if configured
+                                    if (printMessages) {
+                                        long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
+                                        byte[] value = record.value();
+                                        String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
+                                        log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
+                                                record.topic(), record.partition(),
+                                                record.offset(), record.timestamp(), e2eLatencyMs, msgType);
+                                    }
 
-                        // Add processing time --------------
-                        if (procMsMax > 0) {
-                            long sleepMs = (procMsMin == procMsMax)
-                                    ? procMsMin
-                                    : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+                                    // Records stats
+                                    callback.messageReceived(record.value(), record.topic(), record.partition(),
+                                            record.timestamp(), deliveryTime);
 
-                            if (useAggregate) {
-                                // Defer sleep to a single aggregate Thread.sleep after the per-record
-                                // loop. Per-record metrics are intentionally not recorded in this mode
-                                // (the coordinator emits a WARN at test start).
-                                aggregateSleepMs += sleepMs;
-                            } else {
-                                long startNanos = System.nanoTime();
-                                long remaining = sleepMs;
-
-                                // Periodically check for close request --------------
-                                while (remaining > 0 && !closing.get()) {
-                                    Thread.sleep(Math.min(remaining, 1000));
-                                    remaining = sleepMs - java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
-                                            System.nanoTime() - startNanos);
+                                    // Maybe acknowledge
+                                    // Note: acknowledge(ACCEPT) is local-only (no network I/O),
+                                    // so its position relative to the aggregate sleep is immaterial.
+                                    if (explicitAck) {
+                                        consumer.acknowledge(record, AckType.ACCEPT);
+                                    }
                                 }
-
-                                if (closing.get()) return;
-
-                                long latencyMicros = java.util.concurrent.TimeUnit.NANOSECONDS.toMicros(
-                                        System.nanoTime() - startNanos);
-                                callback.processingTimeCompleted(latencyMicros);
                             }
-                        }
-
-                        // Maybe acknowledge --------------
-                        // Note: acknowledge(ACCEPT) is local-only (no network I/O),
-                        // so its position relative to the aggregate sleep is
-                        // immaterial.
-                        if (explicitAck) {
-                            consumer.acknowledge(record, AckType.ACCEPT);
-                        }
-                    }
-
-                    // Aggregate per-batch sleep, performed before any commit so
-                    // commits reflect work that has "completed".
-                    if (useAggregate && aggregateSleepMs > 0) {
-                        if (Sleeper.sleepOrStop(closing, aggregateSleepMs, false)) return;
-                    }
+                    );
 
                     // Maybe do manual commit --------------
                     if (manualCommitMode != ManualCommitMode.Poll) {

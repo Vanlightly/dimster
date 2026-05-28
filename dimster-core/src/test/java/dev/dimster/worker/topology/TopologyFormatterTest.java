@@ -27,7 +27,7 @@ public class TopologyFormatterTest {
                 /*consumerGroupsPerTopic*/ 1,
                 /*consumersPerGroup*/ 2,
                 ConsumerType.CONSUMER_GROUP,
-                0, 0,
+                0, 0, 1,
                 MessageDistributorType.PINNED_PARTITIONS, 1.0,
                 /*correctness*/ false,
                 /*staticConsumerPartitions*/ false));
@@ -49,7 +49,7 @@ public class TopologyFormatterTest {
     public void format_showsStaticPartitionsWhenSet() {
         var planner = newPlanner();
         var topology = planner.plan(new TopologyPlanner.TopologySpec(
-                "p", 1, 4, 0, 1, 2, ConsumerType.CONSUMER_GROUP, 0, 0,
+                "p", 1, 4, 0, 1, 2, ConsumerType.CONSUMER_GROUP, 0, 0, 1,
                 MessageDistributorType.NO_KEY, 1.0, false, /*staticConsumerPartitions*/ true));
 
         String dump = TopologyFormatter.format(null, topology);
@@ -60,7 +60,7 @@ public class TopologyFormatterTest {
     @Test
     public void format_emptyCaptionOmitsLeadingNewline() {
         var topology = newPlanner().plan(new TopologyPlanner.TopologySpec(
-                "p", 1, 1, 0, 0, 0, ConsumerType.CONSUMER_GROUP, 0, 0,
+                "p", 1, 1, 0, 0, 0, ConsumerType.CONSUMER_GROUP, 0, 0, 1,
                 MessageDistributorType.NO_KEY, 1.0, false, false));
         String dump = TopologyFormatter.format("", topology);
         assertTrue("starts with Topics line, not blank", dump.startsWith("  Topics"));

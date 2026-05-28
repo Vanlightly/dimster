@@ -24,7 +24,6 @@ import org.slf4j.LoggerFactory;
 
 import org.HdrHistogram.Histogram;
 
-import java.io.IOException;
 import java.text.DecimalFormat;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,6 +74,8 @@ public class ExploreEngine extends BaseEngine {
 
     /** Duration of each fast-path ramp step in seconds (6 steps x 10s = 60s total ramp). */
     private static final int FAST_PATH_RAMP_STEP_SECONDS = 10;
+
+    private boolean useDeliveryLatency;
 
     private final ExploreWorkload exploreWorkload;
     private final BaseWorkload base;
@@ -138,7 +139,8 @@ public class ExploreEngine extends BaseEngine {
                 log.info("Merged workload:\n{}", point.toLogString());
                 KafkaConsumerWrapper.warnIfAggregateProcTime(log,
                         point.consumerProcMsMin(), point.consumerProcMsMax());
-                String thresholdLabel = config.useDeliveryLatencyForThreshold ? "e2e-dlv" : "e2e";
+                this.useDeliveryLatency = config.useDeliveryLatencyForThreshold || point.consumerProcMsMax() > 0;
+                String thresholdLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
                 log.info("    Thresholds: p{}-{} <= {} ms (sustain <= {} ms), publish delay <= {} ms (sustain <= {} ms)",
                         (int) config.e2eLatencyPercentile,
                         thresholdLabel,
@@ -214,7 +216,7 @@ public class ExploreEngine extends BaseEngine {
         // the actual Kafka topics from the planned names.
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
-                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(),
+                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcConcurrency(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off */,
                 false /* dynamic consumer assignment */);
@@ -261,18 +263,19 @@ public class ExploreEngine extends BaseEngine {
      */
     private void findPeakRate(ExploreConfig config, ExploreResult.TestOutcome outcome,
                               TestPoint point) throws Exception {
-        if (config.useDeliveryLatencyForThreshold || point.consumerProcMsMax() > 0) {
+        if (this.useDeliveryLatency) {
             String reason = point.consumerProcMsMax() > 0 ? "Consumer processing time configured"
                     : "useDeliveryLatencyForThreshold configured";
             log.info("Using batch delivery end-to-end latency instead of per-message. Reason: {}", reason);
         }
 
         // Phase 1: Find saturation point.
-        // When consumer processing time is configured, the theoretical max
-        // throughput is calculable — skip the ramp and use it as the upper
-        // bound for binary search instead.
+        // When consumer processing time is configured AND processing is sequential,
+        // the theoretical max throughput is calculable — skip the ramp and use it
+        // as the upper bound for binary search instead. With concurrent processing
+        // the max depends on poll batch sizes which aren't known ahead of time.
         RampResult ramp;
-        if (point.consumerProcMsMin() > 0) {
+        if (point.consumerProcMsMin() > 0 && point.consumerProcConcurrency() == 1) {
             int totalConsumers = point.topics() * point.consumerGroupsPerTopic() * point.consumersPerGroup();
             double theoreticalMax = theoreticalMaxRate(
                     point.consumerProcMsMin(), point.consumerProcMsMax(),
@@ -306,15 +309,16 @@ public class ExploreEngine extends BaseEngine {
         double high = ramp.saturatedRate;
         FoundRate lastFound = null;
 
-        // Fast path: when the theoretical max is known (proc time configured),
-        // drain, linearly ramp to the limit over 60s in 6 steps, then sustain.
-        // Repeat at 95% if the first attempt fails. Most well-tuned scenarios
-        // hit the consumer-side ceiling, so this skips the binary search
-        // entirely. The linear ramp replaces a sudden rate jump that produced
-        // spurious sustain failures from initial-burst transients. If both
-        // attempts fail we fall through with a tighter upper bound for the
-        // standard search.
-        if (point.consumerProcMsMin() > 0) {
+        // Fast path: when the theoretical max is known (proc time configured AND
+        // sequential processing), drain, linearly ramp to the limit over 60s in
+        // 6 steps, then sustain. Repeat at 95% if the first attempt fails. Most
+        // well-tuned scenarios hit the consumer-side ceiling, so this skips the
+        // binary search entirely. The linear ramp replaces a sudden rate jump that
+        // produced spurious sustain failures from initial-burst transients. If both
+        // attempts fail we fall through with a tighter upper bound for the standard
+        // search. Concurrent processing disables this path because the max depends
+        // on unknown poll batch sizes.
+        if (point.consumerProcMsMin() > 0 && point.consumerProcConcurrency() == 1) {
             double theoreticalMax = high;
             double[] fastCandidates = {theoreticalMax, theoreticalMax * 0.95};
             boolean firstCandidate = true;
@@ -349,11 +353,13 @@ public class ExploreEngine extends BaseEngine {
                 // before measurement begins.
                 SustainResult sustain = sustain(config, candidate, point, true);
                 if (sustain.passed) {
+                    String reason = firstCandidate ? "converged at theoretical limit"
+                            : "converged at 95% theoretical limit";
                     outcome.peakSustainableRate = candidate;
                     outcome.peakSustainableThroughputMBs = candidate * point.messageSize() / 1_000_000.0;
                     outcome.foundRateUpper = candidate;
                     outcome.converged = true;
-                    outcome.reason = "converged at theoretical limit";
+                    outcome.reason = reason;
                     populateLatencyBreakdown(outcome.publishLatency, sustain.aggPublishLatency);
                     populateLatencyBreakdown(outcome.endToEndLatency, sustain.aggE2eLatency);
                     populateLatencyBreakdown(outcome.endToEndDeliveryLatency, sustain.aggE2eDeliveryLatency);
@@ -460,11 +466,11 @@ public class ExploreEngine extends BaseEngine {
 
         while (!stopRequested.get()) {
             MeasuredRate measured = measureAtRateWithRetry(currentRate, intervalMs, percentile,
-                    config.perPartitionE2eMode, config.useDeliveryLatencyForThreshold);
+                    config.perPartitionE2eMode, this.useDeliveryLatency);
 
             double delayThreshold = config.publishDelayThresholdMs;
 
-            String e2eLabel = config.useDeliveryLatencyForThreshold ? "e2e-dlv" : "e2e";
+            String e2eLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
             log.info("    Ramp: target={} actual={} p{}-{}={} ms{} (limit {}) delay={} ms (limit {})",
                     rateFormat.format(currentRate),
                     rateFormat.format(measured.actualPublishRate),
@@ -555,9 +561,9 @@ public class ExploreEngine extends BaseEngine {
             PeriodStats stats = worker.getPeriodStats(config.perPartitionE2eMode);
             double elapsedSecs = (System.nanoTime() - startNanos) / 1_000_000_000.0;
             MeasuredRate measured = measureRate(stats, elapsedSecs, percentile,
-                    config.perPartitionE2eMode, config.useDeliveryLatencyForThreshold);
+                    config.perPartitionE2eMode, this.useDeliveryLatency);
 
-            String e2eLabel = config.useDeliveryLatencyForThreshold ? "e2e-dlv" : "e2e";
+            String e2eLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
             log.info("    Ramp[{}/{}]: target={} actual={} p{}-{}={} ms{} delay={} ms",
                     step, FAST_PATH_RAMP_STEPS,
                     rateFormat.format(stepRate),
@@ -704,7 +710,7 @@ public class ExploreEngine extends BaseEngine {
             PeriodStats stats = worker.getPeriodStats(config.perPartitionE2eMode);
             double elapsedSecs = (System.nanoTime() - startNanos) / 1_000_000_000.0;
             MeasuredRate measured = measureRate(stats, elapsedSecs, percentile,
-                    config.perPartitionE2eMode, config.useDeliveryLatencyForThreshold);
+                    config.perPartitionE2eMode, this.useDeliveryLatency);
             totalChecked++;
 
             boolean delayExceeded = measured.publishDelayAtPercentile > delayThreshold;
@@ -715,7 +721,7 @@ public class ExploreEngine extends BaseEngine {
                     ? buildBadReason(delayExceeded, e2eExceeded)
                     : "[OK]";
 
-            String e2eLabel = config.useDeliveryLatencyForThreshold ? "e2e-dlv" : "e2e";
+            String e2eLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
             log.info("    Window[{}/{}]: actual={} p{}-{}={} ms{} (limit {}) behind-sched={} ms (limit {}) {}",
                     i + 1, totalChecks,
                     rateFormat.format(measured.actualPublishRate),
@@ -820,7 +826,7 @@ public class ExploreEngine extends BaseEngine {
             PeriodStats stats = worker.getPeriodStats(config.perPartitionE2eMode);
             double elapsedSecs = (System.nanoTime() - startNanos) / 1_000_000_000.0;
             MeasuredRate measured = measureRate(stats, elapsedSecs, percentile,
-                    config.perPartitionE2eMode, config.useDeliveryLatencyForThreshold);
+                    config.perPartitionE2eMode, this.useDeliveryLatency);
             totalChecked++;
 
             aggPublishLatency.add(stats.publishLatency);
@@ -835,7 +841,7 @@ public class ExploreEngine extends BaseEngine {
                     ? buildBadReason(delayExceeded, e2eExceeded)
                     : "[OK]";
 
-            String e2eLabel = config.useDeliveryLatencyForThreshold ? "e2e-dlv" : "e2e";
+            String e2eLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
             log.info("    Sustain[{}/{}]: actual={} p{}-{}={} ms{} (limit {}) behind-sched={} ms (limit {}) {}",
                     i + 1, sustainIntervals,
                     rateFormat.format(measured.actualPublishRate),

@@ -980,7 +980,7 @@ public class LocalWorker implements Worker {
                 if (!toRemove.contains(vc.name())) kept.add(vc);
             }
             consumerSet = new ConsumerSet(kept, consumerSet.consumerType(),
-                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax());
+                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcConcurrency());
         }
         updateKafkaMetricsSources();
     }
@@ -1028,7 +1028,7 @@ public class LocalWorker implements Worker {
         List<VirtualConsumer> all = new ArrayList<>(base.consumers());
         all.addAll(added.consumers());
         return new ConsumerSet(all, added.consumerType(),
-                added.consumerProcMsMin(), added.consumerProcMsMax());
+                added.consumerProcMsMin(), added.consumerProcMsMax(), added.consumerProcConcurrency());
     }
 
     private void recreationLoop() {
@@ -1120,7 +1120,7 @@ public class LocalWorker implements Worker {
             var kafkaConsumer = KafkaSpi.factory().<String, byte[]>newShareConsumer(clientProps);
             return new KafkaShareConsumerWrapper(kafkaConsumer, allProps, consumerCallback, vc.topic(),
                     vc.name(),
-                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(),
+                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcConcurrency(),
                     printMessages);
         } else {
             var consumerProps = kafkaConfig.classicConsumerProperties();
@@ -1146,7 +1146,7 @@ public class LocalWorker implements Worker {
             var kafkaConsumer = KafkaSpi.factory().<String, byte[]>newConsumer(clientProps);
             return new KafkaConsumerWrapper(kafkaConsumer, allProps, consumerCallback, vc.topic(),
                     vc.name(),
-                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(),
+                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcConcurrency(),
                     staticPartitions, printMessages);
         }
     }

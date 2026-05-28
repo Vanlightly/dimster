@@ -135,7 +135,7 @@ public class WorkloadEngineModifyTest {
                 MessageDistributorType.NO_KEY, /*skew*/ 1.0,
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
-                procMsMin, procMsMax,
+                procMsMin, procMsMax, /*procConcurrency*/ 1,
                 null, null,
                 new dev.dimster.engines.run.RunConfig());
     }
@@ -151,7 +151,7 @@ public class WorkloadEngineModifyTest {
                 distributor, 1.0,
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
-                procMsMin, procMsMax,
+                procMsMin, procMsMax, 1,
                 null, null,
                 new dev.dimster.engines.run.RunConfig());
     }
@@ -169,7 +169,7 @@ public class WorkloadEngineModifyTest {
         consumers.add(new VirtualConsumer("http://worker-0:8080", "dimster-topic-0",
                 "dimster-grp-0", 0, List.of()));
         return new VirtualTopology(topics, producers, consumers,
-                ConsumerType.CONSUMER_GROUP, 0, 0,
+                ConsumerType.CONSUMER_GROUP, 0, 0, 1,
                 MessageDistributorType.PINNED_PARTITIONS, 1.0, 1);
     }
 
@@ -187,7 +187,7 @@ public class WorkloadEngineModifyTest {
                     "dimster-grp-0", i, List.of()));
         }
         return new VirtualTopology(topics, producers, consumers,
-                ConsumerType.CONSUMER_GROUP, 0, 0, MessageDistributorType.NO_KEY, 1.0, 1);
+                ConsumerType.CONSUMER_GROUP, 0, 0, 1, MessageDistributorType.NO_KEY, 1.0, 1);
     }
 
     private void primeEngineForFieldOverrides(WorkloadEngine engine,

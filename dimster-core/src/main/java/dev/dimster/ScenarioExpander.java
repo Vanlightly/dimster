@@ -39,6 +39,7 @@ public class ScenarioExpander {
             KafkaConfig kafkaConfig,
             int consumerProcMsMin,
             int consumerProcMsMax,
+            int consumerProcConcurrency,
             DrainBacklogConfig drainBacklogConfig,
             ExploreConfig exploreConfig,
             RunConfig runConfig
@@ -60,6 +61,9 @@ public class ScenarioExpander {
             sb.append("\n    Consumer: type=").append(consumerType);
             if (consumerProcMsMin > 0 || consumerProcMsMax > 0) {
                 sb.append(", procMs=").append(consumerProcMsMin).append("-").append(consumerProcMsMax);
+            }
+            if (consumerProcConcurrency != 1) {
+                sb.append(", procConcurrency=").append(consumerProcConcurrency);
             }
             if (kafkaConfig != null) {
                 appendConfig(sb, "\n    Kafka: replicationFactor=", kafkaConfig.replicationFactor);
@@ -270,6 +274,7 @@ public class ScenarioExpander {
         List<ConsumerType> consType = resolve(scenario.consumerType, base.consumerType);
         List<Integer> procMsMin = resolve(scenario.consumerProcMsMin, base.consumerProcMsMin);
         List<Integer> procMsMax = resolve(scenario.consumerProcMsMax, base.consumerProcMsMax);
+        List<Integer> procConcurrency = resolve(scenario.consumerProcConcurrency, base.consumerProcConcurrency);
         List<String> labels = scenario.label;
 
         // Validate drain-backlog dimensions internally before resolving against defaults.
@@ -356,7 +361,7 @@ public class ScenarioExpander {
 
         // Find the number of test points (max array length among multi-element lists)
         int n = maxLength(topics, partitions, producers, consumerGroups, consumers,
-                msgSize, rate, keyDist, keyDistSkew, consType, procMsMin, procMsMax);
+                msgSize, rate, keyDist, keyDistSkew, consType, procMsMin, procMsMax, procConcurrency);
         if (drainDefaults != null) {
             n = maxLength(n, drainBacklogSize, drainProducerRate, drainBuildRate, drainSampleRate, drainTimeout);
         }
@@ -391,6 +396,28 @@ public class ScenarioExpander {
         validate(effectiveName, n, "consumerType", consType);
         validate(effectiveName, n, "consumerProcMsMin", procMsMin);
         validate(effectiveName, n, "consumerProcMsMax", procMsMax);
+        validate(effectiveName, n, "consumerProcConcurrency", procConcurrency);
+
+        // Validate consumerProcConcurrency values
+        for (int i = 0; i < n; i++) {
+            int concurrency = get(procConcurrency, i);
+            if (concurrency == 0) {
+                throw new IllegalArgumentException(
+                        "Scenario '%s': consumerProcConcurrency cannot be 0 (use 1 for sequential, >1 for constrained concurrency, -1 for full parallelism)"
+                                .formatted(effectiveName));
+            }
+            if (concurrency < -1) {
+                throw new IllegalArgumentException(
+                        "Scenario '%s': consumerProcConcurrency cannot be less than -1 (got %d)"
+                                .formatted(effectiveName, concurrency));
+            }
+            // Warning if concurrent mode but no processing time configured
+            if (concurrency != 1 && get(procMsMax, i) == 0) {
+                System.err.println("WARNING: Scenario '%s': consumerProcConcurrency=%d but consumerProcMsMax=0 (concurrent mode requires processing time to be meaningful)"
+                        .formatted(effectiveName, concurrency));
+            }
+        }
+
         if (drainDefaults != null) {
             validate(effectiveName, n, "drainBacklogConfig.backlogSizeGB", drainBacklogSize);
             validate(effectiveName, n, "drainBacklogConfig.backlogProducerRate", drainProducerRate);
@@ -505,6 +532,7 @@ public class ScenarioExpander {
                     pointConfig,
                     get(procMsMin, i),
                     get(procMsMax, i),
+                    get(procConcurrency, i),
                     pointDrainConfig,
                     pointExploreConfig,
                     pointRunConfig
@@ -526,7 +554,7 @@ public class ScenarioExpander {
                 base.messageSize, base.producerRate,
                 base.messageDistributor, base.messageDistributorSkew, base.consumerType,
                 merged,
-                base.consumerProcMsMin, base.consumerProcMsMax,
+                base.consumerProcMsMin, base.consumerProcMsMax, base.consumerProcConcurrency,
                 drainDefaults,
                 exploreDefaults,
                 runDefaults

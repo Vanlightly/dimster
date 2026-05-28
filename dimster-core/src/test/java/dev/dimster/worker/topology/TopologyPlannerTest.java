@@ -624,7 +624,7 @@ public class TopologyPlannerTest {
         var planner = newPlanner(List.of("w1"), WorkerMode.MIXED, new RatioSplit(1, 1));
         VirtualTopology topology = planner.plan(new TopologySpec(
                 "p", 1, 4, 0, 1, 2, ConsumerType.CONSUMER_GROUP,
-                /*procMin*/ 5, /*procMax*/ 25,
+                /*procMin*/ 5, /*procMax*/ 25, /*procConcurrency*/ 1,
                 MessageDistributorType.NO_KEY, 1.0,
                 /*correctness*/ false, /*staticConsumerPartitions*/ false));
 
@@ -669,7 +669,7 @@ public class TopologyPlannerTest {
                                             boolean correctness, boolean staticConsumerPartitions) {
         return new TopologySpec(prefix, numTopics, partitionsPerTopic,
                 producersPerTopic, groupsPerTopic, consumersPerGroup,
-                type, 0, 0, keyType, 1.0, correctness, staticConsumerPartitions);
+                type, 0, 0, 1, keyType, 1.0, correctness, staticConsumerPartitions);
     }
 
     private static String oneWorkerForProducerTopic(VirtualTopology topology, String topic) {

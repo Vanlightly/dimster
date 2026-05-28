@@ -18,7 +18,8 @@ public record ConsumerSet(
         List<VirtualConsumer> consumers,
         ConsumerType consumerType,
         int consumerProcMsMin,
-        int consumerProcMsMax) {
+        int consumerProcMsMax,
+        int consumerProcConcurrency) {
 
     public ConsumerSet {
         consumers = List.copyOf(consumers);

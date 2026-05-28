@@ -94,6 +94,8 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
 
     private volatile int procMsMin;
     private volatile int procMsMax;
+    private volatile int procConcurrency;
+    private volatile ProcessingTimeSimulator processingTimeSimulator;
 
     /** When true, every consumed record is logged with its partition + timestamp.
      *  Wired in from {@code engineConfig.printMessages}; the upstream
@@ -106,8 +108,9 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 String topic,
                                 String name,
                                 int procMsMin,
-                                int procMsMax) {
-        this(consumer, consumerConfig, callback, topic, name, procMsMin, procMsMax, null, false);
+                                int procMsMax,
+                                int procConcurrency) {
+        this(consumer, consumerConfig, callback, topic, name, procMsMin, procMsMax, procConcurrency, null, false);
     }
 
     /**
@@ -124,6 +127,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 String name,
                                 int procMsMin,
                                 int procMsMax,
+                                int procConcurrency,
                                 List<TopicPartition> staticPartitions,
                                 boolean printMessages) {
         this.consumer = consumer;
@@ -141,6 +145,8 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                 (String) consumerConfig.getOrDefault(POLL_TIMEOUT_CONFIG, POLL_TIMEOUT_DEFAULT)));
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
+        this.procConcurrency = procConcurrency;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procConcurrency);
 
         if (staticPartitions != null) {
             consumer.assign(staticPartitions);
@@ -164,6 +170,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
     public void setProcessingTime(int minMs, int maxMs) {
         this.procMsMin = minMs;
         this.procMsMax = maxMs;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procConcurrency);
     }
 
     private void pollLoop() {
@@ -179,73 +186,45 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                     callback.pollCompleted(records.count());
                     callback.batchReceived(name, records.count());
 
-                    // Decide once per batch whether to aggregate per-record sleeps.
-                    // Aggregate mode trades per-record proc-time-metric granularity
-                    // for a much more stable effective per-record proc time when the
-                    // target is small enough that Thread.sleep variance dominates.
-                    // See AGGREGATE_PROC_TIME_THRESHOLD_MS for the rationale.
-                    boolean useAggregate = procMsMax > 0
-                            && ((procMsMin + procMsMax) / 2) < AGGREGATE_PROC_TIME_THRESHOLD_MS;
-                    long aggregateSleepMs = 0;
-
-                    // Process the records --------------
-                    Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
+                    // Convert records to list for index-based access
+                    var recordList = new java.util.ArrayList<org.apache.kafka.clients.consumer.ConsumerRecord<String, byte[]>>();
                     for (var record : records) {
-                        if (printMessages) {
-                            long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
-                            byte[] value = record.value();
-                            String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
-                            log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
-                                    record.topic(), record.partition(),
-                                    record.offset(), record.timestamp(), e2eLatencyMs, msgType);
-                        }
+                        recordList.add(record);
+                    }
 
-                        callback.messageReceived(record.value(), record.topic(),
-                                record.partition(), record.timestamp(),
-                                deliveryTime);
+                    // Process the records with simulated processing time --------------
+                    Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
+                    processingTimeSimulator.processBatch(
+                            recordList.size(),
+                            closing,
+                            callback,
+                            (startIdx, endIdx) -> {
+                                // Process messages in range [startIdx, endIdx)
+                                for (int i = startIdx; i < endIdx; i++) {
+                                    var record = recordList.get(i);
 
-                        // Add processing time --------------
-                        if (procMsMax > 0) {
-                            long sleepMs = (procMsMin == procMsMax)
-                                    ? procMsMin
-                                    : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+                                    if (printMessages) {
+                                        long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
+                                        byte[] value = record.value();
+                                        String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
+                                        log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
+                                                record.topic(), record.partition(),
+                                                record.offset(), record.timestamp(), e2eLatencyMs, msgType);
+                                    }
 
-                            if (useAggregate) {
-                                // Defer sleep to a single aggregate Thread.sleep
-                                // after the per-record loop. Per-record metrics
-                                // are intentionally not recorded in this mode -
-                                // the coordinator emits a WARN at test start.
-                                aggregateSleepMs += sleepMs;
-                            } else {
-                                long startNanos = System.nanoTime();
-                                long remaining = sleepMs;
+                                    callback.messageReceived(record.value(), record.topic(),
+                                            record.partition(), record.timestamp(),
+                                            deliveryTime);
 
-                                // Periodically check for close request --------------
-                                while (remaining > 0 && !closing.get()) {
-                                    Thread.sleep(Math.min(remaining, 1000));
-                                    remaining = sleepMs - java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
-                                            System.nanoTime() - startNanos);
+                                    // Maybe record offsets for manual commit
+                                    if (!autoCommit) {
+                                        offsetMap.put(
+                                                new TopicPartition(record.topic(), record.partition()),
+                                                new OffsetAndMetadata(record.offset()));
+                                    }
                                 }
-
-                                long latencyMicros = java.util.concurrent.TimeUnit.NANOSECONDS.toMicros(
-                                        System.nanoTime() - startNanos);
-                                callback.processingTimeCompleted(latencyMicros);
                             }
-                        }
-
-                        // Maybe record offsets for manual commit --------------
-                        if (!autoCommit) {
-                            offsetMap.put(
-                                    new TopicPartition(record.topic(), record.partition()),
-                                    new OffsetAndMetadata(record.offset()));
-                        }
-                    }
-
-                    // Aggregate per-batch sleep, performed before any commit so
-                    // commits reflect work that has "completed".
-                    if (useAggregate && aggregateSleepMs > 0) {
-                        if (Sleeper.sleepOrStop(closing, aggregateSleepMs, false)) return;
-                    }
+                    );
 
                     // Maybe do manual commit --------------
                     long now = System.currentTimeMillis();
