@@ -214,7 +214,7 @@ public class ExploreEngine extends BaseEngine {
         // the actual Kafka topics from the planned names.
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
-                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcConcurrency(),
+                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off */,
                 false /* dynamic consumer assignment */);
@@ -273,7 +273,7 @@ public class ExploreEngine extends BaseEngine {
         // as the upper bound for binary search instead. With concurrent processing
         // the max depends on poll batch sizes which aren't known ahead of time.
         RampResult ramp;
-        if (point.consumerProcMsMin() > 0 && point.consumerProcConcurrency() == 1) {
+        if (point.consumerProcMsMin() > 0 && point.consumerProcParallelism() == 1) {
             int totalConsumers = point.topics() * point.consumerGroupsPerTopic() * point.consumersPerGroup();
             double theoreticalMax = theoreticalMaxRate(
                     point.consumerProcMsMin(), point.consumerProcMsMax(),
@@ -316,7 +316,7 @@ public class ExploreEngine extends BaseEngine {
         // attempts fail we fall through with a tighter upper bound for the standard
         // search. Concurrent processing disables this path because the max depends
         // on unknown poll batch sizes.
-        if (point.consumerProcMsMin() > 0 && point.consumerProcConcurrency() == 1) {
+        if (point.consumerProcMsMin() > 0 && point.consumerProcParallelism() == 1) {
             double theoreticalMax = high;
             double[] fastCandidates = {theoreticalMax, theoreticalMax * 0.95};
             boolean firstCandidate = true;

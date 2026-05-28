@@ -59,7 +59,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
 
     private volatile int procMsMin;
     private volatile int procMsMax;
-    private volatile int procConcurrency;
+    private volatile int procParallelism;
     private volatile ProcessingTimeSimulator processingTimeSimulator;
 
     /** When true, every consumed record is logged with its partition + timestamp.
@@ -74,8 +74,8 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 String name,
                                 int procMsMin,
                                 int procMsMax,
-                                int procConcurrency) {
-        this(consumer, consumerConfig, callback, topic, name, procMsMin, procMsMax, procConcurrency, null, false);
+                                int procParallelism) {
+        this(consumer, consumerConfig, callback, topic, name, procMsMin, procMsMax, procParallelism, null, false);
     }
 
     /**
@@ -92,7 +92,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 String name,
                                 int procMsMin,
                                 int procMsMax,
-                                int procConcurrency,
+                                int procParallelism,
                                 List<TopicPartition> staticPartitions,
                                 boolean printMessages) {
         this.consumer = consumer;
@@ -110,8 +110,8 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                 (String) consumerConfig.getOrDefault(POLL_TIMEOUT_CONFIG, POLL_TIMEOUT_DEFAULT)));
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
-        this.procConcurrency = procConcurrency;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procConcurrency);
+        this.procParallelism = procParallelism;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procParallelism);
 
         if (staticPartitions != null) {
             consumer.assign(staticPartitions);
@@ -135,7 +135,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
     public void setProcessingTime(int minMs, int maxMs) {
         this.procMsMin = minMs;
         this.procMsMax = maxMs;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procConcurrency);
+        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procParallelism);
     }
 
     private void pollLoop() {

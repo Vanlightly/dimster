@@ -132,7 +132,7 @@ public class TopologyPlanner {
             ConsumerType consumerType,
             int consumerProcMsMin,
             int consumerProcMsMax,
-            int consumerProcConcurrency,
+            int consumerProcParallelism,
             MessageDistributorType messageDistributorType,
             double messageDistributorSkew,
             boolean correctnessEnabled,
@@ -306,7 +306,7 @@ public class TopologyPlanner {
                 spec.consumerType(),
                 spec.consumerProcMsMin(),
                 spec.consumerProcMsMax(),
-                spec.consumerProcConcurrency(),
+                spec.consumerProcParallelism(),
                 spec.messageDistributorType(),
                 spec.messageDistributorSkew(),
                 activeProducerWorkerCount);

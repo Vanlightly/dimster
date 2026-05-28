@@ -19,7 +19,7 @@ public record ConsumerSet(
         ConsumerType consumerType,
         int consumerProcMsMin,
         int consumerProcMsMax,
-        int consumerProcConcurrency) {
+        int consumerProcParallelism) {
 
     public ConsumerSet {
         consumers = List.copyOf(consumers);

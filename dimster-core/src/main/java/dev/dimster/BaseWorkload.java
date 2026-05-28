@@ -46,5 +46,5 @@ public class BaseWorkload {
 
     public int consumerProcMsMin = 0;
     public int consumerProcMsMax = 0;
-    public int consumerProcConcurrency = 1;
+    public int consumerProcParallelism = 1;
 }

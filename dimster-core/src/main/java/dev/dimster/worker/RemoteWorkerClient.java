@@ -126,13 +126,13 @@ public class RemoteWorkerClient implements Worker {
         ConsumerType type = consumerSet.consumerType();
         int procMin = consumerSet.consumerProcMsMin();
         int procMax = consumerSet.consumerProcMsMax();
-        int procConcurrency = consumerSet.consumerProcConcurrency();
+        int procParallelism = consumerSet.consumerProcParallelism();
         log.info("Distributing {} consumers across {} workers",
                 consumerSet.consumers().size(), byWorker.size());
 
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream().map(entry -> {
             try {
-                ConsumerSet workerSet = new ConsumerSet(entry.getValue(), type, procMin, procMax, procConcurrency);
+                ConsumerSet workerSet = new ConsumerSet(entry.getValue(), type, procMin, procMax, procParallelism);
                 return sendPostAsync(entry.getKey(), "/create-consumers",
                         writer.writeValueAsBytes(workerSet));
             } catch (Exception e) {
@@ -341,7 +341,7 @@ public class RemoteWorkerClient implements Worker {
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream()
                 .map(e -> {
                     ConsumerSet workerSet = new ConsumerSet(e.getValue(), consumers.consumerType(),
-                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcConcurrency());
+                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism());
                     return sendPostAsync(e.getKey(), "/add-consumers", writeBytes(workerSet));
                 })
                 .toList();
@@ -366,7 +366,7 @@ public class RemoteWorkerClient implements Worker {
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream()
                 .map(e -> {
                     ConsumerSet workerSet = new ConsumerSet(e.getValue(), consumers.consumerType(),
-                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcConcurrency());
+                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism());
                     return sendPostAsync(e.getKey(), "/restart-consumers", writeBytes(workerSet));
                 })
                 .toList();

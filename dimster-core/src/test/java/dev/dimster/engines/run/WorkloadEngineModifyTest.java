@@ -135,7 +135,7 @@ public class WorkloadEngineModifyTest {
                 MessageDistributorType.NO_KEY, /*skew*/ 1.0,
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
-                procMsMin, procMsMax, /*procConcurrency*/ 1,
+                procMsMin, procMsMax, /*procParallelism*/ 1,
                 null, null,
                 new dev.dimster.engines.run.RunConfig());
     }

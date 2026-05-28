@@ -60,7 +60,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
 
     private volatile int procMsMin;
     private volatile int procMsMax;
-    private volatile int procConcurrency;
+    private volatile int procParallelism;
     private volatile ProcessingTimeSimulator processingTimeSimulator;
 
     /** When true, every consumed record is logged with its partition + timestamp.
@@ -81,7 +81,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                                      String name,
                                      int procMsMin,
                                      int procMsMax,
-                                     int procConcurrency,
+                                     int procParallelism,
                                      boolean printMessages) {
         this.consumer = consumer;
         this.callback = callback;
@@ -98,8 +98,8 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                 (String) consumerConfig.getOrDefault(POLL_TIMEOUT_CONFIG, POLL_TIMEOUT_DEFAULT)));
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
-        this.procConcurrency = procConcurrency;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procConcurrency);
+        this.procParallelism = procParallelism;
+        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procParallelism);
 
         if (explicitAck) {
             consumer.setAckCallback(this);
@@ -121,7 +121,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
     public void setProcessingTime(int minMs, int maxMs) {
         this.procMsMin = minMs;
         this.procMsMax = maxMs;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procConcurrency);
+        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procParallelism);
     }
 
     private void pollLoop() {

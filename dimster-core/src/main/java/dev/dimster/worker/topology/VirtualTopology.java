@@ -43,7 +43,7 @@ import dev.dimster.utils.distributor.MessageDistributorType;
  *                                    delay applied to every consumer
  * @param consumerProcMsMax           maximum simulated per-record processing
  *                                    delay applied to every consumer
- * @param consumerProcConcurrency     processing concurrency mode: 1=sequential,
+ * @param consumerProcParallelism     processing concurrency mode: 1=sequential,
  *                                    >1=constrained concurrency, -1=full parallelism
  * @param messageDistributorType          per-message key distributor used by every
  *                                    producer (the same instance is shared
@@ -62,7 +62,7 @@ public record VirtualTopology(
         ConsumerType consumerType,
         int consumerProcMsMin,
         int consumerProcMsMax,
-        int consumerProcConcurrency,
+        int consumerProcParallelism,
         MessageDistributorType messageDistributorType,
         double messageDistributorSkew,
         int activeProducerWorkerCount) {
@@ -109,6 +109,6 @@ public record VirtualTopology(
      * settings.
      */
     public ConsumerSet consumerSetForWorker(String worker) {
-        return new ConsumerSet(consumersForWorker(worker), consumerType, consumerProcMsMin, consumerProcMsMax, consumerProcConcurrency);
+        return new ConsumerSet(consumersForWorker(worker), consumerType, consumerProcMsMin, consumerProcMsMax, consumerProcParallelism);
     }
 }

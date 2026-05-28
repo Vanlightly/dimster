@@ -159,7 +159,7 @@ public class TestPointMutator {
         List<DiffAction> actions = new ArrayList<>();
         actions.add(new DiffAction.RestartConsumers(
                 new ConsumerSet(toRestart, current.consumerType(),
-                        current.consumerProcMsMin(), current.consumerProcMsMax(), current.consumerProcConcurrency()),
+                        current.consumerProcMsMin(), current.consumerProcMsMax(), current.consumerProcParallelism()),
                 String.format("--restart-consumers %d (restarting %d of %d consumers)",
                         requestedCount, actualCount, totalConsumers)));
 
@@ -197,7 +197,7 @@ public class TestPointMutator {
                 current.kafkaConfig(),  // handled separately by applyKafkaConfigOverrides
                 pickInt(overrides, "consumerProcMsMin", current.consumerProcMsMin()),
                 pickInt(overrides, "consumerProcMsMax", current.consumerProcMsMax()),
-                pickInt(overrides, "consumerProcConcurrency", current.consumerProcConcurrency()),
+                pickInt(overrides, "consumerProcParallelism", current.consumerProcParallelism()),
                 current.drainBacklogConfig(),
                 current.exploreConfig(),
                 current.runConfig());
@@ -238,7 +238,7 @@ public class TestPointMutator {
                 base.messageSize(), base.producerRate(),
                 base.messageDistributor(), base.messageDistributorSkew(), base.consumerType(),
                 newConfig,
-                base.consumerProcMsMin(), base.consumerProcMsMax(), base.consumerProcConcurrency(),
+                base.consumerProcMsMin(), base.consumerProcMsMax(), base.consumerProcParallelism(),
                 base.drainBacklogConfig(), base.exploreConfig(),
                 base.runConfig());
     }
@@ -573,7 +573,7 @@ public class TestPointMutator {
             if (!keep.isEmpty()) {
                 actions.add(new DiffAction.RestartConsumers(
                         new ConsumerSet(keep, mutated.consumerType(),
-                                mutated.consumerProcMsMin(), mutated.consumerProcMsMax(), mutated.consumerProcConcurrency()),
+                                mutated.consumerProcMsMin(), mutated.consumerProcMsMax(), mutated.consumerProcParallelism()),
                         configChangeReason(false, classicConsumerConfigChanged,
                                 shareConsumerConfigChanged, commonConfigChanged)));
             }
@@ -826,7 +826,7 @@ public class TestPointMutator {
             }
         }
         return new ConsumerSet(out, mutated.consumerType(),
-                mutated.consumerProcMsMin(), mutated.consumerProcMsMax(), mutated.consumerProcConcurrency());
+                mutated.consumerProcMsMin(), mutated.consumerProcMsMax(), mutated.consumerProcParallelism());
     }
 
     // ─── Step 4: project the new VirtualTopology ──────────────────────
@@ -886,7 +886,7 @@ public class TestPointMutator {
                 mutated.consumerType(),
                 mutated.consumerProcMsMin(),
                 mutated.consumerProcMsMax(),
-                mutated.consumerProcConcurrency(),
+                mutated.consumerProcParallelism(),
                 mutated.messageDistributor(),
                 mutated.messageDistributorSkew(),
                 Math.max(activeProducerWorkers, 1));

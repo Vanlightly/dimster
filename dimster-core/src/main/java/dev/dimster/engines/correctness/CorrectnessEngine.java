@@ -168,7 +168,7 @@ public class CorrectnessEngine extends BaseEngine {
                 && point.consumerType() != ConsumerType.SHARE_GROUP;
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
-                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcConcurrency(),
+                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 true /* correctness on */,
                 staticConsumerPartitions);

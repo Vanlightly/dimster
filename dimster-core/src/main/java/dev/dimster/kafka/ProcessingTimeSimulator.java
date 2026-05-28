@@ -9,8 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Simulates processing time for consumer message batches across three modes:
- * sequential (procConcurrency=1), constrained concurrency (procConcurrency>1),
- * and full parallelism (procConcurrency=-1).
+ * sequential (procParallelism=1), constrained concurrency (procParallelism>1),
+ * and full parallelism (procParallelism=-1).
  *
  * <p>Handles the aggregate sleep optimization for small processing times
  * (midpoint < 10ms) to reduce OS scheduling variance.
@@ -18,12 +18,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ProcessingTimeSimulator {
     private final int procMsMin;
     private final int procMsMax;
-    private final int procConcurrency;
+    private final int procParallelism;
 
-    public ProcessingTimeSimulator(int procMsMin, int procMsMax, int procConcurrency) {
+    public ProcessingTimeSimulator(int procMsMin, int procMsMax, int procParallelism) {
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
-        this.procConcurrency = procConcurrency;
+        this.procParallelism = procParallelism;
     }
 
     /**
@@ -53,11 +53,11 @@ public class ProcessingTimeSimulator {
             return 0;
         }
 
-        if (procConcurrency == 1) {
+        if (procParallelism == 1) {
             return processSequential(batchSize, closing, callback, deliveryTime, messageProcessor);
-        } else if (procConcurrency > 1) {
+        } else if (procParallelism > 1) {
             return processConstrained(batchSize, closing, callback, deliveryTime, messageProcessor);
-        } else { // procConcurrency == -1
+        } else { // procParallelism == -1
             return processFullParallel(batchSize, closing, callback, deliveryTime, messageProcessor);
         }
     }
@@ -122,10 +122,10 @@ public class ProcessingTimeSimulator {
         }
 
         // Distribute records among workers and process each worker's queue
-        int recordsPerWorker = (batchSize + procConcurrency - 1) / procConcurrency;
+        int recordsPerWorker = (batchSize + procParallelism - 1) / procParallelism;
         long maxWorkerTime = 0;
 
-        for (int worker = 0; worker < procConcurrency; worker++) {
+        for (int worker = 0; worker < procParallelism; worker++) {
             int startIdx = worker * recordsPerWorker;
             int endIdx = Math.min(startIdx + recordsPerWorker, batchSize);
 

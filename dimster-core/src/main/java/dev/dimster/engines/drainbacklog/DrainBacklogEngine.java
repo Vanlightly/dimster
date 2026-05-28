@@ -143,7 +143,7 @@ public class DrainBacklogEngine extends BaseEngine {
         // Plan first, then create the actual Kafka topics from the planned topic names.
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
-                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcConcurrency(),
+                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off */,
                 false /* dynamic consumer assignment */);

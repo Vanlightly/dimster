@@ -260,7 +260,7 @@ public class WorkloadEngine extends BaseEngine {
         // then create the actual Kafka topics from the planned names.
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
-                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcConcurrency(),
+                point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off in WorkloadEngine */,
                 false /* dynamic consumer assignment outside correctness mode */);
@@ -749,7 +749,7 @@ public class WorkloadEngine extends BaseEngine {
                     prev.consumerType(),
                     prev.consumerProcMsMin(),
                     prev.consumerProcMsMax(),
-                    prev.consumerProcConcurrency());
+                    prev.consumerProcParallelism());
             worker.createConsumers(consumerSet);
             setConsumerRecreation();
             worker.createProducers(prevTopology.producers());
