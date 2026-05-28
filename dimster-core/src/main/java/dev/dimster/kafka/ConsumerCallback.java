@@ -4,12 +4,12 @@ import java.time.Instant;
 
 public interface ConsumerCallback {
     void messageReceived(int payloadSize, long publishTimestampMillis,
-                         Instant deliveryTime);
+                         Instant deliveryTime, Instant processingStartTime);
 
     default void messageReceived(byte[] payload, String topic,
                                  int partition, long publishTimestampMillis,
-                                 Instant deliveryTime) {
-        messageReceived(payload.length, publishTimestampMillis, deliveryTime);
+                                 Instant deliveryTime, Instant processingStartTime) {
+        messageReceived(payload.length, publishTimestampMillis, deliveryTime, processingStartTime);
     }
 
     void error();

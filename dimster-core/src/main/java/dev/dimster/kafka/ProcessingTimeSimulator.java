@@ -2,6 +2,7 @@ package dev.dimster.kafka;
 
 import dev.dimster.utils.Sleeper;
 
+import java.time.Instant;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,99 +19,98 @@ public class ProcessingTimeSimulator {
     private final int procMsMin;
     private final int procMsMax;
     private final int procConcurrency;
-    private final boolean useAggregate;
 
     public ProcessingTimeSimulator(int procMsMin, int procMsMax, int procConcurrency) {
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
         this.procConcurrency = procConcurrency;
-        this.useAggregate = procMsMax > 0
-                && ((procMsMin + procMsMax) / 2) < KafkaConsumerWrapper.AGGREGATE_PROC_TIME_THRESHOLD_MS;
     }
 
     /**
      * Process a batch of messages with simulated processing time.
-     * Calls the messageProcessor for each message or range of messages,
+     * Calls the messageProcessor for each message with its simulated processing start time,
      * and sleeps appropriately based on the concurrency mode.
      *
      * @param batchSize number of messages in the batch
      * @param closing signal to check for early termination
      * @param callback callback for recording processing metrics
-     * @param messageProcessor callback to process each message (or range of messages)
+     * @param deliveryTime when consumer.poll() returned (base time for calculating processing start times)
+     * @param messageProcessor callback to process each message with its simulated start time
      * @return total sleep time in milliseconds
      */
     public long processBatch(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
+            Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
         if (batchSize == 0 || procMsMax == 0) {
-            // No processing time simulation - just process messages
-            messageProcessor.processMessages(0, batchSize);
+            // No processing time simulation - process messages with deliveryTime
+            for (int i = 0; i < batchSize; i++) {
+                messageProcessor.processMessage(i, deliveryTime);
+            }
             return 0;
         }
 
         if (procConcurrency == 1) {
-            return processSequential(batchSize, closing, callback, messageProcessor);
+            return processSequential(batchSize, closing, callback, deliveryTime, messageProcessor);
         } else if (procConcurrency > 1) {
-            return processConstrained(batchSize, closing, callback, messageProcessor);
+            return processConstrained(batchSize, closing, callback, deliveryTime, messageProcessor);
         } else { // procConcurrency == -1
-            return processFullParallel(batchSize, closing, callback, messageProcessor);
+            return processFullParallel(batchSize, closing, callback, deliveryTime, messageProcessor);
         }
     }
 
     /**
-     * Sequential processing: process messages one by one, sleeping after each.
-     * This matches the existing behavior when procConcurrency=1.
+     * Sequential processing: process messages one by one.
+     * Each message starts after all prior messages have finished.
      */
     private long processSequential(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
+            Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
-        long totalSleepMs = 0;
+        long cumulativeMs = 0;
 
         for (int i = 0; i < batchSize; i++) {
-            // Process this single message
-            messageProcessor.processMessages(i, i + 1);
+            // This message starts after all prior messages finish
+            Instant startTime = deliveryTime.plusMillis(cumulativeMs);
 
-            // Generate and apply processing time
-            long sleepMs = (procMsMin == procMsMax)
+            // Process this message with its start time
+            messageProcessor.processMessage(i, startTime);
+
+            // Generate processing time and add to cumulative
+            long procMs = (procMsMin == procMsMax)
                     ? procMsMin
                     : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+            cumulativeMs += procMs;
+        }
 
-            if (useAggregate) {
-                // Defer sleep to end
-                totalSleepMs += sleepMs;
-            } else {
-                // Sleep immediately and record metric
-                long startNanos = System.nanoTime();
-                if (Sleeper.sleepOrStop(closing, sleepMs, false)) {
-                    return totalSleepMs; // Early exit
-                }
-                long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
-                callback.processingTimeCompleted(latencyMicros);
+        // Sleep once for total time
+        if (cumulativeMs > 0) {
+            long startNanos = System.nanoTime();
+            if (Sleeper.sleepOrStop(closing, cumulativeMs, false)) {
+                return 0;
             }
+            long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
+            callback.processingTimeCompleted(latencyMicros);
         }
 
-        // Aggregate sleep at end if enabled
-        if (useAggregate && totalSleepMs > 0) {
-            Sleeper.sleepOrStop(closing, totalSleepMs, false);
-        }
-
-        return totalSleepMs;
+        return cumulativeMs;
     }
 
     /**
-     * Constrained concurrency: divide messages into chunks of size procConcurrency,
-     * sleep for the max processing time in each chunk.
+     * Constrained concurrency: simulate N concurrent workers, each processing their
+     * assigned records serially. Sleep once for the slowest worker's total time.
      */
     private long processConstrained(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
+            Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
         // Generate processing times for all messages
@@ -121,98 +121,92 @@ public class ProcessingTimeSimulator {
                     : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
         }
 
-        long totalSleepMs = 0;
-        int numChunks = (batchSize + procConcurrency - 1) / procConcurrency;
+        // Distribute records among workers and process each worker's queue
+        int recordsPerWorker = (batchSize + procConcurrency - 1) / procConcurrency;
+        long maxWorkerTime = 0;
 
-        for (int chunk = 0; chunk < numChunks; chunk++) {
-            int startIdx = chunk * procConcurrency;
-            int endIdx = Math.min(startIdx + procConcurrency, batchSize);
+        for (int worker = 0; worker < procConcurrency; worker++) {
+            int startIdx = worker * recordsPerWorker;
+            int endIdx = Math.min(startIdx + recordsPerWorker, batchSize);
 
-            // Find max processing time in this chunk
-            long maxTime = 0;
+            if (startIdx >= batchSize) {
+                break; // No more records for this worker
+            }
+
+            // Process each message in this worker's queue
+            long workerCumulativeMs = 0;
             for (int i = startIdx; i < endIdx; i++) {
-                maxTime = Math.max(maxTime, processingTimes[i]);
+                // Message starts after all prior messages in this worker's queue finish
+                Instant startTime = deliveryTime.plusMillis(workerCumulativeMs);
+                messageProcessor.processMessage(i, startTime);
+
+                // Add this message's processing time to worker cumulative
+                workerCumulativeMs += processingTimes[i];
             }
 
-            // Process messages in this chunk
-            messageProcessor.processMessages(startIdx, endIdx);
+            maxWorkerTime = Math.max(maxWorkerTime, workerCumulativeMs);
+        }
 
-            // Sleep for chunk duration
-            if (useAggregate) {
-                totalSleepMs += maxTime;
-            } else {
-                long startNanos = System.nanoTime();
-                if (Sleeper.sleepOrStop(closing, maxTime, false)) {
-                    return totalSleepMs; // Early exit
-                }
-                long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
-                callback.processingTimeCompleted(latencyMicros);
+        // Sleep once for the slowest worker's time (simulating concurrent workers finishing)
+        if (maxWorkerTime > 0) {
+            long startNanos = System.nanoTime();
+            if (Sleeper.sleepOrStop(closing, maxWorkerTime, false)) {
+                return 0;
             }
+            long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
+            callback.processingTimeCompleted(latencyMicros);
         }
 
-        // Aggregate sleep at end if enabled
-        if (useAggregate && totalSleepMs > 0) {
-            Sleeper.sleepOrStop(closing, totalSleepMs, false);
-        }
-
-        return totalSleepMs;
+        return maxWorkerTime;
     }
 
     /**
-     * Full parallelism: all messages process concurrently,
+     * Full parallelism: all messages process concurrently (start at same time),
      * sleep once for the maximum processing time.
      */
     private long processFullParallel(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
+            Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
-        // Generate processing times and find max
+        // Generate processing times and process all messages (all start at deliveryTime)
         long maxTime = 0;
         for (int i = 0; i < batchSize; i++) {
             long procTime = (procMsMin == procMsMax)
                     ? procMsMin
                     : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
             maxTime = Math.max(maxTime, procTime);
+
+            // All messages start at deliveryTime (concurrent)
+            messageProcessor.processMessage(i, deliveryTime);
         }
 
-        // Process all messages
-        messageProcessor.processMessages(0, batchSize);
-
         // Sleep once for max duration
-        if (!useAggregate) {
+        if (maxTime > 0) {
             long startNanos = System.nanoTime();
             if (Sleeper.sleepOrStop(closing, maxTime, false)) {
-                return 0; // Early exit
+                return 0;
             }
             long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
             callback.processingTimeCompleted(latencyMicros);
         }
 
-        // In aggregate mode, just track the time (actual sleep happens in wrapper)
-        long totalSleepMs = maxTime;
-
-        // Aggregate sleep at end if enabled
-        if (useAggregate && totalSleepMs > 0) {
-            Sleeper.sleepOrStop(closing, totalSleepMs, false);
-        }
-
-        return totalSleepMs;
+        return maxTime;
     }
 
     /**
-     * Callback interface for processing messages in a range.
-     * The processor should handle messages from startIdx (inclusive) to endIdx (exclusive).
+     * Callback interface for processing a single message with its simulated processing start time.
      */
     @FunctionalInterface
     public interface MessageProcessor {
         /**
-         * Process messages in the range [startIdx, endIdx).
+         * Process a single message with its simulated processing start time.
          *
-         * @param startIdx first message index to process (inclusive)
-         * @param endIdx last message index + 1 (exclusive)
+         * @param messageIdx index of the message in the batch
+         * @param simulatedProcessingStartTime when this message starts processing (for e2e latency calculation)
          */
-        void processMessages(int startIdx, int endIdx);
+        void processMessage(int messageIdx, Instant simulatedProcessingStartTime);
     }
 }

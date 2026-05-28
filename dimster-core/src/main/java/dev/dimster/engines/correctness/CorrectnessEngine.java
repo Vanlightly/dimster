@@ -95,8 +95,6 @@ public class CorrectnessEngine extends BaseEngine {
 
                 log.info("--- Correctness test {}/{}: {} ---", i + 1, totalTests, point.label());
                 log.info("Merged workload:\n{}", point.toLogString());
-                KafkaConsumerWrapper.warnIfAggregateProcTime(log,
-                        point.consumerProcMsMin(), point.consumerProcMsMax());
 
                 this.currentTestIndex = i;
                 this.totalTestPoints = totalTests;

@@ -192,21 +192,20 @@ public class StatsCollector implements ConsumerCallback {
 
     @Override
     public void messageReceived(byte[] payload, String topic, int partition,
-                                long publishTimestampMillis, Instant deliveryTime) {
+                                long publishTimestampMillis, Instant deliveryTime, Instant processingStartTime) {
         if (payload.length > 0 && payload[0] == MessageType.PROBE) {
             probesReceived.increment();
             return;
         }
-        messageReceived(payload.length, publishTimestampMillis, deliveryTime);
+        messageReceived(payload.length, publishTimestampMillis, deliveryTime, processingStartTime);
 
         if (perPartitionEnabled) {
             String key = topic + ":" + partition;
             long publishTimeNanos = TimeUnit.MILLISECONDS.toNanos(publishTimestampMillis);
 
-            // Per-partition e2e latency (measured at processing time, same as aggregate e2e)
-            Instant currentTime = Instant.now();
-            long currentTimeNanos = TimeUnit.SECONDS.toNanos(currentTime.getEpochSecond()) + currentTime.getNano();
-            long endToEndLatencyMicros = TimeUnit.NANOSECONDS.toMicros(currentTimeNanos - publishTimeNanos);
+            // Per-partition e2e latency (measured at processing start time)
+            long processingStartTimeNanos = TimeUnit.SECONDS.toNanos(processingStartTime.getEpochSecond()) + processingStartTime.getNano();
+            long endToEndLatencyMicros = TimeUnit.NANOSECONDS.toMicros(processingStartTimeNanos - publishTimeNanos);
             if (endToEndLatencyMicros > 0) {
                 ppE2eLatencyRecorders
                         .computeIfAbsent(key, k -> new Recorder(E2E_LATENCY_MAX_MICROS, PER_PARTITION_SIG_DIGITS))
@@ -232,23 +231,23 @@ public class StatsCollector implements ConsumerCallback {
     }
 
     @Override
-    public void messageReceived(int payloadSize, long publishTimestampMillis, Instant deliveryTime) {
+    public void messageReceived(int payloadSize, long publishTimestampMillis, Instant deliveryTime, Instant processingStartTime) {
         messagesReceived.increment();
         totalMessagesReceived.increment();
         bytesReceived.add(payloadSize);
         totalBytesReceived.add(payloadSize);
 
-        Instant now = Instant.now();
-        long processingTimeNanos = TimeUnit.SECONDS.toNanos(now.getEpochSecond()) + now.getNano();
         long publishTimeNanos = TimeUnit.MILLISECONDS.toNanos(publishTimestampMillis);
-        long endToEndLatencyMicros = TimeUnit.NANOSECONDS.toMicros(processingTimeNanos - publishTimeNanos);
+
+        // Standard e2e latency: from publish to when processing starts
+        long processingStartTimeNanos = TimeUnit.SECONDS.toNanos(processingStartTime.getEpochSecond()) + processingStartTime.getNano();
+        long endToEndLatencyMicros = TimeUnit.NANOSECONDS.toMicros(processingStartTimeNanos - publishTimeNanos);
         if (endToEndLatencyMicros > 0) {
             endToEndLatencyRecorder.recordValue(endToEndLatencyMicros);
         }
 
-        // Delivery latency is only informative when consumers simulate processing time
-        // (otherwise it equals endToEndLatency to within a few microseconds).
-        // LocalWorker flips the flag in createConsumers / addConsumers / setConsumerProcessingTime.
+        // Delivery e2e latency: from publish to when poll() returns
+        // (only informative when consumers simulate processing time, otherwise equals endToEndLatency).
         if (recordDeliveryLatency) {
             long deliveryTimeNanos = TimeUnit.SECONDS.toNanos(deliveryTime.getEpochSecond()) + deliveryTime.getNano();
             long endToEndDeliveryLatencyMicros = TimeUnit.NANOSECONDS.toMicros(deliveryTimeNanos - publishTimeNanos);

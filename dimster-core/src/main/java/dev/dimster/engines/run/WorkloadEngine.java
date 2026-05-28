@@ -200,8 +200,6 @@ public class WorkloadEngine extends BaseEngine {
                     log.info("──────── Test point {}/{}: {} ────────", i + 1, totalTests, point.label());
                 }
                 log.info("Merged workload:\n{}", point.toLogString());
-                KafkaConsumerWrapper.warnIfAggregateProcTime(log,
-                        point.consumerProcMsMin(), point.consumerProcMsMax());
 
                 // Sum durations of points already finished (each may have its own
                 // ramp/warmup/test durations when scenarios sweep them).

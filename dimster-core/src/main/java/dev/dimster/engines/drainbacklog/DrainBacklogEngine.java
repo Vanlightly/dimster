@@ -87,8 +87,6 @@ public class DrainBacklogEngine extends BaseEngine {
 
                 log.info("--- Drain-backlog test {}/{}: {} ---", i + 1, totalTests, point.label());
                 log.info("Merged workload:\n{}", point.toLogString());
-                KafkaConsumerWrapper.warnIfAggregateProcTime(log,
-                        point.consumerProcMsMin(), point.consumerProcMsMax());
 
                 // Stamp the scenario boundary the first time we touch it, then
                 // refresh the end after every test so the exporter knows the

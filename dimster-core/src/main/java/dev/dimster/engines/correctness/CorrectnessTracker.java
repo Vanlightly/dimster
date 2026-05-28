@@ -21,8 +21,8 @@ public class CorrectnessTracker implements ConsumerCallback {
 
     @Override
     public void messageReceived(byte[] payload, String topic, int partition,
-                                long publishTimestampMillis, Instant deliveryTime) {
-        stats.messageReceived(payload, topic, partition, publishTimestampMillis, deliveryTime);
+                                long publishTimestampMillis, Instant deliveryTime, Instant processingStartTime) {
+        stats.messageReceived(payload, topic, partition, publishTimestampMillis, deliveryTime, processingStartTime);
 
         var msg = CorrectnessPayload.decode(payload);
         if (msg.producerId() >= 0) {
@@ -31,8 +31,8 @@ public class CorrectnessTracker implements ConsumerCallback {
     }
 
     @Override
-    public void messageReceived(int payloadSize, long publishTimestampMillis, Instant deliveryTime) {
-        stats.messageReceived(payloadSize, publishTimestampMillis, deliveryTime);
+    public void messageReceived(int payloadSize, long publishTimestampMillis, Instant deliveryTime, Instant processingStartTime) {
+        stats.messageReceived(payloadSize, publishTimestampMillis, deliveryTime, processingStartTime);
     }
 
     @Override

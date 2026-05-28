@@ -147,31 +147,31 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                             recordList.size(),
                             closing,
                             callback,
-                            (startIdx, endIdx) -> {
-                                // Process messages in range [startIdx, endIdx)
-                                for (int i = startIdx; i < endIdx; i++) {
-                                    var record = recordList.get(i);
+                            deliveryTime,
+                            (messageIdx, simulatedProcessingStartTime) -> {
+                                // Process single message with its simulated processing start time
+                                var record = recordList.get(messageIdx);
 
-                                    // Print the messages if configured
-                                    if (printMessages) {
-                                        long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
-                                        byte[] value = record.value();
-                                        String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
-                                        log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
-                                                record.topic(), record.partition(),
-                                                record.offset(), record.timestamp(), e2eLatencyMs, msgType);
-                                    }
+                                // Print the messages if configured
+                                if (printMessages) {
+                                    long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
+                                    byte[] value = record.value();
+                                    String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
+                                    log.info("CONSUMED by {} topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
+                                            this.name,
+                                            record.topic(), record.partition(),
+                                            record.offset(), record.timestamp(), e2eLatencyMs, msgType);
+                                }
 
-                                    // Records stats
-                                    callback.messageReceived(record.value(), record.topic(), record.partition(),
-                                            record.timestamp(), deliveryTime);
+                                // Records stats
+                                callback.messageReceived(record.value(), record.topic(), record.partition(),
+                                        record.timestamp(), deliveryTime, simulatedProcessingStartTime);
 
-                                    // Maybe acknowledge
-                                    // Note: acknowledge(ACCEPT) is local-only (no network I/O),
-                                    // so its position relative to the aggregate sleep is immaterial.
-                                    if (explicitAck) {
-                                        consumer.acknowledge(record, AckType.ACCEPT);
-                                    }
+                                // Maybe acknowledge
+                                // Note: acknowledge(ACCEPT) is local-only (no network I/O),
+                                // so its position relative to the aggregate sleep is immaterial.
+                                if (explicitAck) {
+                                    consumer.acknowledge(record, AckType.ACCEPT);
                                 }
                             }
                     );

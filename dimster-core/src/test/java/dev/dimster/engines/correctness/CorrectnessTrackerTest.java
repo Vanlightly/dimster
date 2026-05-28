@@ -37,7 +37,7 @@ public class CorrectnessTrackerTest {
     @Test
     public void probeMessagesAreIgnoredByChecker() {
         byte[] probe = new byte[24];
-        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         assertEquals(0, checker.getTotalReceived());
     }
@@ -49,7 +49,7 @@ public class CorrectnessTrackerTest {
     @Test
     public void randomPayloadsAreIgnoredByChecker() {
         byte[] randomPayload = new byte[256];
-        tracker.messageReceived(randomPayload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(randomPayload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         assertEquals(0, checker.getTotalReceived());
     }
@@ -61,7 +61,7 @@ public class CorrectnessTrackerTest {
     public void correctnessPayloadsAreTracked() {
         byte[] payload = new byte[64];
         CorrectnessPayload.encode(payload, 0, 0, System.currentTimeMillis(), false);
-        tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         assertEquals(1, checker.getTotalReceived());
     }
@@ -77,7 +77,7 @@ public class CorrectnessTrackerTest {
             CorrectnessPayload.encode(payload, producerId, seq,
                     System.currentTimeMillis(), true);
             checker.messageSent(producerId, seq, "test-topic");
-            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         assertEquals(100, checker.getTotalSent());
@@ -103,7 +103,7 @@ public class CorrectnessTrackerTest {
             CorrectnessPayload.encode(payload, producerId, seq,
                     System.currentTimeMillis(), false);
             checker.messageSent(producerId, seq, "test-topic");
-            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         // Phase 2: test — sequences continue from 50 (NO reset)
@@ -112,7 +112,7 @@ public class CorrectnessTrackerTest {
             CorrectnessPayload.encode(payload, producerId, seq,
                     System.currentTimeMillis(), false);
             checker.messageSent(producerId, seq, "test-topic");
-            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         // Totals include both warmup and test
@@ -134,7 +134,7 @@ public class CorrectnessTrackerTest {
         byte[] probe = new byte[24]; // all zeros — MessageType.NORMAL
 
         // Probe before test
-        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         // Real correctness messages
         for (long seq = 0; seq < 10; seq++) {
@@ -142,12 +142,12 @@ public class CorrectnessTrackerTest {
             CorrectnessPayload.encode(payload, producerId, seq,
                     System.currentTimeMillis(), true);
             checker.messageSent(producerId, seq, "test-topic");
-            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         // More probes during test
-        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now());
-        tracker.messageReceived(probe, "test-topic", 1, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(probe, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
+        tracker.messageReceived(probe, "test-topic", 1, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         assertEquals(10, checker.getTotalSent());
         assertEquals(10, checker.getTotalReceived());
@@ -169,7 +169,7 @@ public class CorrectnessTrackerTest {
         // Corrupt a data byte (after the type byte)
         payload[6] ^= 0xFF;
 
-        tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+        tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
 
         assertEquals(1, checker.getCrcFailureCount());
     }
@@ -183,7 +183,7 @@ public class CorrectnessTrackerTest {
 
         // Probes
         for (int i = 0; i < 3; i++) {
-            tracker.messageReceived(probe, "test-topic", i, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(probe, "test-topic", i, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         // Producer 0: 10 messages
@@ -192,7 +192,7 @@ public class CorrectnessTrackerTest {
             CorrectnessPayload.encode(payload, 0, seq,
                     System.currentTimeMillis(), false);
             checker.messageSent(0, seq, "test-topic");
-            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now());
+            tracker.messageReceived(payload, "test-topic", 0, System.currentTimeMillis(), Instant.now(), Instant.now());
         }
 
         // Producer 1: 10 messages, lose seq 5
@@ -202,7 +202,7 @@ public class CorrectnessTrackerTest {
                     System.currentTimeMillis(), false);
             checker.messageSent(1, seq, "test-topic");
             if (seq != 5) {
-                tracker.messageReceived(payload, "test-topic", 1, System.currentTimeMillis(), Instant.now());
+                tracker.messageReceived(payload, "test-topic", 1, System.currentTimeMillis(), Instant.now(), Instant.now());
             }
         }
 

@@ -137,8 +137,6 @@ public class ExploreEngine extends BaseEngine {
 
                 log.info("--- Test {}/{}: {} ---", i + 1, totalTests, point.label());
                 log.info("Merged workload:\n{}", point.toLogString());
-                KafkaConsumerWrapper.warnIfAggregateProcTime(log,
-                        point.consumerProcMsMin(), point.consumerProcMsMax());
                 this.useDeliveryLatency = config.useDeliveryLatencyForThreshold || point.consumerProcMsMax() > 0;
                 String thresholdLabel = this.useDeliveryLatency ? "e2e-dlv" : "e2e";
                 log.info("    Thresholds: p{}-{} <= {} ms (sustain <= {} ms), publish delay <= {} ms (sustain <= {} ms)",
