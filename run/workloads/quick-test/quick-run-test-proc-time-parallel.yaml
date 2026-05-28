@@ -1,0 +1,29 @@
+name: Quick run test - consumer processing time with concurrency
+
+engineConfig:
+  perPartitionMetrics: true
+  perConsumerMetrics: true
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 1
+  warmupDurationMinutes: 1
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 1
+  messageDistributor: "PINNED_PARTITIONS"
+  messageSize: 500
+  consumerType: SHARE_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 6
+  producersPerTopic: 1
+  consumerProcMsMin: 500
+  consumerProcMsMax: 500
+
+scenarios:
+  - name: proc-time
+    label: ["sequential", "parallel(5)", "unconstrained"]
+    producerRate: [10, 50, 1000]
+    consumerProcParallelism: [1, 5, -1]
+
