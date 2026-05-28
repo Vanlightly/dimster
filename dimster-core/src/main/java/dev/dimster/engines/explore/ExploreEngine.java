@@ -273,15 +273,16 @@ public class ExploreEngine extends BaseEngine {
         // bound for binary search instead.
         RampResult ramp;
         if (point.consumerProcMsMin() > 0) {
+            int totalConsumers = point.topics() * point.consumerGroupsPerTopic() * point.consumersPerGroup();
             double theoreticalMax = theoreticalMaxRate(
                     point.consumerProcMsMin(), point.consumerProcMsMax(),
-                    point.consumersPerGroup());
+                    totalConsumers);
             log.info("    Consumer processing time detected ({}–{} ms). "
                             + "Theoretical max: {} msgs/s ({} consumers x {} msgs/s/consumer). "
                             + "Skipping ramp, using [0 - {}] as search range.",
                     point.consumerProcMsMin(), point.consumerProcMsMax(),
                     rateFormat.format(theoreticalMax),
-                    point.consumersPerGroup(),
+                    totalConsumers,
                     rateFormat.format(1000.0 / ((point.consumerProcMsMin() + point.consumerProcMsMax()) / 2.0)),
                     rateFormat.format(theoreticalMax));
             ramp = new RampResult(0, theoreticalMax, null);
@@ -1102,14 +1103,14 @@ public class ExploreEngine extends BaseEngine {
 
     /**
      * Compute the theoretical maximum consume rate (msgs/sec) when each consumer
-     * has a fixed processing time per message. With N consumers each taking
-     * avgProcMs milliseconds per message, the group can process at most
+     * has a fixed processing time per message. With N total consumers each taking
+     * avgProcMs milliseconds per message, all consumers can process at most
      * N * (1000 / avgProcMs) messages per second.
      */
-    static double theoreticalMaxRate(int procMsMin, int procMsMax, int consumersPerGroup) {
+    static double theoreticalMaxRate(int procMsMin, int procMsMax, int totalConsumers) {
         double avgProcMs = (procMsMin + procMsMax) / 2.0;
         double perConsumer = 1000.0 / avgProcMs;
-        return perConsumer * consumersPerGroup;
+        return perConsumer * totalConsumers;
     }
 
     // ==================== Setup Helpers ====================
