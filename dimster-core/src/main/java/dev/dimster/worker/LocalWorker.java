@@ -435,8 +435,8 @@ public class LocalWorker implements Worker {
                 final String topicForLog = producer.getTopic();
                 f.thenAccept((sendResult) -> {
                     stats.recordSendSuccess(sendTime, pSize, sendResult.topicPartition());
-                    if (print) {
-                        log.info("PRODUCED topic={} partition={} offset={} timestamp={}",
+                    if (print && log.isDebugEnabled()) {
+                        log.debug("PRODUCED topic={} partition={} offset={} timestamp={}",
                                 topicForLog, sendResult.partition(),
                                 sendResult.offset(), sendResult.timestamp());
                     }
@@ -805,6 +805,17 @@ public class LocalWorker implements Worker {
         log.info("Consumer processing time adjusted");
     }
 
+    @Override
+    public void setConsumerProcCapacity(int capacity) {
+        log.info("Adjusting consumer proc capacity: {}", capacity);
+        for (var consumer : consumers) {
+            if (consumer instanceof KafkaConsumerWrapper kc) {
+                kc.setQueueCapacity(capacity);
+            }
+        }
+        log.info("Consumer proc capacity adjusted");
+    }
+
     // ─── Incremental topology operations (driven by /modify pipeline) ────
 
     @Override
@@ -980,7 +991,8 @@ public class LocalWorker implements Worker {
                 if (!toRemove.contains(vc.name())) kept.add(vc);
             }
             consumerSet = new ConsumerSet(kept, consumerSet.consumerType(),
-                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcParallelism());
+                    consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcParallelism(),
+                    consumerSet.consumerProcMode(), consumerSet.consumerProcCapacity());
         }
         updateKafkaMetricsSources();
     }
@@ -1028,7 +1040,8 @@ public class LocalWorker implements Worker {
         List<VirtualConsumer> all = new ArrayList<>(base.consumers());
         all.addAll(added.consumers());
         return new ConsumerSet(all, added.consumerType(),
-                added.consumerProcMsMin(), added.consumerProcMsMax(), added.consumerProcParallelism());
+                added.consumerProcMsMin(), added.consumerProcMsMax(), added.consumerProcParallelism(),
+                added.consumerProcMode(), added.consumerProcCapacity());
     }
 
     private void recreationLoop() {
@@ -1147,7 +1160,8 @@ public class LocalWorker implements Worker {
             return new KafkaConsumerWrapper(kafkaConsumer, allProps, consumerCallback, vc.topic(),
                     vc.name(),
                     consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcParallelism(),
-                    staticPartitions, printMessages);
+                    staticPartitions, printMessages,
+                    consumerSet.consumerProcMode(), consumerSet.consumerProcCapacity());
         }
     }
 

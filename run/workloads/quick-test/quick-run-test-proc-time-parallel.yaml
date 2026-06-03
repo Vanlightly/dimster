@@ -4,26 +4,71 @@ engineConfig:
   perPartitionMetrics: true
   perConsumerMetrics: true
   cooldownMinutes: 0
+  printMessages: true
 
 runConfig:
   testDurationMinutes: 1
-  warmupDurationMinutes: 1
+  warmupDurationMinutes: 0
 
 baseWorkload:
   topics: 1
   partitionsPerTopic: 1
   messageDistributor: "PINNED_PARTITIONS"
   messageSize: 500
-  consumerType: SHARE_GROUP
   consumerGroupsPerTopic: 1
-  consumersPerGroup: 6
   producersPerTopic: 1
   consumerProcMsMin: 500
   consumerProcMsMax: 500
+  kafkaConfig:
+    replicationFactor: 3
+    topicConfig:
+      min.insync.replicas: 2
+    producerConfig:
+      acks: all
+      enable.idempotence: true
+    classicConsumerConfig:
+      auto.offset.reset: earliest
+      enable.auto.commit: false
+      dimster.commit.mode: CommitAsync
+    shareConsumerConfig:
+      share.acknowledgement.mode: explicit
+      share.acquire.mode: record_limit
+      dimster.commit.mode: CommitAsync
 
 scenarios:
-  - name: proc-time
-    label: ["sequential", "parallel(5)", "unconstrained"]
-    producerRate: [10, 50, 1000]
-    consumerProcParallelism: [1, 5, -1]
+  - name: cg-blocking
+    label: ["sequential", "parallel(5)", "parallel(10)", "unconstrained"]
+    consumerType: CONSUMER_GROUP
+    consumerProcMode: BLOCKING
+    consumersPerGroup: 1
+    producerRate: [2, 10, 20, 1000]
+    consumerProcParallelism: [1, 5, 10, -1]
+    kafkaConfig:
+      classicConsumerConfig:
+        max.poll.records: [2, 10, 20, 750]
+
+  - name: cg-continuous
+    label: ["sequential", "parallel(5)", "parallel(10)", "unconstrained"]
+    consumerType: CONSUMER_GROUP
+    consumerProcMode: CONTINUOUS
+    consumersPerGroup: 1
+    producerRate: [2, 10, 20, 1000]
+    consumerProcParallelism: [1, 5, 10, -1]
+    consumerProcCapacity: [20, 100, 200, 1000]
+    kafkaConfig:
+      classicConsumerConfig:
+        max.poll.records: [1, 5, 5, 50]
+
+  - name: sg-blocking
+    label: ["sequential", "parallel(5)", "parallel(10)", "unconstrained"]
+    consumerType: SHARE_GROUP
+    consumerProcMode: BLOCKING
+    consumersPerGroup: 6
+    producerRate: [12, 60, 120, 2000]
+    consumerProcParallelism: [1, 5, 10, -1]
+    kafkaConfig:
+      shareConsumerConfig:
+        max.poll.records: [2, 10, 20, 400] 
+
+  
 

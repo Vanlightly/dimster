@@ -11,6 +11,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.utils.RandomGenerator;
 import dev.dimster.utils.distributor.MessageDistributorType;
@@ -133,6 +134,8 @@ public class TopologyPlanner {
             int consumerProcMsMin,
             int consumerProcMsMax,
             int consumerProcParallelism,
+            ConsumerProcMode consumerProcMode,
+            int consumerProcCapacity,
             MessageDistributorType messageDistributorType,
             double messageDistributorSkew,
             boolean correctnessEnabled,
@@ -141,6 +144,12 @@ public class TopologyPlanner {
         public TopologySpec {
             if (topicPrefix == null || topicPrefix.isEmpty()) {
                 throw new IllegalArgumentException("topicPrefix must be non-empty");
+            }
+            if (consumerProcMode == ConsumerProcMode.CONTINUOUS && consumerType == ConsumerType.SHARE_GROUP) {
+                throw new IllegalArgumentException(
+                    "CONTINUOUS processing mode is incompatible with SHARE_GROUP consumers. " +
+                    "Share groups use currentBatch for RENEW tracking, which breaks with " +
+                    "out-of-order completion. Use BLOCKING mode or CONSUMER_GROUP.");
             }
             if (numTopics < 1) {
                 throw new IllegalArgumentException("numTopics must be >= 1");
@@ -307,6 +316,8 @@ public class TopologyPlanner {
                 spec.consumerProcMsMin(),
                 spec.consumerProcMsMax(),
                 spec.consumerProcParallelism(),
+                spec.consumerProcMode(),
+                spec.consumerProcCapacity(),
                 spec.messageDistributorType(),
                 spec.messageDistributorSkew(),
                 activeProducerWorkerCount);

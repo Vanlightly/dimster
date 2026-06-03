@@ -4,12 +4,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -17,7 +15,6 @@ import dev.dimster.MessageType;
 import dev.dimster.spi.kafka.AckType;
 import dev.dimster.spi.kafka.RawShareConsumer;
 import dev.dimster.spi.kafka.ShareAckListener;
-import dev.dimster.utils.Sleeper;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.TopicPartition;
@@ -53,10 +50,8 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
         Poll;
     }
 
-    private final long manualCommitLingerMs;
     private final ManualCommitMode manualCommitMode;
     private final Duration pollTimeout;
-    private long lastCommitTs = 0;
 
     private volatile int procMsMin;
     private volatile int procMsMax;
@@ -90,8 +85,6 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
 
         this.explicitAck = "explicit".equalsIgnoreCase(
                 (String) consumerConfig.getOrDefault("share.acknowledgement.mode", "implicit"));
-        this.manualCommitLingerMs = Long.parseLong(
-                (String) consumerConfig.getOrDefault(MANUAL_COMMIT_LINGER_CONFIG, "0"));
         this.manualCommitMode = ManualCommitMode.valueOf(
                 (String) consumerConfig.getOrDefault(MANUAL_COMMIT_MODE, "Poll"));
         this.pollTimeout = Duration.ofMillis(Long.parseLong(
@@ -130,15 +123,21 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
             while (!closing.get()) {
                 try {
                     var records = consumer.poll(pollTimeout);
+                    if (log.isDebugEnabled()) log.debug("Poll Complete. client={} records={}", this.name, records.count());
                     if (closing.get()) return;
                     running = true;
                     Instant deliveryTime = Instant.now();
                     callback.pollCompleted(records.count());
                     callback.batchReceived(name, records.count());
+                    boolean needsCommit = !records.isEmpty();
 
                     // Convert records to list for index-based access
                     var recordList = new java.util.ArrayList<org.apache.kafka.clients.consumer.ConsumerRecord<String, byte[]>>();
                     for (var record : records) {
+                        if (printMessages && log.isDebugEnabled()) {
+                            log.debug("RECEIVED client={} topic={} partition={} offset={}", this.name,
+                                    record.topic(), record.partition(), record.offset());
+                        }
                         recordList.add(record);
                     }
 
@@ -153,11 +152,11 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                                 var record = recordList.get(messageIdx);
 
                                 // Print the messages if configured
-                                if (printMessages) {
-                                    long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
+                                if (printMessages && log.isDebugEnabled()) {
+                                    long e2eLatencyMs = simulatedProcessingStartTime.toEpochMilli() - record.timestamp();
                                     byte[] value = record.value();
                                     String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
-                                    log.info("CONSUMED by {} topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
+                                    log.debug("PROCESSED client={} topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
                                             this.name,
                                             record.topic(), record.partition(),
                                             record.offset(), record.timestamp(), e2eLatencyMs, msgType);
@@ -177,20 +176,17 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
                     );
 
                     // Maybe do manual commit --------------
-                    if (manualCommitMode != ManualCommitMode.Poll) {
-                        long now = System.currentTimeMillis();
-                        if (now - lastCommitTs >= manualCommitLingerMs) {
-                            if (manualCommitMode == ManualCommitMode.CommitAsync) {
-                                consumer.commitAsync();
-                                callback.commitAsyncCompleted();
-                            } else if (manualCommitMode == ManualCommitMode.CommitSync) {
-                                long startNanos = System.nanoTime();
-                                consumer.commitSync();
-                                long latencyMicros = java.util.concurrent.TimeUnit.NANOSECONDS.toMicros(
-                                        System.nanoTime() - startNanos);
-                                callback.commitSyncCompleted(latencyMicros);
-                            }
-                            lastCommitTs = now;
+                    if (needsCommit && manualCommitMode != ManualCommitMode.Poll) {
+                        if (log.isDebugEnabled()) log.debug("Commit. client={}", this.name);
+                        if (manualCommitMode == ManualCommitMode.CommitAsync) {
+                            consumer.commitAsync();
+                            callback.commitAsyncCompleted();
+                        } else if (manualCommitMode == ManualCommitMode.CommitSync) {
+                            long startNanos = System.nanoTime();
+                            consumer.commitSync();
+                            long latencyMicros = java.util.concurrent.TimeUnit.NANOSECONDS.toMicros(
+                                    System.nanoTime() - startNanos);
+                            callback.commitSyncCompleted(latencyMicros);
                         }
                     }
                 } catch (WakeupException e) {

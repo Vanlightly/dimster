@@ -123,6 +123,9 @@ public interface Worker extends AutoCloseable {
     /** Adjust the simulated per-record processing time on all active consumers. */
     default void setConsumerProcessingTime(int minMs, int maxMs) {}
 
+    /** Adjust the CONTINUOUS mode queue capacity threshold on all active consumers. */
+    default void setConsumerProcCapacity(int capacity) {}
+
     // ─── Incremental topology operations (used by /modify) ─────────────
     //
     // These six methods let the coordinator apply a topology diff

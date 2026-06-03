@@ -47,4 +47,6 @@ public class BaseWorkload {
     public int consumerProcMsMin = 0;
     public int consumerProcMsMax = 0;
     public int consumerProcParallelism = 1;
+    public ConsumerProcMode consumerProcMode = ConsumerProcMode.BLOCKING;
+    public int consumerProcCapacity = 10000;
 }

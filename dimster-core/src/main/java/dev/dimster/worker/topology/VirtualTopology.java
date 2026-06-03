@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.utils.distributor.MessageDistributorType;
 
@@ -63,6 +64,8 @@ public record VirtualTopology(
         int consumerProcMsMin,
         int consumerProcMsMax,
         int consumerProcParallelism,
+        ConsumerProcMode consumerProcMode,
+        int consumerProcCapacity,
         MessageDistributorType messageDistributorType,
         double messageDistributorSkew,
         int activeProducerWorkerCount) {
@@ -109,6 +112,6 @@ public record VirtualTopology(
      * settings.
      */
     public ConsumerSet consumerSetForWorker(String worker) {
-        return new ConsumerSet(consumersForWorker(worker), consumerType, consumerProcMsMin, consumerProcMsMax, consumerProcParallelism);
+        return new ConsumerSet(consumersForWorker(worker), consumerType, consumerProcMsMin, consumerProcMsMax, consumerProcParallelism, consumerProcMode, consumerProcCapacity);
     }
 }

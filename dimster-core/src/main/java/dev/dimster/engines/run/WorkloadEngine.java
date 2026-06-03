@@ -261,6 +261,7 @@ public class WorkloadEngine extends BaseEngine {
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
                 point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
+                point.consumerProcMode(), point.consumerProcCapacity(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off in WorkloadEngine */,
                 false /* dynamic consumer assignment outside correctness mode */);
@@ -749,7 +750,9 @@ public class WorkloadEngine extends BaseEngine {
                     prev.consumerType(),
                     prev.consumerProcMsMin(),
                     prev.consumerProcMsMax(),
-                    prev.consumerProcParallelism());
+                    prev.consumerProcParallelism(),
+                    prev.consumerProcMode(),
+                    prev.consumerProcCapacity());
             worker.createConsumers(consumerSet);
             setConsumerRecreation();
             worker.createProducers(prevTopology.producers());

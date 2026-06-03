@@ -215,6 +215,7 @@ public class ExploreEngine extends BaseEngine {
         planTopology(point.topics(), point.partitionsPerTopic(),
                 point.producersPerTopic(), point.consumerGroupsPerTopic(), point.consumersPerGroup(),
                 point.consumerType(), point.consumerProcMsMin(), point.consumerProcMsMax(), point.consumerProcParallelism(),
+                point.consumerProcMode(), point.consumerProcCapacity(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off */,
                 false /* dynamic consumer assignment */);

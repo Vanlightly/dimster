@@ -2,13 +2,14 @@ package dev.dimster.worker.topology;
 
 import java.util.List;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 
 /**
  * The portion of a {@link VirtualTopology} that goes to one worker for
  * consumer creation, plus the few uniform parameters that apply to every
- * consumer in the topology (consumer type and simulated processing-time
- * range).
+ * consumer in the topology (consumer type, processing mode, and simulated
+ * processing-time range).
  *
  * <p>Bundled into a single record so that {@code Worker.createConsumers} has
  * exactly one argument and so the same wire shape is used by both
@@ -19,7 +20,9 @@ public record ConsumerSet(
         ConsumerType consumerType,
         int consumerProcMsMin,
         int consumerProcMsMax,
-        int consumerProcParallelism) {
+        int consumerProcParallelism,
+        ConsumerProcMode consumerProcMode,
+        int consumerProcCapacity) {
 
     public ConsumerSet {
         consumers = List.copyOf(consumers);

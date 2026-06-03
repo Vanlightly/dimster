@@ -42,6 +42,8 @@ public class Scenario {
     public List<Integer> consumerProcMsMin;
     public List<Integer> consumerProcMsMax;
     public List<Integer> consumerProcParallelism;
+    public List<ConsumerProcMode> consumerProcMode;
+    public List<Integer> consumerProcCapacity;
 
     /** Drain-backlog-only: per-scenario overrides for drain config fields (supports dimensions) */
     public DrainBacklogDimensions drainBacklogConfig;

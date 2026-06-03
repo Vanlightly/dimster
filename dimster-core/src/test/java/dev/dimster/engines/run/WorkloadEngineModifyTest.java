@@ -1,5 +1,6 @@
 package dev.dimster.engines.run;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.ScenarioExpander.TestPoint;
 import dev.dimster.coordinator.ModifyRequest;
@@ -136,6 +137,8 @@ public class WorkloadEngineModifyTest {
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
                 procMsMin, procMsMax, /*procParallelism*/ 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 null, null,
                 new dev.dimster.engines.run.RunConfig());
     }
@@ -152,6 +155,8 @@ public class WorkloadEngineModifyTest {
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
                 procMsMin, procMsMax, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 null, null,
                 new dev.dimster.engines.run.RunConfig());
     }
@@ -170,6 +175,8 @@ public class WorkloadEngineModifyTest {
                 "dimster-grp-0", 0, List.of()));
         return new VirtualTopology(topics, producers, consumers,
                 ConsumerType.CONSUMER_GROUP, 0, 0, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 MessageDistributorType.PINNED_PARTITIONS, 1.0, 1);
     }
 
@@ -187,7 +194,10 @@ public class WorkloadEngineModifyTest {
                     "dimster-grp-0", i, List.of()));
         }
         return new VirtualTopology(topics, producers, consumers,
-                ConsumerType.CONSUMER_GROUP, 0, 0, 1, MessageDistributorType.NO_KEY, 1.0, 1);
+                ConsumerType.CONSUMER_GROUP, 0, 0, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
+                MessageDistributorType.NO_KEY, 1.0, 1);
     }
 
     private void primeEngineForFieldOverrides(WorkloadEngine engine,

@@ -228,6 +228,7 @@ public abstract class BaseEngine implements AutoCloseable {
     protected void planTopology(int numTopics, int partitionsPerTopic,
                                 int producersPerTopic, int consumerGroupsPerTopic, int consumersPerGroup,
                                 ConsumerType consumerType, int procMsMin, int procMsMax, int procParallelism,
+                                ConsumerProcMode procMode, int procCapacity,
                                 MessageDistributorType messageDistributorType, double messageDistributorSkew,
                                 boolean correctnessEnabled, boolean staticConsumerPartitions) {
         var spec = new TopologyPlanner.TopologySpec(
@@ -238,7 +239,7 @@ public abstract class BaseEngine implements AutoCloseable {
                 consumerGroupsPerTopic,
                 consumersPerGroup,
                 consumerType,
-                procMsMin, procMsMax, procParallelism,
+                procMsMin, procMsMax, procParallelism, procMode, procCapacity,
                 messageDistributorType, messageDistributorSkew,
                 correctnessEnabled,
                 staticConsumerPartitions);
@@ -295,7 +296,9 @@ public abstract class BaseEngine implements AutoCloseable {
                 plannedTopology.consumerType(),
                 plannedTopology.consumerProcMsMin(),
                 plannedTopology.consumerProcMsMax(),
-                plannedTopology.consumerProcParallelism());
+                plannedTopology.consumerProcParallelism(),
+                plannedTopology.consumerProcMode(),
+                plannedTopology.consumerProcCapacity());
 
         if (consumerSet.consumerType() == ConsumerType.SHARE_GROUP) {
             // Each unique (topic, group) needs the share group registered once on the

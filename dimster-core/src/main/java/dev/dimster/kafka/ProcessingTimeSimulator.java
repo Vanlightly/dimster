@@ -1,29 +1,69 @@
 package dev.dimster.kafka;
 
 import dev.dimster.utils.Sleeper;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.DelayQueue;
+import java.util.concurrent.Delayed;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Simulates processing time for consumer message batches across three modes:
- * sequential (procParallelism=1), constrained concurrency (procParallelism>1),
- * and full parallelism (procParallelism=-1).
+ * Simulates processing time for consumer message batches across two operating modes:
  *
- * <p>Handles the aggregate sleep optimization for small processing times
- * (midpoint < 10ms) to reduce OS scheduling variance.
+ * <p><b>Blocking mode</b> (asyncMode=false): Supports sequential (procParallelism=1),
+ * constrained concurrency (procParallelism>1), and full parallelism (procParallelism=-1).
+ * Uses aggregate sleep to reduce OS scheduling variance.
+ *
+ * <p><b>Async mode</b> (asyncMode=true): Uses {@link DelayQueue} for event-driven
+ * deadline simulation. Records complete out-of-order based on simulated processing time.
+ * Enables continuous polling without blocking the poll loop.
  */
 public class ProcessingTimeSimulator {
-    private final int procMsMin;
-    private final int procMsMax;
+    private volatile int procMsMin;
+    private volatile int procMsMax;
     private final int procParallelism;
+    private final boolean continuousMode;
+
+    // Async mode state (null in blocking mode)
+    private final DelayQueue<DelayedRecord> delayQueue;
+
+    // Continuous mode parallelism tracking (accessed only from poll loop - no sync needed)
+    private long lastDeadlineNanos = 0;  // for sequential mode (procParallelism == 1)
+    private long[] workerLastDeadlineNanos;  // for constrained mode (procParallelism > 1)
 
     public ProcessingTimeSimulator(int procMsMin, int procMsMax, int procParallelism) {
+        this(procMsMin, procMsMax, procParallelism, false);
+    }
+
+    public ProcessingTimeSimulator(int procMsMin, int procMsMax, int procParallelism, boolean continuousMode) {
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
         this.procParallelism = procParallelism;
+        this.continuousMode = continuousMode;
+
+        if (continuousMode) {
+            this.delayQueue = new DelayQueue<>();
+            // Initialize worker deadline tracking for constrained parallelism
+            if (procParallelism > 1) {
+                this.workerLastDeadlineNanos = new long[procParallelism];
+            }
+        } else {
+            this.delayQueue = null;
+        }
+    }
+
+    /**
+     * Update processing time parameters at runtime without losing state.
+     * Thread-safe (procMsMin/procMsMax are volatile).
+     */
+    public void updateProcessingTime(int minMs, int maxMs) {
+        this.procMsMin = minMs;
+        this.procMsMax = maxMs;
     }
 
     /**
@@ -54,11 +94,11 @@ public class ProcessingTimeSimulator {
         }
 
         if (procParallelism == 1) {
-            return processSequential(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchSequential(batchSize, closing, callback, deliveryTime, messageProcessor);
         } else if (procParallelism > 1) {
-            return processConstrained(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchConstrained(batchSize, closing, callback, deliveryTime, messageProcessor);
         } else { // procParallelism == -1
-            return processFullParallel(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchFullParallel(batchSize, closing, callback, deliveryTime, messageProcessor);
         }
     }
 
@@ -66,7 +106,7 @@ public class ProcessingTimeSimulator {
      * Sequential processing: process messages one by one.
      * Each message starts after all prior messages have finished.
      */
-    private long processSequential(
+    private long processBatchSequential(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
@@ -103,10 +143,11 @@ public class ProcessingTimeSimulator {
     }
 
     /**
-     * Constrained concurrency: simulate N concurrent workers, each processing their
-     * assigned records serially. Sleep once for the slowest worker's total time.
+     * Constrained concurrency: simulate N concurrent workers drawing from a shared queue.
+     * Each record is assigned to the worker with the least cumulative work (so far),
+     * simulating work-stealing behavior. Sleep once for the slowest worker's total time.
      */
-    private long processConstrained(
+    private long processBatchConstrained(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
@@ -121,30 +162,33 @@ public class ProcessingTimeSimulator {
                     : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
         }
 
-        // Distribute records among workers and process each worker's queue
-        int recordsPerWorker = (batchSize + procParallelism - 1) / procParallelism;
+        // Track cumulative work per worker (simulates work-stealing queue)
+        long[] workerCumulativeTimes = new long[procParallelism];
+
+        // Assign each record to worker with least cumulative work
+        for (int i = 0; i < batchSize; i++) {
+            // Find worker with minimum cumulative time
+            int minWorker = 0;
+            long minTime = workerCumulativeTimes[0];
+            for (int w = 1; w < procParallelism; w++) {
+                if (workerCumulativeTimes[w] < minTime) {
+                    minTime = workerCumulativeTimes[w];
+                    minWorker = w;
+                }
+            }
+
+            // Message starts after all prior messages in this worker's queue finish
+            Instant startTime = deliveryTime.plusMillis(workerCumulativeTimes[minWorker]);
+            messageProcessor.processMessage(i, startTime);
+
+            // Add this message's processing time to worker cumulative
+            workerCumulativeTimes[minWorker] += processingTimes[i];
+        }
+
+        // Find max worker time (slowest worker determines total batch time)
         long maxWorkerTime = 0;
-
-        for (int worker = 0; worker < procParallelism; worker++) {
-            int startIdx = worker * recordsPerWorker;
-            int endIdx = Math.min(startIdx + recordsPerWorker, batchSize);
-
-            if (startIdx >= batchSize) {
-                break; // No more records for this worker
-            }
-
-            // Process each message in this worker's queue
-            long workerCumulativeMs = 0;
-            for (int i = startIdx; i < endIdx; i++) {
-                // Message starts after all prior messages in this worker's queue finish
-                Instant startTime = deliveryTime.plusMillis(workerCumulativeMs);
-                messageProcessor.processMessage(i, startTime);
-
-                // Add this message's processing time to worker cumulative
-                workerCumulativeMs += processingTimes[i];
-            }
-
-            maxWorkerTime = Math.max(maxWorkerTime, workerCumulativeMs);
+        for (int w = 0; w < procParallelism; w++) {
+            maxWorkerTime = Math.max(maxWorkerTime, workerCumulativeTimes[w]);
         }
 
         // Sleep once for the slowest worker's time (simulating concurrent workers finishing)
@@ -164,7 +208,7 @@ public class ProcessingTimeSimulator {
      * Full parallelism: all messages process concurrently (start at same time),
      * sleep once for the maximum processing time.
      */
-    private long processFullParallel(
+    private long processBatchFullParallel(
             int batchSize,
             AtomicBoolean closing,
             ConsumerCallback callback,
@@ -195,6 +239,174 @@ public class ProcessingTimeSimulator {
 
         return maxTime;
     }
+
+    // ==================== Continuous Mode Methods ====================
+
+    /**
+     * Offer a record for async processing (continuous mode only).
+     * Creates DelayedRecord with deadline based on parallelism mode and processing time.
+     *
+     * <p>If procMs==0 AND startOffset==0 AND queue is empty: return CompletedRecord immediately.
+     * Otherwise: queue the record (even if procMs==0) to maintain ordering with inflight records.
+     *
+     * @param record the consumer record to process
+     * @param deliveryTime when consumer.poll() returned
+     * @return CompletedRecord if processed immediately, null if queued
+     */
+    public CompletedRecord offerAsync(ConsumerRecord<String, byte[]> record,
+                                      Instant deliveryTime) {
+        if (!continuousMode) {
+            throw new IllegalStateException("offerAsync() requires continuousMode=true");
+        }
+
+        long procMs = (procMsMin == procMsMax) ? procMsMin
+            : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+
+        // Calculate when this record should start processing based on parallelism mode
+        long startOffsetMs = calculateStartOffsetMs(procMs);
+        Instant simulatedStartTime = deliveryTime.plusMillis(startOffsetMs);
+
+        // Only process immediately if procMs==0 AND startOffset==0 AND queue is empty
+        if (procMs == 0 && startOffsetMs == 0 && delayQueue.isEmpty()) {
+            return new CompletedRecord(record, deliveryTime, deliveryTime);
+        }
+
+        // Queue the record with calculated start time
+        delayQueue.put(new DelayedRecord(record, deliveryTime, simulatedStartTime, procMs, startOffsetMs));
+        return null;
+    }
+
+    /**
+     * Calculate when this record should start processing based on procParallelism mode.
+     * Called from poll loop thread - no synchronization needed.
+     *
+     * @param procMs the processing time for this record
+     * @return offset in milliseconds from deliveryTime when processing starts
+     */
+    private long calculateStartOffsetMs(long procMs) {
+        if (procParallelism == -1) {
+            // Full parallelism: all records start immediately
+            return 0;
+        } else if (procParallelism == 1) {
+            // Sequential: next record starts after last one's deadline
+            long currentNanos = System.nanoTime();
+            long startOffsetNanos = Math.max(0, lastDeadlineNanos - currentNanos);
+            long startOffsetMs = TimeUnit.NANOSECONDS.toMillis(startOffsetNanos);
+
+            // Update lastDeadlineNanos for next record
+            lastDeadlineNanos = currentNanos + startOffsetNanos + TimeUnit.MILLISECONDS.toNanos(procMs);
+
+            return startOffsetMs;
+        } else {
+            // Constrained parallelism: pick worker with earliest deadline (load balancing)
+            int workerIdx = 0;
+            long minDeadline = workerLastDeadlineNanos[0];
+            for (int i = 1; i < procParallelism; i++) {
+                if (workerLastDeadlineNanos[i] < minDeadline) {
+                    minDeadline = workerLastDeadlineNanos[i];
+                    workerIdx = i;
+                }
+            }
+
+            long currentNanos = System.nanoTime();
+            long startOffsetNanos = Math.max(0, workerLastDeadlineNanos[workerIdx] - currentNanos);
+            long startOffsetMs = TimeUnit.NANOSECONDS.toMillis(startOffsetNanos);
+
+            // Update this worker's deadline
+            workerLastDeadlineNanos[workerIdx] = currentNanos + startOffsetNanos + TimeUnit.MILLISECONDS.toNanos(procMs);
+
+            return startOffsetMs;
+        }
+    }
+
+    /**
+     * Drain completed records (deadline expired) and return their metadata.
+     * Does NOT invoke callbacks - the wrapper should process records using the returned timing info.
+     *
+     * @return list of completed records (topic, partition, offset, deliveryTime, simulatedStartTime)
+     */
+    public List<CompletedRecord> drainCompleted() {
+        if (!continuousMode) {
+            throw new IllegalStateException("drainCompleted() requires continuousMode=true");
+        }
+
+        List<DelayedRecord> expired = new ArrayList<>();
+        delayQueue.drainTo(expired);  // only drains records past their deadline
+
+        List<CompletedRecord> completed = new ArrayList<>(expired.size());
+        for (DelayedRecord dr : expired) {
+            // Return completed record with full record and timing information
+            completed.add(new CompletedRecord(dr.record, dr.deliveryTime, dr.simulatedStartTime));
+        }
+        return completed;
+    }
+
+    public CompletedRecord takeCompleted(long timeout, TimeUnit unit) {
+        try {
+            DelayedRecord dr = delayQueue.poll(timeout, unit);
+            if (dr != null) {
+                return new CompletedRecord(dr.record, dr.deliveryTime, dr.simulatedStartTime);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        return null;
+    }
+
+    /**
+     * Get current queue size for capacity checks (async mode only).
+     *
+     * @return number of records currently in the async queue
+     */
+    public int getQueueSize() {
+        return continuousMode ? delayQueue.size() : 0;
+    }
+
+    // ==================== Inner Classes ====================
+
+    /**
+     * Delayed record for continuous mode processing. Implements {@link Delayed} to work with
+     * {@link DelayQueue}, which automatically orders by deadline and only returns
+     * records past their deadline on {@code drainTo()}.
+     */
+    static class DelayedRecord implements Delayed {
+        final ConsumerRecord<String, byte[]> record;
+        final Instant deliveryTime;
+        final Instant simulatedStartTime;
+        final long deadlineNanos;
+
+        DelayedRecord(ConsumerRecord<String, byte[]> record,
+                      Instant deliveryTime,
+                      Instant simulatedStartTime,
+                      long processingMs,
+                      long startOffsetMs) {
+            this.record = record;
+            this.deliveryTime = deliveryTime;
+            this.simulatedStartTime = simulatedStartTime;
+            // Deadline = now + time until record starts + processing time
+            this.deadlineNanos = System.nanoTime() +
+                TimeUnit.MILLISECONDS.toNanos(startOffsetMs + processingMs);
+        }
+
+        @Override
+        public long getDelay(TimeUnit unit) {
+            return unit.convert(deadlineNanos - System.nanoTime(),
+                               TimeUnit.NANOSECONDS);
+        }
+
+        @Override
+        public int compareTo(Delayed o) {
+            return Long.compare(deadlineNanos, ((DelayedRecord) o).deadlineNanos);
+        }
+    }
+
+    /**
+     * Completed record with full ConsumerRecord and timing information for processing.
+     * Returned by {@link #drainCompleted()} and {@link #offerAsync(ConsumerRecord, Instant)}.
+     */
+    public record CompletedRecord(ConsumerRecord<String, byte[]> record,
+                                   Instant deliveryTime, Instant simulatedStartTime) {}
 
     /**
      * Callback interface for processing a single message with its simulated processing start time.

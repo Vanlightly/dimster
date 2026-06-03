@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.Test;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.utils.distributor.MessageDistributorType;
 import dev.dimster.worker.topology.TopologyPlanner.ExplicitSplit;
@@ -625,6 +626,8 @@ public class TopologyPlannerTest {
         VirtualTopology topology = planner.plan(new TopologySpec(
                 "p", 1, 4, 0, 1, 2, ConsumerType.CONSUMER_GROUP,
                 /*procMin*/ 5, /*procMax*/ 25, /*procParallelism*/ 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 MessageDistributorType.NO_KEY, 1.0,
                 /*correctness*/ false, /*staticConsumerPartitions*/ false));
 
@@ -669,7 +672,9 @@ public class TopologyPlannerTest {
                                             boolean correctness, boolean staticConsumerPartitions) {
         return new TopologySpec(prefix, numTopics, partitionsPerTopic,
                 producersPerTopic, groupsPerTopic, consumersPerGroup,
-                type, 0, 0, 1, keyType, 1.0, correctness, staticConsumerPartitions);
+                type, 0, 0, 1, ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
+                keyType, 1.0, correctness, staticConsumerPartitions);
     }
 
     private static String oneWorkerForProducerTopic(VirtualTopology topology, String topic) {

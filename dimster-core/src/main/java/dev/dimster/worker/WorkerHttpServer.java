@@ -128,6 +128,7 @@ public class WorkerHttpServer {
         server.createContext("/set-max-consumer-recreations", this::handleSetMaxConsumerRecreations);
         server.createContext("/set-print-messages", this::handleSetPrintMessages);
         server.createContext("/set-consumer-processing-time", this::handleSetConsumerProcessingTime);
+        server.createContext("/set-consumer-proc-capacity", this::handleSetConsumerProcCapacity);
         server.createContext("/probes-received", this::handleProbesReceived);
 
         // Incremental topology operations driven by /modify pipeline.
@@ -338,6 +339,14 @@ public class WorkerHttpServer {
                 throw new IOException("set-consumer-processing-time expects [minMs, maxMs], got length " + range.length);
             }
             localWorker.setConsumerProcessingTime(range[0], range[1]);
+        });
+    }
+
+    // Payload is an int: capacity. See RemoteWorkerClient#setConsumerProcCapacity.
+    private void handleSetConsumerProcCapacity(HttpExchange exchange) throws IOException {
+        handle(exchange, () -> {
+            int capacity = mapper.readValue(exchange.getRequestBody(), int.class);
+            localWorker.setConsumerProcCapacity(capacity);
         });
     }
 

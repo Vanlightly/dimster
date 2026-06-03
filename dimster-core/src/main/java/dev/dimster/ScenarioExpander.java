@@ -40,6 +40,8 @@ public class ScenarioExpander {
             int consumerProcMsMin,
             int consumerProcMsMax,
             int consumerProcParallelism,
+            ConsumerProcMode consumerProcMode,
+            int consumerProcCapacity,
             DrainBacklogConfig drainBacklogConfig,
             ExploreConfig exploreConfig,
             RunConfig runConfig
@@ -64,6 +66,9 @@ public class ScenarioExpander {
             }
             if (consumerProcParallelism != 1) {
                 sb.append(", procParallelism=").append(consumerProcParallelism);
+            }
+            if (consumerProcMode != ConsumerProcMode.BLOCKING) {
+                sb.append(", procMode=").append(consumerProcMode);
             }
             if (kafkaConfig != null) {
                 appendConfig(sb, "\n    Kafka: replicationFactor=", kafkaConfig.replicationFactor);
@@ -275,6 +280,8 @@ public class ScenarioExpander {
         List<Integer> procMsMin = resolve(scenario.consumerProcMsMin, base.consumerProcMsMin);
         List<Integer> procMsMax = resolve(scenario.consumerProcMsMax, base.consumerProcMsMax);
         List<Integer> procParallelism = resolve(scenario.consumerProcParallelism, base.consumerProcParallelism);
+        List<ConsumerProcMode> procMode = resolve(scenario.consumerProcMode, base.consumerProcMode);
+        List<Integer> procCapacity = resolve(scenario.consumerProcCapacity, base.consumerProcCapacity);
         List<String> labels = scenario.label;
 
         // Validate drain-backlog dimensions internally before resolving against defaults.
@@ -533,6 +540,8 @@ public class ScenarioExpander {
                     get(procMsMin, i),
                     get(procMsMax, i),
                     get(procParallelism, i),
+                    get(procMode, i),
+                    get(procCapacity, i),
                     pointDrainConfig,
                     pointExploreConfig,
                     pointRunConfig
@@ -555,6 +564,8 @@ public class ScenarioExpander {
                 base.messageDistributor, base.messageDistributorSkew, base.consumerType,
                 merged,
                 base.consumerProcMsMin, base.consumerProcMsMax, base.consumerProcParallelism,
+                base.consumerProcMode,
+                base.consumerProcCapacity,
                 drainDefaults,
                 exploreDefaults,
                 runDefaults

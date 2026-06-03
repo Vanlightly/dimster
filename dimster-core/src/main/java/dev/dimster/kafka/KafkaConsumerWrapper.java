@@ -3,16 +3,21 @@ package dev.dimster.kafka;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.MessageType;
 import dev.dimster.spi.kafka.RawConsumer;
 import dev.dimster.utils.Sleeper;
@@ -51,9 +56,9 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
         CommitAsync
     }
 
-    private final long manualCommitLingerMs;
+    private long manualCommitLingerMs;
     private final ManualCommitMode manualCommitMode;
-    private final boolean autoCommit;
+    private boolean autoCommit;
     private final Duration pollTimeout;
     private long lastCommitTs = 0;
 
@@ -67,24 +72,12 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
      *  coordinator already enforces the rate guard, so this wrapper just obeys. */
     private final boolean printMessages;
 
-    public KafkaConsumerWrapper(RawConsumer<String, byte[]> consumer,
-                                Properties consumerConfig,
-                                ConsumerCallback callback,
-                                String topic,
-                                String name,
-                                int procMsMin,
-                                int procMsMax,
-                                int procParallelism) {
-        this(consumer, consumerConfig, callback, topic, name, procMsMin, procMsMax, procParallelism, null, false);
-    }
+    // CONTINUOUS mode state
+    private final ConsumerProcMode procMode;
+    private final Map<TopicPartition, PartitionOffsetTracker> offsetTrackers;
+    private final Map<TopicPartition, Long> lastCommittedOffsets;
+    private volatile int queueCapacityThreshold; // soft cap on continuous mode queue capacity
 
-    /**
-     * @param name canonical client name from {@code VirtualConsumer.name()}
-     *     (e.g. {@code "consumer-{topic}-{group}-i{idx}"}). Used by
-     *     {@link #getName()} for log lines, metric labels, and — critically
-     *     — by {@code LocalWorker.removeConsumers} to look up the wrapper
-     *     by the same identity the planner uses.
-     */
     public KafkaConsumerWrapper(RawConsumer<String, byte[]> consumer,
                                 Properties consumerConfig,
                                 ConsumerCallback callback,
@@ -94,11 +87,14 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 int procMsMax,
                                 int procParallelism,
                                 List<TopicPartition> staticPartitions,
-                                boolean printMessages) {
+                                boolean printMessages,
+                                ConsumerProcMode procMode,
+                                int procCapacity) {
         this.consumer = consumer;
         this.callback = callback;
         this.name = name;
         this.printMessages = printMessages;
+        this.procMode = procMode;
 
         this.manualCommitLingerMs = Long.parseLong(
                 (String) consumerConfig.getOrDefault(MANUAL_COMMIT_LINGER_CONFIG, "0"));
@@ -111,7 +107,27 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
         this.procMsMin = procMsMin;
         this.procMsMax = procMsMax;
         this.procParallelism = procParallelism;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(procMsMin, procMsMax, procParallelism);
+
+        // Initialize simulator with mode
+        boolean continuousMode = (procMode == ConsumerProcMode.CONTINUOUS);
+        this.processingTimeSimulator = new ProcessingTimeSimulator(
+            procMsMin, procMsMax, procParallelism, continuousMode);
+
+        // Initialize CONTINUOUS mode state
+        if (continuousMode) {
+            this.autoCommit = false;
+            this.manualCommitLingerMs = 0;
+            this.offsetTrackers = new ConcurrentHashMap<>();
+            this.lastCommittedOffsets = new HashMap<>();
+            this.queueCapacityThreshold = procCapacity;
+            log.info("Consumer {} initialized in CONTINUOUS mode (capacity={})",
+                     name, queueCapacityThreshold);
+        } else {
+            this.offsetTrackers = null;
+            this.lastCommittedOffsets = null;
+            this.queueCapacityThreshold = 0;
+            log.info("Consumer {} initialized in BLOCKING mode", name);
+        }
 
         if (staticPartitions != null) {
             consumer.assign(staticPartitions);
@@ -135,15 +151,32 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
     public void setProcessingTime(int minMs, int maxMs) {
         this.procMsMin = minMs;
         this.procMsMax = maxMs;
-        this.processingTimeSimulator = new ProcessingTimeSimulator(minMs, maxMs, procParallelism);
+        this.processingTimeSimulator.updateProcessingTime(minMs, maxMs);
+    }
+
+    /** Adjust the CONTINUOUS mode queue capacity threshold at runtime. Thread-safe. */
+    public void setQueueCapacity(int capacity) {
+        this.queueCapacityThreshold = capacity;
     }
 
     private void pollLoop() {
-        log.info("Classic consumer poll loop started: {}", name);
+        log.info("Consumer poll loop started: {} (mode={})", name, procMode);
+
+        if (procMode == ConsumerProcMode.CONTINUOUS) {
+            pollLoopContinuous();
+        } else {
+            pollLoopBlocking();
+        }
+
+        log.info("Consumer poll loop ended: {}", name);
+    }
+
+    private void pollLoopBlocking() {
         try {
             while (!closing.get()) {
                 try {
                     var records = consumer.poll(pollTimeout);
+                    if (log.isDebugEnabled()) log.debug("Poll Complete. client={} records={}", this.name, records.count());
                     if (closing.get()) return;
 
                     running = true;
@@ -154,11 +187,23 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                     // Convert records to list for index-based access
                     var recordList = new java.util.ArrayList<org.apache.kafka.clients.consumer.ConsumerRecord<String, byte[]>>();
                     for (var record : records) {
+                        if (printMessages && log.isDebugEnabled()) {
+                            log.debug("RECEIVED client={} topic={} partition={} offset={}",
+                                    this.name, record.topic(), record.partition(), record.offset());
+                        }
                         recordList.add(record);
                     }
 
+                    // Find highest offset per partition in this batch (for commit)
+                    Map<TopicPartition, Long> batchHighestOffsets = new HashMap<>();
+                    if (!autoCommit) {
+                        for (var record : recordList) {
+                            TopicPartition tp = new TopicPartition(record.topic(), record.partition());
+                            batchHighestOffsets.merge(tp, record.offset(), Math::max);
+                        }
+                    }
+
                     // Process the records with simulated processing time --------------
-                    Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
                     processingTimeSimulator.processBatch(
                             recordList.size(),
                             closing,
@@ -168,32 +213,34 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                                 // Process single message with its simulated processing start time
                                 var record = recordList.get(messageIdx);
 
-                                if (printMessages) {
-                                    long e2eLatencyMs = System.currentTimeMillis() - record.timestamp();
+                                if (printMessages && log.isDebugEnabled()) {
+                                    long e2eLatencyMs = simulatedProcessingStartTime.toEpochMilli() - record.timestamp();
                                     byte[] value = record.value();
                                     String msgType = MessageType.nameOf(value != null && value.length > 0 ? value[0] : -1);
-                                    log.info("CONSUMED topic={} partition={} offset={} timestamp={} e2eDeliveryLatencyMs={} type={}",
-                                            record.topic(), record.partition(),
+                                    log.debug("PROCESSED client={} topic={} partition={} offset={} timestamp={} e2eLatencyMs={} type={}",
+                                            this.name, record.topic(), record.partition(),
                                             record.offset(), record.timestamp(), e2eLatencyMs, msgType);
                                 }
 
                                 callback.messageReceived(record.value(), record.topic(),
                                         record.partition(), record.timestamp(),
                                         deliveryTime, simulatedProcessingStartTime);
-
-                                // Maybe record offsets for manual commit
-                                if (!autoCommit) {
-                                    offsetMap.put(
-                                            new TopicPartition(record.topic(), record.partition()),
-                                            new OffsetAndMetadata(record.offset()));
-                                }
                             }
                     );
+
+                    // Build offset map from batch highest offsets --------------
+                    Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
+                    if (!autoCommit) {
+                        for (var entry : batchHighestOffsets.entrySet()) {
+                            offsetMap.put(entry.getKey(), new OffsetAndMetadata(entry.getValue()));
+                        }
+                    }
 
                     // Maybe do manual commit --------------
                     long now = System.currentTimeMillis();
                     if (!autoCommit && !offsetMap.isEmpty()
                             && now - lastCommitTs >= manualCommitLingerMs) {
+                        if (log.isDebugEnabled()) log.debug("Commit. client={}", this.name);
                         if (manualCommitMode == ManualCommitMode.CommitAsync) {
                             consumer.commitAsync(offsetMap, this);
                             callback.commitAsyncCompleted();
@@ -213,11 +260,166 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
             }
         } catch (Throwable t) {
             failureReason = t.getClass().getName() + ": " + t.getMessage();
-            log.error("Fatal error in classic consumer poll loop", t);
+            log.error("Fatal error in BLOCKING consumer poll loop", t);
         } finally {
             running = false;
         }
-        log.info("Classic consumer poll loop ended: {}", name);
+    }
+
+    private void pollLoopContinuous() {
+        try {
+            while (!closing.get()) {
+                try {
+                    // Step 1: Drain completed records from simulator
+                    List<ProcessingTimeSimulator.CompletedRecord> completed =
+                        processingTimeSimulator.drainCompleted();
+
+                    // Process and track completed records
+                    for (var cr : completed) {
+                        processAndMarkComplete(cr);
+                    }
+
+                    // Step 2: Check capacity before polling
+                    if (processingTimeSimulator.getQueueSize() < queueCapacityThreshold) {
+                        // Step 3: Poll new records
+                        var records = consumer.poll(pollTimeout);
+                        if (log.isDebugEnabled()) log.debug("Poll Complete. client={} records={}", this.name, records.count());
+                        if (closing.get()) return;
+
+                        running = true;
+                        Instant deliveryTime = Instant.now();
+                        callback.pollCompleted(records.count());
+                        callback.batchReceived(name, records.count());
+
+                        // Step 4: Offer records to simulator for async processing
+                        for (var record : records) {
+                            if (printMessages && log.isDebugEnabled()) {
+                                log.debug("RECEIVED client={} topic={} partition={} offset={}",
+                                        this.name, record.topic(), record.partition(), record.offset());
+                            }
+
+                            // Mark offset as received (for gap tracking)
+                            TopicPartition tp = new TopicPartition(record.topic(), record.partition());
+                            PartitionOffsetTracker tracker = offsetTrackers.computeIfAbsent(
+                                tp, k -> new PartitionOffsetTracker());
+                            tracker.markReceived(record.offset());
+
+                            // Offer to simulator - returns CompletedRecord if processed immediately
+                            ProcessingTimeSimulator.CompletedRecord immediateResult =
+                                processingTimeSimulator.offerAsync(record, deliveryTime);
+
+                            // Handle immediate completion (procMs==0 and queue empty)
+                            if (immediateResult != null) {
+                                processCompletedRecord(immediateResult);
+                                offsetTrackers.get(tp).markComplete(record.offset());
+                            }
+                        }
+                    } else {
+                        // We cannot consumer.poll until we've processed some of the inflight
+                        // records. Do a blocking take on the inflight delayed records.
+                        if (log.isDebugEnabled()) {
+                            log.debug("Poll Skipped. client={} reason={} inflight records reached exceeds soft cap of {}",
+                                    this.name, processingTimeSimulator.getQueueSize(), queueCapacityThreshold);
+                        }
+                        ProcessingTimeSimulator.CompletedRecord cr =
+                                processingTimeSimulator.takeCompleted(1, TimeUnit.SECONDS);
+                        if (cr != null) {
+                            processAndMarkComplete(cr);
+                        }
+                    }
+
+                    // Step 5: Maybe commit offsets
+                    maybeCommitOffsets();
+
+                } catch (WakeupException e) {
+                    // Ignore exception if closing
+                    if (!closing.get()) throw e;
+                }
+            }
+        } catch (Throwable t) {
+            failureReason = t.getClass().getName() + ": " + t.getMessage();
+            log.error("Fatal error in CONTINUOUS consumer poll loop", t);
+        } finally {
+            maybeCommitOffsets();
+            running = false;
+        }
+    }
+
+    private void processAndMarkComplete(ProcessingTimeSimulator.CompletedRecord cr) {
+        // Process the record (print, record metrics)
+        processCompletedRecord(cr);
+
+        // Update offset tracker
+        var record = cr.record();
+        TopicPartition tp = new TopicPartition(record.topic(), record.partition());
+        PartitionOffsetTracker tracker = offsetTrackers.computeIfAbsent(
+                tp, k -> new PartitionOffsetTracker());
+        tracker.markComplete(record.offset());
+    }
+
+    /**
+     * Process a completed record (print if configured, record metrics).
+     * Called for records drained from the DelayQueue in CONTINUOUS mode.
+     */
+    private void processCompletedRecord(ProcessingTimeSimulator.CompletedRecord cr) {
+        var record = cr.record();
+
+        // Print if configured
+        if (printMessages && log.isDebugEnabled()) {
+            long e2eMs = cr.simulatedStartTime().toEpochMilli() - record.timestamp();
+            byte[] value = record.value();
+            String msgType = MessageType.nameOf(value != null && value.length > 0
+                ? value[0] : -1);
+            log.debug("PROCESSED client={} topic={} partition={} offset={} timestamp={} " +
+                    "e2eLatencyMs={} type={}",
+                    this.name, record.topic(), record.partition(), record.offset(),
+                    record.timestamp(), e2eMs, msgType);
+        }
+
+        // Record metrics
+        callback.messageReceived(record.value(), record.topic(),
+                record.partition(), record.timestamp(),
+                cr.deliveryTime(), cr.simulatedStartTime());
+    }
+
+    /**
+     * Commit offsets if manual commit mode and linger period has elapsed (CONTINUOUS mode).
+     */
+    private void maybeCommitOffsets() {
+        if (this.procMode == ConsumerProcMode.BLOCKING) return;
+
+        // Build offset map from trackers (only include partitions with progress)
+        Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
+        for (var entry : offsetTrackers.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            long highest = entry.getValue().getHighestCommittable();
+            if (highest >= 0) {
+                long lastCommitted = lastCommittedOffsets.getOrDefault(tp, -1L);
+                if (highest > lastCommitted) {
+                    offsetMap.put(tp, new OffsetAndMetadata(highest + 1));
+                }
+            }
+        }
+
+        if (offsetMap.isEmpty()) return;
+
+        // Commit
+        if (log.isDebugEnabled()) log.debug("Commit. client={}", this.name);
+        if (manualCommitMode == ManualCommitMode.CommitAsync) {
+            consumer.commitAsync(offsetMap, this);
+            callback.commitAsyncCompleted();
+        } else {
+            long startNanos = System.nanoTime();
+            consumer.commitSync(offsetMap, Duration.ofSeconds(30));
+            long latencyMicros = TimeUnit.NANOSECONDS.toMicros(
+                System.nanoTime() - startNanos);
+            callback.commitSyncCompleted(latencyMicros);
+        }
+
+        // Update last committed offsets (commit semantics: offset is next-to-read)
+        for (var entry : offsetMap.entrySet()) {
+            lastCommittedOffsets.put(entry.getKey(), entry.getValue().offset() - 1);
+        }
     }
 
     public String getName() {
@@ -258,7 +460,6 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
             return;
         }
         try {
-            consumer.wakeup();
             executor.shutdown();
             try {
                 if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
@@ -277,4 +478,12 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
             closeFuture.complete(null);
         }
     }
+
+    /**
+     * Tracks received and completed offsets for a single partition in CONTINUOUS mode.
+     * Handles Kafka's natural offset gaps (transaction markers, aborted transactions, compaction).
+     *
+     * <p>An offset is committable if ALL received offsets ≤ it are also completed.
+     * This ensures we never commit an offset with gaps before it, preventing message loss on restart.
+     */
 }

@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 
 import org.junit.Test;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.utils.distributor.MessageDistributorType;
 
@@ -28,6 +29,8 @@ public class TopologyFormatterTest {
                 /*consumersPerGroup*/ 2,
                 ConsumerType.CONSUMER_GROUP,
                 0, 0, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 MessageDistributorType.PINNED_PARTITIONS, 1.0,
                 /*correctness*/ false,
                 /*staticConsumerPartitions*/ false));
@@ -50,6 +53,8 @@ public class TopologyFormatterTest {
         var planner = newPlanner();
         var topology = planner.plan(new TopologyPlanner.TopologySpec(
                 "p", 1, 4, 0, 1, 2, ConsumerType.CONSUMER_GROUP, 0, 0, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 MessageDistributorType.NO_KEY, 1.0, false, /*staticConsumerPartitions*/ true));
 
         String dump = TopologyFormatter.format(null, topology);
@@ -61,6 +66,8 @@ public class TopologyFormatterTest {
     public void format_emptyCaptionOmitsLeadingNewline() {
         var topology = newPlanner().plan(new TopologyPlanner.TopologySpec(
                 "p", 1, 1, 0, 0, 0, ConsumerType.CONSUMER_GROUP, 0, 0, 1,
+                ConsumerProcMode.BLOCKING,
+                10000, // consumerProcCapacity
                 MessageDistributorType.NO_KEY, 1.0, false, false));
         String dump = TopologyFormatter.format("", topology);
         assertTrue("starts with Topics line, not blank", dump.startsWith("  Topics"));

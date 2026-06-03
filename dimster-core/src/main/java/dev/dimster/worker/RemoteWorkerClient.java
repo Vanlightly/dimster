@@ -34,6 +34,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 
+import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityRecorder;
@@ -127,12 +128,14 @@ public class RemoteWorkerClient implements Worker {
         int procMin = consumerSet.consumerProcMsMin();
         int procMax = consumerSet.consumerProcMsMax();
         int procParallelism = consumerSet.consumerProcParallelism();
+        ConsumerProcMode procMode = consumerSet.consumerProcMode();
+        int procCapacity = consumerSet.consumerProcCapacity();
         log.info("Distributing {} consumers across {} workers",
                 consumerSet.consumers().size(), byWorker.size());
 
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream().map(entry -> {
             try {
-                ConsumerSet workerSet = new ConsumerSet(entry.getValue(), type, procMin, procMax, procParallelism);
+                ConsumerSet workerSet = new ConsumerSet(entry.getValue(), type, procMin, procMax, procParallelism, procMode, procCapacity);
                 return sendPostAsync(entry.getKey(), "/create-consumers",
                         writer.writeValueAsBytes(workerSet));
             } catch (Exception e) {
@@ -275,6 +278,16 @@ public class RemoteWorkerClient implements Worker {
         }
     }
 
+    @Override
+    public void setConsumerProcCapacity(int capacity) {
+        try {
+            sendPost(planner.consumerWorkers(), "/set-consumer-proc-capacity",
+                    writer.writeValueAsBytes(capacity));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to set consumer proc capacity", e);
+        }
+    }
+
     // ─── Incremental topology operations (driven by /modify pipeline) ────
     //
     // Producers and consumers are split per worker the same way as
@@ -341,7 +354,8 @@ public class RemoteWorkerClient implements Worker {
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream()
                 .map(e -> {
                     ConsumerSet workerSet = new ConsumerSet(e.getValue(), consumers.consumerType(),
-                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism());
+                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism(),
+                            consumers.consumerProcMode(), consumers.consumerProcCapacity());
                     return sendPostAsync(e.getKey(), "/add-consumers", writeBytes(workerSet));
                 })
                 .toList();
@@ -366,7 +380,8 @@ public class RemoteWorkerClient implements Worker {
         List<CompletableFuture<Void>> futures = byWorker.entrySet().stream()
                 .map(e -> {
                     ConsumerSet workerSet = new ConsumerSet(e.getValue(), consumers.consumerType(),
-                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism());
+                            consumers.consumerProcMsMin(), consumers.consumerProcMsMax(), consumers.consumerProcParallelism(),
+                            consumers.consumerProcMode(), consumers.consumerProcCapacity());
                     return sendPostAsync(e.getKey(), "/restart-consumers", writeBytes(workerSet));
                 })
                 .toList();
