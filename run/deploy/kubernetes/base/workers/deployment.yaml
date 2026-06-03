@@ -26,6 +26,14 @@ spec:
           args:
             - |
               cd /benchmark
+              # Custom log4j2 config (pipe-separated key=value pairs).
+              # Pipe — not comma — because log4j layout patterns contain commas.
+              if [ -n "${WORKER_LOG4J_CONFIG:-}" ]; then
+                echo "$WORKER_LOG4J_CONFIG" | tr '|' '\n' > /tmp/log4j2.properties
+                export KAFKA_OPTS="${KAFKA_OPTS:-} -Dlog4j2.configurationFile=file:/tmp/log4j2.properties"
+                echo "Using custom log4j2 config:"
+                cat /tmp/log4j2.properties
+              fi
               bin/benchmark-worker --port 8080
           ports:
             - containerPort: 8080

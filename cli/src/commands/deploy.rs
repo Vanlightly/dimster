@@ -278,6 +278,7 @@ fn deploy(
     let worker_cpu = workers.and_then(|w| w.requests.as_ref()).and_then(|r| r.cpu.as_deref()).unwrap_or(def_worker_cpu);
     let worker_memory = workers.and_then(|w| w.requests.as_ref()).and_then(|r| r.memory.as_deref()).unwrap_or(def_worker_memory);
     let worker_node_label = workers.and_then(|w| w.node_label.as_deref());
+    let worker_log_config_path = workers.and_then(|w| w.log_config.as_deref());
 
     let coord_heap = coordinator.and_then(|c| c.heap.as_deref()).unwrap_or(def_coord_heap);
     let coord_cpu = coordinator.and_then(|c| c.requests.as_ref()).and_then(|r| r.cpu.as_deref()).unwrap_or(def_coord_cpu);
@@ -802,6 +803,50 @@ fn deploy(
         value: {pull_policy}
 "#
         ));
+
+        // Worker log4j2 config. Same envelope as broker configs but the
+        // entrypoint writes it to /tmp/log4j2.properties and points the JVM
+        // at it with -Dlog4j2.configurationFile (workers run log4j2, not 1.x).
+        if let Some(path) = worker_log_config_path {
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("Cannot read worker log config '{}': {}", path, e))?;
+            let lc: Log4jConfigFile = serde_yaml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Cannot parse worker log config '{}': {}", path, e))?;
+            println!("    Using worker log config: {} ({})", lc.name, path);
+
+            let mut log4j_props: HashMap<String, String> = HashMap::new();
+            for (k, v) in &lc.properties {
+                let val = match v {
+                    serde_yaml::Value::String(s) => s.clone(),
+                    other => serde_yaml::to_string(other)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                };
+                log4j_props.insert(k.clone(), val);
+            }
+
+            if !log4j_props.is_empty() {
+                let mut sorted_props: Vec<_> = log4j_props.iter().collect();
+                sorted_props.sort_by_key(|(k, _)| (*k).clone());
+                let log_config_value = sorted_props.iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                patches.push_str(&format!(
+                    r#"  - target:
+      kind: Deployment
+      name: benchmark-worker
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: WORKER_LOG4J_CONFIG
+          value: "{log_config_value}"
+"#
+                ));
+            }
+        }
     }
 
     // --- Coordinator patches ---

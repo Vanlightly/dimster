@@ -277,6 +277,7 @@ pub struct WorkersEnvConfig {
     #[serde(default)]
     pub requests: Option<ResourceRequests>,
     pub node_label: Option<String>,
+    pub log_config: Option<String>,
     /// Producer/consumer split across the worker pool. When absent, the
     /// coordinator defaults to `mixed` (every worker runs both roles).
     /// In `separated` mode, exactly one of `ratio` or (`producers` +
