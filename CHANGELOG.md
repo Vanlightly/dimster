@@ -42,3 +42,9 @@ Initial public release.
 ### Added
 
 - The consumerProcParallelism workload field to simulate parallel processing of records in consumers
+
+## [0.3.1]
+
+### Added
+
+- BLOCKING and CONTINUOUS parallel processing
