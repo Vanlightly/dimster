@@ -176,7 +176,6 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
             while (!closing.get()) {
                 try {
                     var records = consumer.poll(pollTimeout);
-                    if (log.isDebugEnabled()) log.debug("Poll Complete. client={} records={}", this.name, records.count());
                     if (closing.get()) return;
 
                     running = true;
@@ -203,9 +202,12 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                         }
                     }
 
+                    if (log.isDebugEnabled()) log.debug("Poll Complete. client={} records={} maxOffsets={}",
+                            this.name, records.count(), batchHighestOffsets);
+
                     // Process the records with simulated processing time --------------
                     processingTimeSimulator.processBatch(
-                            recordList.size(),
+                            recordList,
                             closing,
                             callback,
                             deliveryTime,
@@ -240,7 +242,7 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
                     long now = System.currentTimeMillis();
                     if (!autoCommit && !offsetMap.isEmpty()
                             && now - lastCommitTs >= manualCommitLingerMs) {
-                        if (log.isDebugEnabled()) log.debug("Commit. client={}", this.name);
+                        if (log.isDebugEnabled()) log.debug("Commit. client={} offsets={}", this.name, batchHighestOffsets);
                         if (manualCommitMode == ManualCommitMode.CommitAsync) {
                             consumer.commitAsync(offsetMap, this);
                             callback.commitAsyncCompleted();

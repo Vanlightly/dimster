@@ -143,7 +143,7 @@ public class KafkaShareConsumerWrapper implements AutoCloseable, ShareAckListene
 
                     // Process the records with simulated processing time --------------
                     processingTimeSimulator.processBatch(
-                            recordList.size(),
+                            recordList,
                             closing,
                             callback,
                             deliveryTime,

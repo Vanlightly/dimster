@@ -42,12 +42,15 @@ properties:
   logger.kafka.appenderRef.console.ref: "Console"
   logger.kafka.appenderRef.file.ref: "File"
 
-  logger.dimster.name: "dev.dimster"
-  logger.dimster.level: "debug"
-  logger.dimster.additivity: "false"
-  logger.dimster.appenderRefs: "console, file"
-  logger.dimster.appenderRef.console.ref: "Console"
-  logger.dimster.appenderRef.file.ref: "File"
+  # logger.kafka.name: "org.apache.kafka.clients.consumer"
+  # logger.kafka.level: "debug"
 
-#  logger.producerwrapper.name: "dev.dimster.worker.LocalWorker"
-#  logger.producerwrapper.level: "info"
+#  logger.dimster.name: "dev.dimster"
+#  logger.dimster.level: "debug"
+#  logger.dimster.additivity: "false"
+#  logger.dimster.appenderRefs: "console, file"
+#  logger.dimster.appenderRef.console.ref: "Console"
+#  logger.dimster.appenderRef.file.ref: "File"
+
+  logger.producerwrapper.name: "dev.dimster.worker.LocalWorker"
+  logger.producerwrapper.level: "info"

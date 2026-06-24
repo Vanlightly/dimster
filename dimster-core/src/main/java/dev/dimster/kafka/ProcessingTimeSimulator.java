@@ -1,7 +1,10 @@
 package dev.dimster.kafka;
 
+import dev.dimster.MessageType;
 import dev.dimster.utils.Sleeper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -24,6 +27,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Enables continuous polling without blocking the poll loop.
  */
 public class ProcessingTimeSimulator {
+    private static final Logger log = LoggerFactory.getLogger(ProcessingTimeSimulator.class);
+
     private volatile int procMsMin;
     private volatile int procMsMax;
     private final int procParallelism;
@@ -79,12 +84,13 @@ public class ProcessingTimeSimulator {
      * @return total sleep time in milliseconds
      */
     public long processBatch(
-            int batchSize,
+            List<ConsumerRecord<String, byte[]>> records,
             AtomicBoolean closing,
             ConsumerCallback callback,
             Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
+        int batchSize = records.size();
         if (batchSize == 0 || procMsMax == 0) {
             // No processing time simulation - process messages with deliveryTime
             for (int i = 0; i < batchSize; i++) {
@@ -94,12 +100,30 @@ public class ProcessingTimeSimulator {
         }
 
         if (procParallelism == 1) {
-            return processBatchSequential(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchSequential(records, closing, callback, deliveryTime, messageProcessor);
         } else if (procParallelism > 1) {
-            return processBatchConstrained(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchConstrained(records, closing, callback, deliveryTime, messageProcessor);
         } else { // procParallelism == -1
-            return processBatchFullParallel(batchSize, closing, callback, deliveryTime, messageProcessor);
+            return processBatchFullParallel(records, closing, callback, deliveryTime, messageProcessor);
         }
+    }
+
+    /**
+     * Whether simulated processing time should be applied to this record.
+     * Only NORMAL and CORRECTNESS payloads incur processing time; control-plane
+     * types (AVAILABILITY, PROBE) and empty payloads complete instantly.
+     */
+    private static boolean appliesProcessingTime(ConsumerRecord<String, byte[]> record) {
+        byte[] value = record.value();
+        if (value == null || value.length == 0) return false;
+        byte marker = value[0];
+        return marker == MessageType.NORMAL || marker == MessageType.CORRECTNESS;
+    }
+
+    private long randomProcMs() {
+        return (procMsMin == procMsMax)
+                ? procMsMin
+                : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
     }
 
     /**
@@ -107,13 +131,14 @@ public class ProcessingTimeSimulator {
      * Each message starts after all prior messages have finished.
      */
     private long processBatchSequential(
-            int batchSize,
+            List<ConsumerRecord<String, byte[]>> records,
             AtomicBoolean closing,
             ConsumerCallback callback,
             Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
         long cumulativeMs = 0;
+        int batchSize = records.size();
 
         for (int i = 0; i < batchSize; i++) {
             // This message starts after all prior messages finish
@@ -122,21 +147,22 @@ public class ProcessingTimeSimulator {
             // Process this message with its start time
             messageProcessor.processMessage(i, startTime);
 
-            // Generate processing time and add to cumulative
-            long procMs = (procMsMin == procMsMax)
-                    ? procMsMin
-                    : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
-            cumulativeMs += procMs;
+            // Only NORMAL/CORRECTNESS records consume simulated processing time
+            if (appliesProcessingTime(records.get(i))) {
+                cumulativeMs += randomProcMs();
+            }
         }
 
         // Sleep once for total time
         if (cumulativeMs > 0) {
+            log.debug("SLEEP START - {} aggregate sleep ms for proc time simulation", cumulativeMs);
             long startNanos = System.nanoTime();
             if (Sleeper.sleepOrStop(closing, cumulativeMs, false)) {
                 return 0;
             }
             long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
             callback.processingTimeCompleted(latencyMicros);
+            log.debug("SLEEP END - {} aggregate sleep ms for proc time simulation", cumulativeMs);
         }
 
         return cumulativeMs;
@@ -148,18 +174,18 @@ public class ProcessingTimeSimulator {
      * simulating work-stealing behavior. Sleep once for the slowest worker's total time.
      */
     private long processBatchConstrained(
-            int batchSize,
+            List<ConsumerRecord<String, byte[]>> records,
             AtomicBoolean closing,
             ConsumerCallback callback,
             Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
-        // Generate processing times for all messages
+        int batchSize = records.size();
+
+        // Generate processing times for all messages; non-NORMAL/CORRECTNESS get 0.
         long[] processingTimes = new long[batchSize];
         for (int i = 0; i < batchSize; i++) {
-            processingTimes[i] = (procMsMin == procMsMax)
-                    ? procMsMin
-                    : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+            processingTimes[i] = appliesProcessingTime(records.get(i)) ? randomProcMs() : 0;
         }
 
         // Track cumulative work per worker (simulates work-stealing queue)
@@ -193,12 +219,14 @@ public class ProcessingTimeSimulator {
 
         // Sleep once for the slowest worker's time (simulating concurrent workers finishing)
         if (maxWorkerTime > 0) {
+            log.debug("SLEEP START - {} aggregate sleep ms for proc time simulation", maxWorkerTime);
             long startNanos = System.nanoTime();
             if (Sleeper.sleepOrStop(closing, maxWorkerTime, false)) {
                 return 0;
             }
             long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
             callback.processingTimeCompleted(latencyMicros);
+            log.debug("SLEEP END - {} aggregate sleep ms for proc time simulation", maxWorkerTime);
         }
 
         return maxWorkerTime;
@@ -209,19 +237,21 @@ public class ProcessingTimeSimulator {
      * sleep once for the maximum processing time.
      */
     private long processBatchFullParallel(
-            int batchSize,
+            List<ConsumerRecord<String, byte[]>> records,
             AtomicBoolean closing,
             ConsumerCallback callback,
             Instant deliveryTime,
             MessageProcessor messageProcessor) {
 
-        // Generate processing times and process all messages (all start at deliveryTime)
+        int batchSize = records.size();
+
+        // Generate processing times and process all messages (all start at deliveryTime).
+        // Only NORMAL/CORRECTNESS records contribute to maxTime.
         long maxTime = 0;
         for (int i = 0; i < batchSize; i++) {
-            long procTime = (procMsMin == procMsMax)
-                    ? procMsMin
-                    : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
-            maxTime = Math.max(maxTime, procTime);
+            if (appliesProcessingTime(records.get(i))) {
+                maxTime = Math.max(maxTime, randomProcMs());
+            }
 
             // All messages start at deliveryTime (concurrent)
             messageProcessor.processMessage(i, deliveryTime);
@@ -229,12 +259,14 @@ public class ProcessingTimeSimulator {
 
         // Sleep once for max duration
         if (maxTime > 0) {
+            log.debug("SLEEP START - {} aggregate sleep ms for proc time simulation", maxTime);
             long startNanos = System.nanoTime();
             if (Sleeper.sleepOrStop(closing, maxTime, false)) {
                 return 0;
             }
             long latencyMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - startNanos);
             callback.processingTimeCompleted(latencyMicros);
+            log.debug("SLEEP END - {} aggregate sleep ms for proc time simulation", maxTime);
         }
 
         return maxTime;
@@ -259,8 +291,8 @@ public class ProcessingTimeSimulator {
             throw new IllegalStateException("offerAsync() requires continuousMode=true");
         }
 
-        long procMs = (procMsMin == procMsMax) ? procMsMin
-            : ThreadLocalRandom.current().nextLong(procMsMin, procMsMax + 1);
+        // Only NORMAL/CORRECTNESS records incur simulated processing time.
+        long procMs = appliesProcessingTime(record) ? randomProcMs() : 0;
 
         // Calculate when this record should start processing based on parallelism mode
         long startOffsetMs = calculateStartOffsetMs(procMs);
