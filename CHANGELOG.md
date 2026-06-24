@@ -48,3 +48,13 @@ Initial public release.
 ### Added
 
 - BLOCKING and CONTINUOUS parallel processing
+
+## [0.3.2]
+
+### Added
+
+- Producer rate schedule REPEATING and OSCILLATING
+
+### Changed
+
+- Improvements to simulated processing time
