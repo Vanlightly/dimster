@@ -23,6 +23,13 @@ public class BaseWorkload {
 
     public int messageSize = 1000;
     public double producerRate = 10000;
+    /**
+     * Optional variable-rate schedule. When present, producer threads follow
+     * this schedule instead of the fixed producerRate while producerRate stays
+     * available as the nominal/max scalar for older tooling and charts.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public ProducerRateSchedule producerRateSchedule;
 
     // Payload source. Precedence: useRandomizedPayloads wins. When true, payloads are
     // generated in-process using randomBytesRatio + randomizedPayloadPoolSize and

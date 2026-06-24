@@ -36,6 +36,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 
 import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityRecorder;
 import dev.dimster.availability.AvailabilityResult;
@@ -151,8 +152,7 @@ public class RemoteWorkerClient implements Worker {
         // Falling back to 1 keeps the math sane if startLoad is somehow called without a prior
         // producer creation (shouldn't happen in practice).
         int divisor = Math.max(1, activeProducerWorkerCount);
-        double dividedRate = producerWorkAssignment.publishRate() / divisor;
-        ProducerWorkAssignment distributed = producerWorkAssignment.withPublishRate(dividedRate);
+        ProducerWorkAssignment distributed = producerWorkAssignment.dividedBy(divisor);
         sendPost(planner.producerWorkers(), "/start-load", writer.writeValueAsBytes(distributed));
     }
 
@@ -167,6 +167,23 @@ public class RemoteWorkerClient implements Worker {
         double distributed = publishRate / divisor;
         sendPost(planner.producerWorkers(), "/adjust-publish-rate", writer.writeValueAsBytes(distributed));
     }
+
+    @Override
+    public void adjustPublishRateSchedule(ProducerRateSchedule schedule) throws IOException {
+        adjustPublishRateSchedule(schedule, System.currentTimeMillis());
+    }
+
+    @Override
+    public void adjustPublishRateSchedule(ProducerRateSchedule schedule, long scheduleStartEpochMillis) throws IOException {
+        int divisor = Math.max(1, activeProducerWorkerCount);
+        ProducerRateSchedule distributed = schedule.copyDividedBy(divisor);
+        sendPost(planner.producerWorkers(), "/adjust-publish-rate-schedule",
+                writer.writeValueAsBytes(new ProducerRateScheduleUpdate(distributed, scheduleStartEpochMillis)));
+    }
+
+    private record ProducerRateScheduleUpdate(
+            ProducerRateSchedule schedule,
+            long scheduleStartEpochMillis) {}
 
     @Override
     public void stopAll() {

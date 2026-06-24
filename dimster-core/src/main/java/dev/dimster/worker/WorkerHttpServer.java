@@ -18,6 +18,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityResult;
 import dev.dimster.engines.correctness.CorrectnessConfig;
@@ -109,6 +110,7 @@ public class WorkerHttpServer {
 
         server.createContext("/start-load", this::handleStartLoad);
         server.createContext("/adjust-publish-rate", this::handleAdjustPublishRate);
+        server.createContext("/adjust-publish-rate-schedule", this::handleAdjustPublishRateSchedule);
         server.createContext("/stop-all", this::handleStopAll);
         server.createContext("/stop-status", this::handleStopStatus);
         server.createContext("/period-stats", this::handlePeriodStats);
@@ -186,7 +188,10 @@ public class WorkerHttpServer {
     private void handleStartLoad(HttpExchange exchange) throws IOException {
         handle(exchange, () -> {
             ProducerWorkAssignment assignment = mapper.readValue(exchange.getRequestBody(), ProducerWorkAssignment.class);
-            log.info("Start load publish-rate: {} msg/s -- payload-size: {}", assignment.publishRate(),
+            String rateText = assignment.publishRateSchedule() == null
+                    ? assignment.publishRate() + " msg/s"
+                    : assignment.publishRateSchedule().type + " schedule";
+            log.info("Start load publish-rate: {} -- payload-size: {}", rateText,
                     assignment.payloadData().get(0).length);
             localWorker.startLoad(assignment);
         });
@@ -198,6 +203,17 @@ public class WorkerHttpServer {
             localWorker.adjustPublishRate(publishRate);
         });
     }
+
+    private void handleAdjustPublishRateSchedule(HttpExchange exchange) throws IOException {
+        handle(exchange, () -> {
+            ProducerRateScheduleUpdate update = mapper.readValue(exchange.getRequestBody(), ProducerRateScheduleUpdate.class);
+            localWorker.adjustPublishRateSchedule(update.schedule(), update.scheduleStartEpochMillis());
+        });
+    }
+
+    private record ProducerRateScheduleUpdate(
+            ProducerRateSchedule schedule,
+            long scheduleStartEpochMillis) {}
 
     private void handleStopAll(HttpExchange exchange) throws IOException {
         handle(exchange, () -> {

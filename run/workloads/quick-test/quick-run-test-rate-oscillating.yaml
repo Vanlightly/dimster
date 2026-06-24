@@ -1,0 +1,27 @@
+name: Quick run test with oscillating producer rate
+
+engineConfig:
+  perPartitionMetrics: true   # Producer/consumer metrics with partition-level reporting
+  perConsumerMetrics: true    # Per-consumer metrics (disable for large consumer counts)
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 6      # The duration of each test point with latency recording
+  warmupDurationMinutes: 0    # Keep this quick example short
+  rampIntervals: 3            # Ramp to the first scheduled rate before the schedule starts
+  rampIntervalSeconds: 5
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  producersPerTopic: 1
+  producerRateSchedule:
+    type: OSCILLATING
+    minRate: 100
+    maxRate: 1000
+    periodSeconds: 120

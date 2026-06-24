@@ -2,6 +2,7 @@ package dev.dimster.engines.run;
 
 import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.ScenarioExpander.TestPoint;
 import dev.dimster.coordinator.ModifyRequest;
 import dev.dimster.coordinator.ModifyResult;
@@ -28,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -66,11 +69,15 @@ public class WorkloadEngineModifyTest {
         List<byte[]> lastUpdatedPayloads = null;
         List<VirtualProducer> lastCreatedProducers = null;
         dev.dimster.worker.commands.ProducerWorkAssignment lastStartLoadAssignment = null;
+        ProducerRateSchedule lastRateSchedule = null;
         IOException publishRateException = null;
 
         @Override public void adjustPublishRate(double publishRate) throws IOException {
             if (publishRateException != null) throw publishRateException;
             this.lastRate = publishRate;
+        }
+        @Override public void adjustPublishRateSchedule(ProducerRateSchedule schedule) {
+            this.lastRateSchedule = schedule;
         }
         @Override public void setConsumerProcessingTime(int minMs, int maxMs) {
             this.lastProcMin = minMs;
@@ -132,7 +139,7 @@ public class WorkloadEngineModifyTest {
                 "default", 0, 1, "default", 0, 1,
                 /*topics*/ 1, /*partitionsPerTopic*/ 4,
                 producersPerTopic, /*consumerGroupsPerTopic*/ 1, consumersPerGroup,
-                /*messageSize*/ 1000, producerRate,
+                /*messageSize*/ 1000, producerRate, null,
                 MessageDistributorType.NO_KEY, /*skew*/ 1.0,
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
@@ -150,7 +157,7 @@ public class WorkloadEngineModifyTest {
                 "default", 0, 1, "default", 0, 1,
                 1, 4,
                 producersPerTopic, 1, consumersPerGroup,
-                1000, producerRate,
+                1000, producerRate, null,
                 distributor, 1.0,
                 ConsumerType.CONSUMER_GROUP,
                 new KafkaConfig(),
@@ -394,6 +401,28 @@ public class WorkloadEngineModifyTest {
         ModifyResult r2 = engine.applyModification(workloadReq("producerRate", 1234.5));
         assertTrue(r2.accepted());
         assertEquals(Double.valueOf(1234.5), worker.lastRate);
+    }
+
+    @Test
+    public void appliesProducerRateScheduleAndFixedRateClearsIt() throws Exception {
+        RecordingWorker worker = new RecordingWorker();
+        WorkloadEngine engine = newEngine(worker);
+        primeEngineForFieldOverrides(engine, 1, 1, 1000.0, 0, 0);
+
+        ProducerRateSchedule schedule = new ProducerRateSchedule();
+        schedule.type = ProducerRateSchedule.Type.OSCILLATING;
+        schedule.minRate = 100.0;
+        schedule.maxRate = 10_000.0;
+        schedule.periodSeconds = 60.0;
+
+        ModifyResult scheduled = engine.applyModification(workloadReq("producerRateSchedule", schedule));
+        assertTrue(scheduled.message(), scheduled.accepted());
+        assertSame(schedule, worker.lastRateSchedule);
+        assertNull(worker.lastRate);
+
+        ModifyResult fixed = engine.applyModification(workloadReq("producerRate", 2_000.0));
+        assertTrue(fixed.message(), fixed.accepted());
+        assertEquals(Double.valueOf(2_000.0), worker.lastRate);
     }
 
     @Test

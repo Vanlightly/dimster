@@ -490,4 +490,38 @@ public class ScenarioExpanderTest {
         assertEquals(1, points.size());
         assertNull(points.get(0).runConfig());
     }
+
+    @Test
+    public void producerRateSchedule_inheritsFromBaseAndCanVaryByScenario() {
+        BaseWorkload base = baseWorkloadWithoutKafkaConfig();
+        ProducerRateSchedule baseSchedule = oscillatingSchedule(1_000, 10_000);
+        base.producerRateSchedule = baseSchedule;
+
+        Scenario first = emptyScenario("inherits");
+        List<TestPoint> inherited = ScenarioExpander.expand(base, List.of(first), null);
+        assertSame(baseSchedule, inherited.get(0).producerRateSchedule());
+        assertEquals(10_000.0, inherited.get(0).producerRate(), 0.0001);
+
+        ProducerRateSchedule low = oscillatingSchedule(100, 1_000);
+        ProducerRateSchedule high = oscillatingSchedule(1_000, 100_000);
+        Scenario second = emptyScenario("varies");
+        second.producerRateSchedule = List.of(low, high);
+        second.producerRate = List.of(1_000.0, 100_000.0);
+
+        List<TestPoint> varied = ScenarioExpander.expand(base, List.of(second), null);
+        assertEquals(2, varied.size());
+        assertSame(low, varied.get(0).producerRateSchedule());
+        assertSame(high, varied.get(1).producerRateSchedule());
+        assertEquals(1_000.0, varied.get(0).producerRate(), 0.0001);
+        assertEquals(100_000.0, varied.get(1).producerRate(), 0.0001);
+    }
+
+    private static ProducerRateSchedule oscillatingSchedule(double min, double max) {
+        ProducerRateSchedule schedule = new ProducerRateSchedule();
+        schedule.type = ProducerRateSchedule.Type.OSCILLATING;
+        schedule.minRate = min;
+        schedule.maxRate = max;
+        schedule.periodSeconds = 60;
+        return schedule;
+    }
 }

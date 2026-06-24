@@ -33,6 +33,7 @@ public class ScenarioExpander {
             int consumersPerGroup,
             int messageSize,
             double producerRate,
+            ProducerRateSchedule producerRateSchedule,
             MessageDistributorType messageDistributor,
             double messageDistributorSkew,
             ConsumerType consumerType,
@@ -56,6 +57,9 @@ public class ScenarioExpander {
             sb.append("\n    Producer: rate=").append(producerRate)
               .append(", messageSize=").append(messageSize)
               .append(", messageDistributor=").append(messageDistributor);
+            if (producerRateSchedule != null) {
+                sb.append(", producerRateSchedule=").append(producerRateSchedule.type);
+            }
             if (messageDistributor == MessageDistributorType.KEY_ZIPF
                     || messageDistributor == MessageDistributorType.PARTITION_ZIPF) {
                 sb.append(", messageDistributorSkew=").append(messageDistributorSkew);
@@ -274,6 +278,8 @@ public class ScenarioExpander {
         List<Integer> consumers = resolve(scenario.consumersPerGroup, base.consumersPerGroup);
         List<Integer> msgSize = resolve(scenario.messageSize, base.messageSize);
         List<Double> rate = resolveDouble(scenario.producerRate, base.producerRate);
+        List<ProducerRateSchedule> rateSchedule = resolveNullable(
+                scenario.producerRateSchedule, base.producerRateSchedule);
         List<MessageDistributorType> keyDist = resolve(scenario.messageDistributor, base.messageDistributor);
         List<Double> keyDistSkew = resolveDouble(scenario.messageDistributorSkew, base.messageDistributorSkew);
         List<ConsumerType> consType = resolve(scenario.consumerType, base.consumerType);
@@ -368,7 +374,7 @@ public class ScenarioExpander {
 
         // Find the number of test points (max array length among multi-element lists)
         int n = maxLength(topics, partitions, producers, consumerGroups, consumers,
-                msgSize, rate, keyDist, keyDistSkew, consType, procMsMin, procMsMax, procParallelism);
+                msgSize, rate, rateSchedule, keyDist, keyDistSkew, consType, procMsMin, procMsMax, procParallelism);
         if (drainDefaults != null) {
             n = maxLength(n, drainBacklogSize, drainProducerRate, drainBuildRate, drainSampleRate, drainTimeout);
         }
@@ -398,6 +404,7 @@ public class ScenarioExpander {
         validate(effectiveName, n, "consumersPerGroup", consumers);
         validate(effectiveName, n, "messageSize", msgSize);
         validate(effectiveName, n, "producerRate", rate);
+        validate(effectiveName, n, "producerRateSchedule", rateSchedule);
         validate(effectiveName, n, "messageDistributor", keyDist);
         validate(effectiveName, n, "messageDistributorSkew", keyDistSkew);
         validate(effectiveName, n, "consumerType", consType);
@@ -474,6 +481,13 @@ public class ScenarioExpander {
             KafkaConfig pointConfig = finalMergedKafkaConfig != null
                     ? finalMergedKafkaConfig.resolveAtIndex(i)
                     : null;
+            ProducerRateSchedule pointRateSchedule = get(rateSchedule, i);
+            if (pointRateSchedule != null) {
+                pointRateSchedule.validate();
+            }
+            double pointProducerRate = pointRateSchedule == null
+                    ? get(rate, i)
+                    : pointRateSchedule.maxConfiguredRate();
 
             // Build a fully resolved DrainBacklogConfig for this test point
             DrainBacklogConfig pointDrainConfig = null;
@@ -532,7 +546,8 @@ public class ScenarioExpander {
                     get(consumerGroups, i),
                     get(consumers, i),
                     get(msgSize, i),
-                    get(rate, i),
+                    pointProducerRate,
+                    pointRateSchedule,
                     get(keyDist, i),
                     getDouble(keyDistSkew, i),
                     get(consType, i),
@@ -556,11 +571,18 @@ public class ScenarioExpander {
                                        RunConfig runDefaults) {
         String label = base.label != null ? base.label : "default";
         KafkaConfig merged = KafkaConfig.merge(fileConfig, base.kafkaConfig);
+        if (base.producerRateSchedule != null) {
+            base.producerRateSchedule.validate();
+        }
+        double producerRate = base.producerRateSchedule == null
+                ? base.producerRate
+                : base.producerRateSchedule.maxConfiguredRate();
         return new TestPoint(
                 "default", 0, 1, label, 0, 1,
                 base.topics, base.partitionsPerTopic, base.producersPerTopic,
                 base.consumerGroupsPerTopic, base.consumersPerGroup,
-                base.messageSize, base.producerRate,
+                base.messageSize, producerRate,
+                base.producerRateSchedule,
                 base.messageDistributor, base.messageDistributorSkew, base.consumerType,
                 merged,
                 base.consumerProcMsMin, base.consumerProcMsMax, base.consumerProcParallelism,
@@ -577,6 +599,19 @@ public class ScenarioExpander {
             return scenarioValue;
         }
         return List.of(baseDefault);
+    }
+
+    /**
+     * Nullable variant used for optional object dimensions. List.of(null) is
+     * illegal, so keep a mutable singleton when the base value is absent.
+     */
+    private static <T> List<T> resolveNullable(List<T> scenarioValue, T baseDefault) {
+        if (scenarioValue != null && !scenarioValue.isEmpty()) {
+            return scenarioValue;
+        }
+        List<T> singleton = new ArrayList<>(1);
+        singleton.add(baseDefault);
+        return singleton;
     }
 
     /** Double-typed variant of {@link #resolve} for fields like backlogSizeGB. */

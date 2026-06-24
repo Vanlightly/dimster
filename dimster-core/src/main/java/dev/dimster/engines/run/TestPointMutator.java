@@ -4,11 +4,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.dimster.ConsumerProcMode;
 import dev.dimster.ConsumerType;
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.ScenarioExpander.TestPoint;
 import dev.dimster.coordinator.ModifyRequest;
 import dev.dimster.coordinator.ModifyResult;
@@ -67,6 +70,8 @@ import dev.dimster.worker.topology.VirtualTopology;
  * </ul>
  */
 public class TestPointMutator {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** Result of {@link #plan}: the new TestPoint, the new topology, and the action list. */
     public record MutationPlan(
@@ -179,6 +184,12 @@ public class TestPointMutator {
      */
     private TestPoint applyWorkloadOverrides(TestPoint current, Map<String, Object> overrides) {
         if (overrides == null || overrides.isEmpty()) return current;
+        boolean fixedRateOverride = overrides.containsKey("producerRate");
+        ProducerRateSchedule schedule = pickSchedule(overrides, "producerRateSchedule",
+                fixedRateOverride ? null : current.producerRateSchedule());
+        double producerRate = schedule == null
+                ? pickDouble(overrides, "producerRate", current.producerRate())
+                : schedule.maxConfiguredRate();
         return new TestPoint(
                 current.scenarioName(),
                 current.scenarioIndex(),
@@ -192,7 +203,8 @@ public class TestPointMutator {
                 pickInt(overrides, "consumerGroupsPerTopic", current.consumerGroupsPerTopic()),
                 pickInt(overrides, "consumersPerGroup", current.consumersPerGroup()),
                 pickInt(overrides, "messageSize", current.messageSize()),
-                pickDouble(overrides, "producerRate", current.producerRate()),
+                producerRate,
+                schedule,
                 pickEnum(overrides, "messageDistributor", MessageDistributorType.class,
                         current.messageDistributor()),
                 pickDouble(overrides, "messageDistributorSkew", current.messageDistributorSkew()),
@@ -222,6 +234,24 @@ public class TestPointMutator {
         return Double.parseDouble(v.toString());
     }
 
+    private static ProducerRateSchedule pickSchedule(Map<String, Object> overrides, String key,
+                                                     ProducerRateSchedule current) {
+        if (!overrides.containsKey(key)) {
+            return current;
+        }
+        Object v = overrides.get(key);
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof ProducerRateSchedule schedule) {
+            schedule.validate();
+            return schedule;
+        }
+        ProducerRateSchedule schedule = MAPPER.convertValue(v, ProducerRateSchedule.class);
+        schedule.validate();
+        return schedule;
+    }
+
     private static <E extends Enum<E>> E pickEnum(Map<String, Object> overrides, String key,
                                                      Class<E> type, E current) {
         Object v = overrides.get(key);
@@ -241,6 +271,7 @@ public class TestPointMutator {
                 base.topics(), base.partitionsPerTopic(), base.producersPerTopic(),
                 base.consumerGroupsPerTopic(), base.consumersPerGroup(),
                 base.messageSize(), base.producerRate(),
+                base.producerRateSchedule(),
                 base.messageDistributor(), base.messageDistributorSkew(), base.consumerType(),
                 newConfig,
                 base.consumerProcMsMin(), base.consumerProcMsMax(), base.consumerProcParallelism(),
@@ -346,6 +377,9 @@ public class TestPointMutator {
             throw new IllegalArgumentException(
                     "producerRate must be >= 0 (got " + mutated.producerRate() + ")");
         }
+        if (mutated.producerRateSchedule() != null) {
+            mutated.producerRateSchedule().validate();
+        }
         if (mutated.producersPerTopic() < 1) {
             throw new IllegalArgumentException(
                     "producersPerTopic must be >= 1 (got " + mutated.producersPerTopic() + ")");
@@ -383,8 +417,17 @@ public class TestPointMutator {
                                         TestPoint mutated, ModifyRequest req) {
         List<DiffAction> actions = new ArrayList<>();
 
-        // (a) Hot-patch: rate change.
-        if (Double.compare(mutated.producerRate(), current.producerRate()) != 0) {
+        // (a) Hot-patch: rate change. A fixed producerRate override clears any
+        // active schedule; a schedule override replaces the limiter in place.
+        if (!Objects.equals(mutated.producerRateSchedule(), current.producerRateSchedule())) {
+            if (mutated.producerRateSchedule() == null) {
+                actions.add(new DiffAction.AdjustPublishRate(mutated.producerRate()));
+            } else {
+                actions.add(new DiffAction.AdjustPublishRateSchedule(
+                        mutated.producerRateSchedule(), System.currentTimeMillis()));
+            }
+        } else if (mutated.producerRateSchedule() == null
+                && Double.compare(mutated.producerRate(), current.producerRate()) != 0) {
             actions.add(new DiffAction.AdjustPublishRate(mutated.producerRate()));
         }
 
@@ -573,7 +616,8 @@ public class TestPointMutator {
             // messageSize, and the (possibly-new) producer rate.
             List<byte[]> payloads = payloadBuilder.apply(mutated.messageSize());
             ProducerWorkAssignment assignment = new ProducerWorkAssignment(
-                    payloads, mutated.producerRate(),
+                    payloads, effectiveTargetRate(mutated), mutated.producerRateSchedule(),
+                    mutated.producerRateSchedule() == null ? null : System.currentTimeMillis(),
                     mutated.messageDistributor(),
                     mutated.partitionsPerTopic(),
                     mutated.messageDistributorSkew());
@@ -908,5 +952,11 @@ public class TestPointMutator {
                 mutated.messageDistributor(),
                 mutated.messageDistributorSkew(),
                 Math.max(activeProducerWorkers, 1));
+    }
+
+    private static double effectiveTargetRate(TestPoint point) {
+        return point.producerRateSchedule() == null
+                ? point.producerRate()
+                : point.producerRateSchedule().maxConfiguredRate();
     }
 }

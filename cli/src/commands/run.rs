@@ -536,6 +536,7 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
                             "consumersPerGroup",
                             "messageSize",
                             "producerRate",
+                            "producerRateSchedule",
                             "messageDistributor",
                             "messageDistributorSkew",
                             "consumerType",
@@ -656,6 +657,12 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
 /// coordinator's Jackson deserializer accepts string-form numbers too,
 /// so this is a best-effort upgrade for cleaner wire payloads.
 fn coerce_value(s: &str) -> serde_json::Value {
+    let trimmed = s.trim();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed == "null" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            return v;
+        }
+    }
     if let Ok(n) = s.parse::<i64>() {
         return serde_json::Value::Number(n.into());
     }

@@ -79,6 +79,7 @@ public class TestResult {
         public int partitionsPerTopic;
         public int producersPerTopic;
         public double producerRate;
+        public ProducerRateSchedule producerRateSchedule;
         public int consumerGroupsPerTopic;
         public int consumersPerGroup;
         public int consumerProcMsMin;

@@ -1,0 +1,37 @@
+name: Quick run test with repeating producer rate
+
+engineConfig:
+  perPartitionMetrics: true   # Producer/consumer metrics with partition-level reporting
+  perConsumerMetrics: true    # Per-consumer metrics (disable for large consumer counts)
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 50     # The duration of each test point with latency recording
+  warmupDurationMinutes: 1    # Keep this quick example short
+  rampIntervals: 0            # No initial ramp
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 10
+  messageDistributor: "NO_KEY"
+  messageSize: 500
+  consumerType: CONSUMER_GROUP
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 10
+  producersPerTopic: 1
+  producerRateSchedule:
+    type: REPEATING
+    segments:
+      - fromRate: 100
+        toRate: 1000
+        durationSeconds: 120
+      - rate: 1000
+        durationSeconds: 60
+      - fromRate: 1000
+        toRate: 800
+        durationSeconds: 60
+      - fromRate: 800
+        toRate: 100
+        durationSeconds: 60
+      - rate: 100
+        durationSeconds: 300

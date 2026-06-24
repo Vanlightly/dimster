@@ -80,7 +80,8 @@ These fields define the default test parameters. Each field can be overridden pe
 | `consumerGroupsPerTopic` | integer | `1` | Number of consumer groups per topic (controls fan-out).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `consumersPerGroup` | integer | `1` | Number of consumers per consumer group.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `messageSize` | integer | `1000` | Message payload size in bytes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `producerRate` | integer | `10000` | Target aggregate producer rate in messages per second.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `producerRate` | integer | `10000` | Target aggregate producer rate in messages per second for fixed-rate workloads. When `producerRateSchedule` is set, Dimster automatically resolves this to the schedule's max rate in test-point metadata/results.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `producerRateSchedule` | object | _(unset)_ | Optional variable producer-rate schedule. When set, producers follow the schedule instead of the fixed `producerRate`. See [Producer Rate Schedules](#producer-rate-schedules).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `useRandomizedPayloads` | boolean | `true` | Generate randomized message payloads (provides more realistic compression behavior).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `randomBytesRatio` | double | `0.5` | Fraction of message bytes that are random (0.0 to 1.0).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `randomizedPayloadPoolSize` | integer | `100` | Number of pre-generated random payloads to cycle through.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -91,6 +92,60 @@ These fields define the default test parameters. Each field can be overridden pe
 | `consumerProcMsMin` | integer | `0` | Minimum simulated per-record consumer processing time in milliseconds. Each record is assigned a random processing time between `consumerProcMsMin` and `consumerProcMsMax` ms, modelling downstream work. The actual sleep pattern depends on `consumerProcParallelism` (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `consumerProcMsMax` | integer | `0` | Maximum simulated per-record consumer processing time in milliseconds. `0` disables the simulated processing delay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `consumerProcParallelism` | integer | `1` | Concurrent processing mode: `1` = sequential (process messages one at a time), `>1` = constrained parallelism (simulate N parallel workers), `-1` = full parallelism (all messages start processing simultaneously). With constrained parallelism, each polled batch is divided among N workers; each worker processes its assigned messages serially, and the consumer sleeps once for the slowest worker's total time. With full parallelism, all messages start processing at the same time, and the consumer sleeps once for the maximum processing time across the batch. Simulates realistic application behavior where consumers process multiple messages in parallel. **Note:** In explore mode, concurrent processing (`!= 1`) disables the theoretical-max fast-path because the max rate depends on unknown poll batch sizes; the engine falls back to standard ramp + binary search. |
+
+### Producer Rate Schedules
+
+`producerRateSchedule` supports two schedule types.
+
+Run-mode `rampIntervals` still applies when a schedule is configured. Dimster
+ramps from `firstScheduledRate / rampIntervals` to the first scheduled rate,
+holds the first scheduled rate through warm-up, then starts the schedule from
+elapsed zero when the measured test phase begins.
+
+When producer load is spread across multiple workers, the coordinator sends a
+shared wall-clock schedule start time to the workers. This keeps the schedule
+phase aligned without a heavyweight synchronization protocol, but it relies on
+normal host clock synchronization. Avoid very short schedule periods where
+small clock skew or request timing differences would be material.
+
+`OSCILLATING` runs a smooth cosine wave starting at `minRate`, reaching `maxRate` halfway through `periodSeconds`, then returning to `minRate` at the end of the period.
+
+```yaml
+baseWorkload:
+  producerRateSchedule:
+    type: OSCILLATING
+    minRate: 1000
+    maxRate: 100000
+    periodSeconds: 600
+```
+
+`REPEATING` runs a sequence of hold and ramp segments. Ramps use smooth interpolation by default; set `interpolation: LINEAR` for a linear ramp.
+Segment rates may be `0` to pause producer traffic; negative rates are invalid, and each schedule must include at least one positive rate.
+
+```yaml
+baseWorkload:
+  producerRateSchedule:
+    type: REPEATING
+    segments:
+      - fromRate: 1000
+        toRate: 100000
+        durationSeconds: 60
+      - rate: 100000
+        durationSeconds: 120
+      - fromRate: 100000
+        toRate: 1000
+        durationSeconds: 60
+      - rate: 1000
+        durationSeconds: 300
+```
+
+With `dimster run --modify`, a schedule can be hot-swapped with inline JSON:
+
+```bash
+./dimster run localBeefy --modify --set 'producerRateSchedule={"type":"OSCILLATING","minRate":1000,"maxRate":100000,"periodSeconds":600}'
+```
+
+Setting `producerRate` through `--modify` clears any active schedule and returns producers to fixed-rate mode. Setting `producerRateSchedule` updates the resolved `producerRate` metadata to that schedule's max rate automatically.
 
 ### Message Distributor Types
 
@@ -155,6 +210,7 @@ Scenarios allow running multiple test variations from a single workload file. Ea
 | `consumersPerGroup` | list of integer | Override `consumersPerGroup` per test point. |
 | `messageSize` | list of integer | Override `messageSize` per test point. |
 | `producerRate` | list of integer | Override `producerRate` per test point. |
+| `producerRateSchedule` | list of object | Override `producerRateSchedule` per test point. |
 | `messageDistributor` | list of enum | Override `messageDistributor` per test point. |
 | `messageDistributorSkew` | list of double | Override `messageDistributorSkew` per test point. |
 | `consumerType` | list of enum | Override `consumerType` per test point. |
@@ -229,7 +285,7 @@ Standard benchmark mode. Produces and consumes at a target rate for a fixed dura
 |-------|------|---------|-------------|
 | `testDurationMinutes` | integer | `5` | Duration of the measurement phase in minutes. |
 | `warmupDurationMinutes` | integer | `1` | Duration of the warmup phase in minutes. Stats collected during warmup are discarded. |
-| `rampIntervals` | integer | `3` | Number of equal increments in the ramp-up phase before warmup. When both `rampIntervals` and `rampIntervalSeconds` are `> 0`, the producer rate is stepped from `producerRate / rampIntervals` up to `producerRate` over `rampIntervals × rampIntervalSeconds`. Stats during the ramp are discarded. Set to `0` to disable ramp-up. |
+| `rampIntervals` | integer | `3` | Number of equal increments in the ramp-up phase before warmup. When both `rampIntervals` and `rampIntervalSeconds` are `> 0`, fixed-rate workloads step from `producerRate / rampIntervals` up to `producerRate`; scheduled workloads step from the first scheduled rate divided by `rampIntervals` up to the first scheduled rate. Scheduled workloads then hold that first rate through warm-up and start the schedule from elapsed zero when the measured test phase begins. Stats during the ramp are discarded. Set to `0` to disable ramp-up. |
 | `rampIntervalSeconds` | integer | `20` | Duration in seconds of each ramp-up increment. Set to `0` to disable ramp-up. |
 | `sampleRateMillis` | integer | `10000` | Stats sampling interval in milliseconds. |
 

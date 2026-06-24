@@ -33,6 +33,8 @@ public class Scenario {
     public List<Integer> consumersPerGroup;
     public List<Integer> messageSize;
     public List<Double> producerRate;
+    /** Optional per-test-point variable producer-rate schedules. */
+    public List<ProducerRateSchedule> producerRateSchedule;
     public List<MessageDistributorType> messageDistributor;
     /** Per-test-point Zipf skew override for KEY_ZIPF / PARTITION_ZIPF. */
     public List<Double> messageDistributorSkew;

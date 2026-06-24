@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.dimster.ConsumerType;
 import dev.dimster.MessageType;
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityPayload;
 import dev.dimster.availability.AvailabilityRecorder;
@@ -46,6 +47,7 @@ import dev.dimster.metrics.ShareGroupLagMonitor;
 import dev.dimster.stats.StatsCollector;
 
 import dev.dimster.utils.HostUtil;
+import dev.dimster.utils.ScheduledRateLimiter;
 import dev.dimster.utils.UniformRateLimiter;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.TopicPartition;
@@ -72,6 +74,7 @@ public class LocalWorker implements Worker {
     private List<AutoCloseable> consumers = new ArrayList<>();
 
     private volatile UniformRateLimiter rateLimiter = new UniformRateLimiter(1.0);
+    private volatile ScheduledRateLimiter scheduledRateLimiter = null;
     private final ConcurrentHashMap<String, String> producerFailures = new ConcurrentHashMap<>();
 
     // private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -296,7 +299,29 @@ public class LocalWorker implements Worker {
 
     @Override
     public void startLoad(ProducerWorkAssignment producerWorkAssignment) {
-        rateLimiter = new UniformRateLimiter(producerWorkAssignment.publishRate());
+        if (producerWorkAssignment.publishRateSchedule() != null) {
+            scheduledRateLimiter = new ScheduledRateLimiter(
+                    producerWorkAssignment.publishRateSchedule(),
+                    producerWorkAssignment.scheduleStartEpochMillis());
+            rateLimiter = null;
+            producersPaused = false;
+            log.info("Start variable publish-rate schedule: {} (max {} msg/s)",
+                    producerWorkAssignment.publishRateSchedule().type,
+                    producerWorkAssignment.publishRateSchedule().maxConfiguredRate());
+        } else {
+            scheduledRateLimiter = null;
+            if (producerWorkAssignment.publishRate() == 0.0) {
+                // A scheduled workload can deliberately start at zero for
+                // ramp/warm-up. Keep a harmless fixed limiter in place while
+                // the producer loop is paused, then the measured schedule will
+                // replace it before traffic is allowed again.
+                rateLimiter = new UniformRateLimiter(1.0);
+                producersPaused = true;
+            } else {
+                rateLimiter = new UniformRateLimiter(producerWorkAssignment.publishRate());
+                producersPaused = false;
+            }
+        }
         MessageDistributor messageDistributor = MessageDistributor.of(
                 producerWorkAssignment.messageDistributorType(),
                 producerWorkAssignment.partitionsPerTopic(),
@@ -403,7 +428,7 @@ public class LocalWorker implements Worker {
                     payloadData = payloadCount == 0 ? firstPayload : payloads.get(r.nextInt(payloadCount));
                 }
 
-                final long intendedSendTime = rateLimiter.acquire();
+                final long intendedSendTime = acquireNextSendTime();
                 uninterruptibleSleepNs(intendedSendTime);
                 final long sendTime = System.nanoTime();
 
@@ -579,7 +604,35 @@ public class LocalWorker implements Worker {
         }
         
         log.info("Adjust publish-rate: {} msg/s", publishRate);
+        scheduledRateLimiter = null;
         rateLimiter = new UniformRateLimiter(publishRate);
+    }
+
+    @Override
+    public void adjustPublishRateSchedule(ProducerRateSchedule schedule) throws IOException {
+        adjustPublishRateSchedule(schedule, System.currentTimeMillis());
+    }
+
+    public void adjustPublishRateSchedule(ProducerRateSchedule schedule, long scheduleStartEpochMillis) throws IOException {
+        if (schedule == null) {
+            throw new IllegalArgumentException("producerRateSchedule cannot be null");
+        }
+        if (producersPaused) {
+            resumeProducers();
+        }
+
+        log.info("Adjust variable publish-rate schedule: {} (max {} msg/s)",
+                schedule.type, schedule.maxConfiguredRate());
+        scheduledRateLimiter = new ScheduledRateLimiter(schedule, scheduleStartEpochMillis);
+        rateLimiter = null;
+    }
+
+    private long acquireNextSendTime() {
+        ScheduledRateLimiter schedule = scheduledRateLimiter;
+        if (schedule != null) {
+            return schedule.acquire();
+        }
+        return rateLimiter.acquire();
     }
 
     @Override

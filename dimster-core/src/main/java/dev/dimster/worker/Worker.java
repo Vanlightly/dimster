@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityResult;
 import dev.dimster.availability.ProbeAssignment;
@@ -47,6 +48,14 @@ public interface Worker extends AutoCloseable {
     void startLoad(ProducerWorkAssignment producerWorkAssignment) throws IOException;
 
     void adjustPublishRate(double publishRate) throws IOException;
+
+    /** Replace the active fixed limiter with a variable producer-rate schedule. */
+    default void adjustPublishRateSchedule(ProducerRateSchedule schedule) throws IOException {}
+
+    /** Replace the active fixed limiter with a schedule that starts at a shared wall-clock epoch. */
+    default void adjustPublishRateSchedule(ProducerRateSchedule schedule, long scheduleStartEpochMillis) throws IOException {
+        adjustPublishRateSchedule(schedule);
+    }
 
     void pauseProducers() throws IOException;
 

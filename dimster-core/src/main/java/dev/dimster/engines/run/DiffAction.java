@@ -3,6 +3,7 @@ package dev.dimster.engines.run;
 import java.io.IOException;
 import java.util.List;
 
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.worker.Worker;
 import dev.dimster.worker.topology.ConsumerSet;
@@ -31,6 +32,17 @@ public sealed interface DiffAction {
     record AdjustPublishRate(double rate) implements DiffAction {
         @Override public String describe() { return "adjust-publish-rate to " + rate; }
         @Override public void apply(Worker w) throws IOException { w.adjustPublishRate(rate); }
+    }
+
+    record AdjustPublishRateSchedule(ProducerRateSchedule schedule, long scheduleStartEpochMillis)
+            implements DiffAction {
+        @Override public String describe() {
+            return "adjust-publish-rate-schedule to " + schedule.type
+                    + " (max=" + schedule.maxConfiguredRate() + ")";
+        }
+        @Override public void apply(Worker w) throws IOException {
+            w.adjustPublishRateSchedule(schedule, scheduleStartEpochMillis);
+        }
     }
 
     record AdjustConsumerProcMs(int min, int max) implements DiffAction {

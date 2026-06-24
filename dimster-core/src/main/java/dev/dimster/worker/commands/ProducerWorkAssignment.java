@@ -6,6 +6,7 @@
  */
 package dev.dimster.worker.commands;
 
+import dev.dimster.ProducerRateSchedule;
 import dev.dimster.utils.distributor.MessageDistributorType;
 
 import java.util.List;
@@ -19,13 +20,43 @@ import java.util.List;
 public record ProducerWorkAssignment(
         List<byte[]> payloadData,
         double publishRate,
+        ProducerRateSchedule publishRateSchedule,
+        Long scheduleStartEpochMillis,
         MessageDistributorType messageDistributorType,
         int partitionsPerTopic,
         double messageDistributorSkew) {
 
+    public ProducerWorkAssignment(List<byte[]> payloadData,
+                                  double publishRate,
+                                  MessageDistributorType messageDistributorType,
+                                  int partitionsPerTopic,
+                                  double messageDistributorSkew) {
+        this(payloadData, publishRate, null, null, messageDistributorType,
+                partitionsPerTopic, messageDistributorSkew);
+    }
+
+    public ProducerWorkAssignment(List<byte[]> payloadData,
+                                  double publishRate,
+                                  ProducerRateSchedule publishRateSchedule,
+                                  MessageDistributorType messageDistributorType,
+                                  int partitionsPerTopic,
+                                  double messageDistributorSkew) {
+        this(payloadData, publishRate, publishRateSchedule, null, messageDistributorType,
+                partitionsPerTopic, messageDistributorSkew);
+    }
+
     public ProducerWorkAssignment withPublishRate(double newRate) {
         return new ProducerWorkAssignment(
-                payloadData, newRate, messageDistributorType,
+                payloadData, newRate, publishRateSchedule, scheduleStartEpochMillis, messageDistributorType,
                 partitionsPerTopic, messageDistributorSkew);
+    }
+
+    public ProducerWorkAssignment dividedBy(double divisor) {
+        ProducerRateSchedule dividedSchedule = publishRateSchedule == null
+                ? null
+                : publishRateSchedule.copyDividedBy(divisor);
+        return new ProducerWorkAssignment(
+                payloadData, publishRate / divisor, dividedSchedule, scheduleStartEpochMillis,
+                messageDistributorType, partitionsPerTopic, messageDistributorSkew);
     }
 }

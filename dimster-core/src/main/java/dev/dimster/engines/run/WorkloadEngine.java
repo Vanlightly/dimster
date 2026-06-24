@@ -65,6 +65,8 @@ public class WorkloadEngine extends BaseEngine {
 
     /** Start time of the current test point (set when run() begins). */
     private long testPointStartNanos;
+    /** Shared wall-clock start time of the active producer-rate schedule. */
+    private long scheduleStartEpochMillis;
 
     // Set true while a test point is actively driving load (warmup + test
     // phase). Read by applyModification() to gate the side-channel /modify
@@ -297,7 +299,7 @@ public class WorkloadEngine extends BaseEngine {
         // --- benchmark execution ---
         testPointStartNanos = System.nanoTime();
 
-        targetPublishRate = point.producerRate();
+        targetPublishRate = effectiveTargetRate(point);
         // Defence-in-depth: drain any leftover modifications so a previous
         // test point that exited via an unexpected path can't bleed entries
         // into this one. Normal flow drains them via consumeModifications()
@@ -320,20 +322,22 @@ public class WorkloadEngine extends BaseEngine {
         // for points with no scenario override. Always non-null in run mode.
         RunConfig pointRunConfig = point.runConfig();
 
-        // Ramp-up is opt-in. When enabled, producers start at the first ramp
-        // step (producerRate / rampIntervals) and step up to the full target
-        // over rampIntervals × rampIntervalSeconds. Disabled (default) ⇒
-        // producers start immediately at the full targetPublishRate. Either
-        // way, targetPublishRate itself stays at point.producerRate() — it's
-        // the *target* the ramp climbs toward and the value downstream code
-        // (live /modify, restart logic) reads as the steady-state rate.
-        boolean rampEnabled = pointRunConfig.rampIntervals > 0 && pointRunConfig.rampIntervalSeconds > 0;
+        // Ramp-up is opt-in. Fixed-rate workloads ramp toward targetPublishRate.
+        // Scheduled workloads ramp toward the first scheduled rate, then start
+        // the schedule from elapsed zero after the ramp completes.
+        double rampTargetRate = point.producerRateSchedule() == null
+                ? targetPublishRate
+                : point.producerRateSchedule().firstRate();
+        boolean rampEnabled = pointRunConfig.rampIntervals > 0
+                && pointRunConfig.rampIntervalSeconds > 0
+                && rampTargetRate > 0.0;
         double initialRate = rampEnabled
-                ? targetPublishRate / pointRunConfig.rampIntervals
-                : targetPublishRate;
+                ? rampTargetRate / pointRunConfig.rampIntervals
+                : rampTargetRate;
+        boolean scheduledWorkload = point.producerRateSchedule() != null;
 
         ProducerWorkAssignment producerWorkAssignment = new ProducerWorkAssignment(
-                payloadData, initialRate, point.messageDistributor(),
+                payloadData, initialRate, null, point.messageDistributor(),
                 point.partitionsPerTopic(), point.messageDistributorSkew());
 
         worker.startLoad(producerWorkAssignment);
@@ -356,10 +360,10 @@ public class WorkloadEngine extends BaseEngine {
                 rampActive = true;
                 try {
                     log.info("----- Starting ramp-up ({} intervals × {}s, target {} msg/s) ------",
-                            pointRunConfig.rampIntervals, pointRunConfig.rampIntervalSeconds, targetPublishRate);
+                            pointRunConfig.rampIntervals, pointRunConfig.rampIntervalSeconds, rampTargetRate);
                     for (int i = 1; i <= pointRunConfig.rampIntervals; i++) {
                         throwOnStopRequested(stopRequested);
-                        double stepRate = targetPublishRate * i / pointRunConfig.rampIntervals;
+                        double stepRate = rampTargetRate * i / pointRunConfig.rampIntervals;
                         // i == 1 is already in effect via startLoad's initialRate.
                         if (i > 1) {
                             worker.adjustPublishRate(stepRate);
@@ -388,12 +392,11 @@ public class WorkloadEngine extends BaseEngine {
                 } finally {
                     rampActive = false;
                 }
-                // Skip-phase exited mid-ramp — jump to the full target rate
-                // before warm-up begins so warm-up runs at producerRate as
-                // intended (rather than at whatever step the ramp reached).
-                if (skipPhaseRequested) {
-                    worker.adjustPublishRate(targetPublishRate);
-                }
+                // The ramp drives a temporary fixed-rate limiter. Hold the
+                // first scheduled rate through warm-up; scheduled workloads
+                // start their variable timeline only when the measured test
+                // phase begins.
+                worker.adjustPublishRate(scheduledWorkload ? rampTargetRate : targetPublishRate);
                 // Don't let a ramp-time skip-phase bleed into warm-up.
                 synchronized (this) { skipPhaseRequested = false; }
             }
@@ -408,6 +411,12 @@ public class WorkloadEngine extends BaseEngine {
             // Defensive clear before the test phase begins (handles a
             // warm-up-time --skip-phase). No-op if the flag wasn't set.
             synchronized (this) { skipPhaseRequested = false; }
+
+            if (scheduledWorkload) {
+                long scheduleStartEpochMillis = System.currentTimeMillis();
+                worker.adjustPublishRateSchedule(point.producerRateSchedule(), scheduleStartEpochMillis);
+                this.scheduleStartEpochMillis = scheduleStartEpochMillis;
+            }
 
             worker.resetStats();
 
@@ -672,7 +681,11 @@ public class WorkloadEngine extends BaseEngine {
                 currentModifications.add(logEntry);
                 this.testPoint = plan.newTestPoint();
                 this.plannedTopology = plan.newTopology();
-                this.targetPublishRate = plan.newTestPoint().producerRate();
+                this.targetPublishRate = effectiveTargetRate(plan.newTestPoint());
+                long scheduleEpoch = scheduleEpochFromActions(plan.actions());
+                if (scheduleEpoch > 0L) {
+                    this.scheduleStartEpochMillis = scheduleEpoch;
+                }
                 return applyResult.modifyResult();
             }
 
@@ -758,10 +771,12 @@ public class WorkloadEngine extends BaseEngine {
             worker.createProducers(prevTopology.producers());
             List<byte[]> payloadData = buildPayloads(base, prev.messageSize());
             ProducerWorkAssignment assignment = new ProducerWorkAssignment(
-                    payloadData, prev.producerRate(), prev.messageDistributor(),
+                    payloadData, effectiveTargetRate(prev), prev.producerRateSchedule(),
+                    prev.producerRateSchedule() == null ? null : System.currentTimeMillis(),
+                    prev.messageDistributor(),
                     prev.partitionsPerTopic(), prev.messageDistributorSkew());
             worker.startLoad(assignment);
-            this.targetPublishRate = prev.producerRate();
+            this.targetPublishRate = effectiveTargetRate(prev);
             log.info("MODIFY recovery complete");
             return "force-reset to previous state succeeded";
         } catch (Exception e) {
@@ -780,13 +795,32 @@ public class WorkloadEngine extends BaseEngine {
         log.info("Set max consumer recreations to {}", workload.engineConfig.maxConsumerRecreations);
     }
 
+    private static double effectiveTargetRate(TestPoint point) {
+        return point.producerRateSchedule() == null
+                ? point.producerRate()
+                : point.producerRateSchedule().maxConfiguredRate();
+    }
+
+    private static long scheduleEpochFromActions(List<DiffAction> actions) {
+        for (DiffAction action : actions) {
+            if (action instanceof DiffAction.AdjustPublishRateSchedule adjust) {
+                return adjust.scheduleStartEpochMillis();
+            }
+            if (action instanceof DiffAction.StartLoad start
+                    && start.assignment().scheduleStartEpochMillis() != null) {
+                return start.assignment().scheduleStartEpochMillis();
+            }
+        }
+        return 0L;
+    }
+
     /** Push effective {@code engineConfig.printMessages} to the worker once.
      *  Disabled if any test point has producer rate > 50 msg/s, to avoid log
      *  flooding and self-inflicted slowdown. */
     private void applyPrintMessages(List<TestPoint> allPoints) {
         boolean configured = workload.engineConfig.printMessages;
         boolean effective = configured
-                && allPoints.stream().allMatch(p -> p.producerRate() <= 50);
+                && allPoints.stream().allMatch(p -> effectiveTargetRate(p) <= 50);
         if (configured && !effective) {
             log.warn("engineConfig.printMessages disabled: at least one test " +
                      "point has producerRate > 50 msg/s");
@@ -838,6 +872,7 @@ public class WorkloadEngine extends BaseEngine {
         result.workloadConfig.consumerType = testPoint.consumerType().name();
         result.workloadConfig.producersPerTopic = testPoint.producersPerTopic();
         result.workloadConfig.producerRate = testPoint.producerRate();
+        result.workloadConfig.producerRateSchedule = testPoint.producerRateSchedule();
         result.workloadConfig.consumerGroupsPerTopic = testPoint.consumerGroupsPerTopic();
         result.workloadConfig.consumersPerGroup = testPoint.consumersPerGroup();
         result.workloadConfig.consumerProcMsMin = testPoint.consumerProcMsMin();
@@ -872,6 +907,7 @@ public class WorkloadEngine extends BaseEngine {
             double consumeThroughput = stats.bytesReceived / elapsed / 1_000_000;
 
             logPeriodStats(stats, publishRate, publishThroughput, consumeRate, consumeThroughput,
+                    oldTime, now,
                     totals.messagesSent(), totals.messagesReceived());
             logAvailabilityStatus();
             recordPeriodResults(result, stats, publishRate, consumeRate);
@@ -969,6 +1005,7 @@ public class WorkloadEngine extends BaseEngine {
 
     private void logPeriodStats(PeriodStats stats, double publishRate, double publishThroughput,
                                 double consumeRate, double consumeThroughput,
+                                long sampleStartNanos, long sampleEndNanos,
                                 long totalSent, long totalReceived) {
         // Scenario + test point header
         String scenarioInfo = testPoint.totalScenarios() >= 1
@@ -1005,10 +1042,7 @@ public class WorkloadEngine extends BaseEngine {
                 totalElapsed, totalRunMinutes, totalPct);
 
         String targetLine = "";
-        if (testPoint.producerRate() > 0) {
-            double targetThroughput = testPoint.producerRate() * testPoint.messageSize() / 1_000_000;
-            targetLine = String.format("  Target: %,9.1f msg/s  %6.2f MB/s%n", testPoint.producerRate(), targetThroughput);
-        }
+        targetLine = formatTargetLine(sampleStartNanos, sampleEndNanos);
 
         log.info(header + "\n" + progressLines
                 + "\n── Throughput ─────────────────────────────────────────────\n"
@@ -1106,6 +1140,39 @@ public class WorkloadEngine extends BaseEngine {
         r.endToEndDeliveryLatency999pct.add(microsToMillis(stats.endToEndDeliveryLatency.getValueAtPercentile(99.9)));
         r.endToEndDeliveryLatency9999pct.add(microsToMillis(stats.endToEndDeliveryLatency.getValueAtPercentile(99.99)));
         r.endToEndDeliveryLatencyMax.add(microsToMillis(stats.endToEndDeliveryLatency.getMaxValue()));
+    }
+
+    private String formatTargetLine(long sampleStartNanos, long sampleEndNanos) {
+        if (testPoint.producerRateSchedule() == null) {
+            double rate = testPoint.producerRate();
+            if (rate <= 0) return "";
+            double throughput = rate * testPoint.messageSize() / 1_000_000;
+            return String.format("  Target: %,9.1f msg/s  %6.2f MB/s%n", rate, throughput);
+        }
+
+        double startRate = scheduledRateAtSampleTime(sampleStartNanos);
+        double endRate = scheduledRateAtSampleTime(sampleEndNanos);
+        double startThroughput = startRate * testPoint.messageSize() / 1_000_000;
+        double endThroughput = endRate * testPoint.messageSize() / 1_000_000;
+        return String.format(
+                "  Target: [%,.1f -> %,.1f] msg/s   [%.2f -> %.2f] MB/s%n",
+                startRate, endRate, startThroughput, endThroughput);
+    }
+
+    private double scheduledRateAtSampleTime(long sampleTimeNanos) {
+        if (testPoint.producerRateSchedule() == null) {
+            return testPoint.producerRate();
+        }
+        long start = scheduleStartEpochMillis;
+        if (start <= 0L) {
+            return testPoint.producerRateSchedule().firstRate();
+        }
+        long nowNanos = System.nanoTime();
+        long currentEpochMillis = System.currentTimeMillis();
+        long sampleEpochMillis = currentEpochMillis
+                - java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, nowNanos - sampleTimeNanos));
+        return testPoint.producerRateSchedule().rateAt(
+                Duration.ofMillis(Math.max(0L, sampleEpochMillis - start)));
     }
 
     private void recordAggregateResults(TestResult result, CumulativeLatencies agg) {
