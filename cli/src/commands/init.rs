@@ -138,6 +138,10 @@ const TEMPLATE_LOCAL_FULL: &str = "  # Example: __DISTRO__ + deploy: full (Kafka
   #  system: \"Apache Kafka 4.2\"
   #  # hardware: \"...\"                                # description recorded in results
   #  deploy: full
+  #  # Experimental: cpuManager validates existing kubelet settings; Dimster does not configure kubelet.
+  #  # cpuManager:
+  #  #   policy: static                              # none | static
+  #  #   fullPcpusOnly: true                         # require whole physical cores
   #  kafka:
   #    # image: apache/kafka                          # default: apache/kafka
   #    version: \"4.2.0\"
@@ -178,6 +182,10 @@ const TEMPLATE_LOCAL_EXT: &str = "  # Example: __DISTRO__ + deploy: external (be
   #  system: \"Apache Kafka 4.2 (Docker Compose)\"
   #  # hardware: \"...\"                                # description recorded in results
   #  deploy: external
+  #  # Experimental: cpuManager validates existing kubelet settings for worker pods.
+  #  # cpuManager:
+  #  #   policy: static                              # none | static
+  #  #   fullPcpusOnly: true                         # require whole physical cores
   #  connection:
   #    bootstrap.servers: \"__HOST_INTERNAL__:19092\"
   #    # security.protocol: SASL_SSL                     # Kafka client security protocol
@@ -206,6 +214,10 @@ const TEMPLATE_REMOTE_FULL: &str = "  # Example: remote k8s (EKS/GKE/etc.) + dep
   #  system: \"Apache Kafka 4.2\"
   #  hardware: \"kafka=3xm6i.2xlarge, workers=2xm6i.2xlarge, storage=ebs/500Gi/3000iops/300MBs\"
   #  deploy: full
+  #  # Experimental: cpuManager validates existing kubelet settings on benchmark nodes.
+  #  # cpuManager:
+  #  #   policy: static                              # none | static
+  #  #   fullPcpusOnly: true                         # require whole physical cores
   #  kafka:
   #    # image: apache/kafka                          # default: apache/kafka
   #    version: \"4.2.0\"
@@ -257,6 +269,10 @@ const TEMPLATE_REMOTE_EXT: &str = "  # Example: remote k8s (EKS/GKE/etc.) + depl
   #  system: \"Confluent Cloud\"
   #  hardware: \"workers=2xm6i.xlarge, region=us-west-2\"
   #  deploy: external
+  #  # Experimental: cpuManager validates existing kubelet settings on worker nodes.
+  #  # cpuManager:
+  #  #   policy: static                              # none | static
+  #  #   fullPcpusOnly: true                         # require whole physical cores
   #  connection:
   #    bootstrap.servers: \"broker.example.com:9092\"
   #    security.protocol: SASL_SSL

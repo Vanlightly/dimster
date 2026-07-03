@@ -39,6 +39,27 @@ Open `dimster-config.yaml` and add this block under `environments:` (next to you
 
 This asks for roughly **5 CPU and 9 GiB of memory** across the Dimster pods.
 
+Dimster has experimental validation for kubelet CPU Manager settings. If you
+want the local cluster to behave more like a smaller benchmark machine, you can
+ask Dimster to validate those settings before deploy:
+
+```yaml
+    cpuManager:
+      policy: static
+      fullPcpusOnly: true
+```
+
+This is validation-only and experimental. Dimster does not configure kubelet,
+because CPU Manager is node-level configuration rather than a namespaced
+Kubernetes resource. With `policy: static`, Kafka and worker CPU requests must
+be whole effective CPUs (`"1"`, `"2"`, `"4"`, or `"4000m"`), and the selected
+nodes must already run kubelet `cpuManagerPolicy: static`. With
+`fullPcpusOnly: true`, those nodes must also enable
+`cpuManagerPolicyOptions.full-pcpus-only`, so a `cpu: "4"` pod is allocated
+complete physical cores on SMT systems instead of arbitrary hardware threads.
+If your cluster blocks kubelet `/configz` access, keep `cpuManager.policy: none`
+and manage CPU Manager outside Dimster.
+
 If you run Kafka outside of Dimster, create a `localBeefyExt` env:
 
 ```yaml

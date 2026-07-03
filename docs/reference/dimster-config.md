@@ -29,6 +29,9 @@ environments:
     hardware: <string>        # Hardware description for metadata (optional)
     kafka_client_version: <string>  # Concrete kafka-clients version, e.g. "3.7.2", "4.1.0", "4.2.0" (default: "4.2.0")
     deploy: <string>          # "full" or "external" (default: "full")
+    cpuManager:               # Experimental kubelet CPU Manager validation
+      policy: <string>        # none|static (default: none)
+      fullPcpusOnly: <bool>   # Require full physical cores when policy is static
 
     connection:               # Required when deploy is "external"
       bootstrap.servers: <string>
@@ -125,6 +128,48 @@ Each entry under `environments` defines a named deployment target.
 | `hardware` | string | -- | Hardware description recorded in result metadata (e.g. `"3x m7i.2xlarge"`). |
 | `kafka_client_version` | string | `4.2.0` | Concrete `kafka-clients` version the worker and coordinator pods are built against (e.g. `"3.7.2"`, `"3.9.0"`, `"4.1.0"`, `"4.2.0"`). The CLI maps the version to the matching impl module and passes it through to Maven as `-Dkafka.version=<version>`, so the bundled jar is exactly what you ask for. Independent of `kafka.version` (the broker image tag). See [Kafka Versioning](../concepts/kafka-versioning.md) for the supported versions and the cross-version compatibility matrix. |
 | `deploy` | string | `full` | Deploy mode. `full` deploys Kafka brokers alongside workers. `external` connects to an existing Kafka cluster via the `connection` section. |
+| `cpuManager.policy` | string | `none` | Experimental, validation-only kubelet CPU Manager requirement. `none` disables the check. `static` makes `dimster deploy` verify benchmark nodes are running kubelet `cpuManagerPolicy: static` before applying manifests. |
+| `cpuManager.fullPcpusOnly` | boolean | `false` | Experimental. When `policy: static`, require kubelet `cpuManagerPolicyOptions.full-pcpus-only: true` so whole physical cores are allocated on SMT systems. |
+
+### cpuManager
+
+`cpuManager` is experimental. It is useful when you want local or remote
+benchmark pods to behave more like a smaller machine, but it depends on kubelet
+configuration details that vary across Kubernetes distributions and managed
+clusters. Dimster does not configure kubelet settings, because they live on the
+node rather than in namespaced Kubernetes manifests. Instead, `dimster deploy`
+validates that the selected benchmark nodes already match the environment's
+expectation and fails before any resources are applied if they do not.
+
+Because this feature is experimental, treat validation failures as a signal to
+inspect your cluster's kubelet configuration directly. If `/configz` is blocked
+by RBAC or by the provider, either grant that access for the deploy check or set
+`cpuManager.policy: none` and manage CPU Manager outside Dimster.
+
+The check applies to Kafka brokers and workers only. Coordinator and monitoring
+pods are not benchmark dataplane pods, so they are not part of the CPU Manager
+preflight.
+
+Example:
+
+```yaml
+cpuManager:
+  policy: static
+  fullPcpusOnly: true
+```
+
+With Kubernetes CPU Manager `static`, Guaranteed pods with whole-CPU requests can
+receive exclusive CPUs. Dimster already renders equal CPU/memory requests and
+limits for Kafka and workers, so use whole effective CPU values such as `"1"`,
+`"2"`, `"4"`, or `"4000m"`. Fractional values such as `"250m"` or `"1.5"` remain
+in the shared CPU pool and are rejected when `policy: static` is configured.
+
+With `fullPcpusOnly: true`, kubelet must have the `full-pcpus-only` policy option
+enabled. On a typical SMT=2 machine, a pod requesting `cpu: "4"` is then admitted
+only if kubelet can allocate two complete physical cores.
+
+References: Kubernetes [Resource managers](https://kubernetes.io/docs/concepts/workloads/resource-managers/)
+and [Pod QoS classes](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/).
 
 ### connection
 

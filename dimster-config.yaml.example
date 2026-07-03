@@ -30,6 +30,8 @@ kubernetes:
 #   distro      - local k8s distribution: minikube | k3d | kind | docker-desktop
 #                 (only consulted when image is local — no registry URL.
 #                  Defaults to minikube when omitted.)
+#   cpuManager  - experimental validation-only kubelet CPU Manager requirement
+#                 for Kafka/worker benchmark pods (Dimster does not configure kubelet)
 #   kafka.*     - Kafka cluster settings
 #   workers.*   - Benchmark worker settings
 #   coordinator.* - Coordinator settings
@@ -88,6 +90,10 @@ environments:
   #   context: minikube
   #   # namespace: dimster2          # Side-by-side with `local` in `dimster`.
   #   distro: minikube              # Options: minikube | k3d | kind | docker-desktop
+  #   # Experimental: validates existing kubelet settings before deploy applies manifests.
+  #   # cpuManager:
+  #   #   policy: static             # none | static
+  #   #   fullPcpusOnly: true        # require whole physical cores on SMT systems
   #   kafka:
   #     version: "4.2.0"
   #     replicas: 3
@@ -115,6 +121,10 @@ environments:
   #   context: minikube
   #   distro: minikube              # Options: minikube | k3d | kind | docker-desktop
   #   system: "Apache Kafka 4.2 (Docker Compose)"
+  #   # Experimental cpuManager validation for worker-node kubelet settings.
+  #   # cpuManager:
+  #   #   policy: static             # validates worker-node kubelet settings
+  #   #   fullPcpusOnly: true
   #   workers:
   #     replicas: 1
   #     heap: "-Xms256M -Xmx512M"
@@ -133,6 +143,10 @@ environments:
   #   context: arn:aws:eks:us-west-2:123456789:cluster/my-cluster
   #   hardware: "kafka=3xm6i.2xlarge, workers=4xm6i.xlarge, storage=ebs/500Gi/provisioned/3000iops/300MBs, region=us-west-2, az=us-west-2b, eks=1.31"
   #   system: "Apache Kafka 4.2"
+  #   # Experimental cpuManager validation for benchmark-node kubelet settings.
+  #   # cpuManager:
+  #   #   policy: static             # validates existing kubelet settings on benchmark nodes
+  #   #   fullPcpusOnly: true        # require whole physical cores on SMT systems
   #   kafka:
   #     # image: "apache/kafka"  # Docker image without tag (default: apache/kafka)
   #     version: "4.2.0"

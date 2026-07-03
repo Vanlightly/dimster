@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::commands::broker_config;
 use crate::commands::is_registry_image;
 use crate::commands::kafka_tls;
-use crate::config::{DimsterConfig, Environment};
+use crate::config::{CpuManagerConfig, CpuManagerPolicy, DimsterConfig, Environment};
 use crate::kubectl::Kubectl;
 
 /// Same `name:` + `properties:` shape as broker configs, but consumed by
@@ -96,6 +96,8 @@ pub fn run(
         println!("    Components: {}", names.join(", "));
     }
 
+    run_cpu_manager_preflight(kubectl, env_config, external, &components)?;
+
     deploy(kubectl, config, env, env_config, k8s_dir,
            log_config_override, &components)?;
 
@@ -150,6 +152,288 @@ pub fn run(
         let _ = kubectl.run_inherit(&["get", "pods", "-l", "app=benchmark-worker"]);
     }
 
+    Ok(())
+}
+
+/// Validate kubelet CPU Manager state before deploy mutates any cluster
+/// resources. CPU Manager is node configuration, so Dimster deliberately does
+/// not try to apply it through namespace manifests; instead this preflight
+/// checks that the selected benchmark nodes already match the env's declared
+/// requirement and fails with an actionable error if they do not.
+fn run_cpu_manager_preflight(
+    kubectl: &Kubectl,
+    env_config: &Environment,
+    external: bool,
+    components: &HashSet<Component>,
+) -> Result<()> {
+    let Some(cpu_manager) = env_config.cpu_manager.as_ref() else {
+        return Ok(());
+    };
+    if cpu_manager.policy == CpuManagerPolicy::None {
+        return Ok(());
+    }
+
+    let targets = benchmark_cpu_targets(env_config, external, components);
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    for target in &targets {
+        require_whole_cpu_request(target.component, target.cpu_request)?;
+    }
+
+    println!("==> Validating kubelet CPU Manager settings...");
+    let nodes_json = kubectl
+        .run_no_ns(&["get", "nodes", "-o", "json"])
+        .context("Cannot list nodes for CPU Manager preflight")?;
+    let nodes = parse_nodes(&nodes_json)?;
+    let selected = select_required_cpu_manager_nodes(&nodes, &targets)?;
+    if selected.is_empty() {
+        bail!(
+            "cpuManager.policy is static, but no schedulable nodes matched the benchmark components. \
+             Check kafka.nodeLabel/workers.nodeLabel or set cpuManager.policy: none."
+        );
+    }
+
+    for node_name in selected {
+        let path = format!("/api/v1/nodes/{}/proxy/configz", node_name);
+        let configz = kubectl
+            .run_no_ns(&["get", "--raw", &path])
+            .with_context(|| {
+                format!(
+                    "Cannot read kubelet /configz for node '{}'. Grant access to nodes/proxy, \
+                     configure kubelet manually and retry, or set cpuManager.policy: none.",
+                    node_name
+                )
+            })?;
+        let actual = parse_kubelet_cpu_manager_config(&configz)
+            .with_context(|| format!("Cannot parse kubelet /configz for node '{}'", node_name))?;
+        validate_kubelet_cpu_manager_config(&node_name, cpu_manager, &actual)?;
+    }
+
+    Ok(())
+}
+
+/// One benchmark component whose pod resource shape must be compatible with
+/// kubelet static CPU Manager. Coordinator and monitoring are intentionally
+/// excluded: they affect observability and orchestration, while Kafka and
+/// workers are the pods whose CPU placement changes benchmark fidelity.
+#[derive(Debug, Clone, Copy)]
+struct BenchmarkCpuTarget<'a> {
+    component: &'static str,
+    cpu_request: &'a str,
+    node_label: Option<&'a str>,
+}
+
+fn benchmark_cpu_targets<'a>(
+    env_config: &'a Environment,
+    external: bool,
+    components: &HashSet<Component>,
+) -> Vec<BenchmarkCpuTarget<'a>> {
+    let is_minimal = env_config.is_minimal();
+    let mut targets = Vec::new();
+
+    if !external && components.contains(&Component::Kafka) {
+        let kafka = env_config.kafka.as_ref();
+        let default_cpu = if is_minimal { "250m" } else { "2" };
+        targets.push(BenchmarkCpuTarget {
+            component: "kafka",
+            cpu_request: kafka
+                .and_then(|k| k.requests.as_ref())
+                .and_then(|r| r.cpu.as_deref())
+                .unwrap_or(default_cpu),
+            node_label: kafka.and_then(|k| k.node_label.as_deref()),
+        });
+    }
+
+    if components.contains(&Component::Workers) {
+        let workers = env_config.workers.as_ref();
+        let default_cpu = if is_minimal { "250m" } else { "2" };
+        targets.push(BenchmarkCpuTarget {
+            component: "workers",
+            cpu_request: workers
+                .and_then(|w| w.requests.as_ref())
+                .and_then(|r| r.cpu.as_deref())
+                .unwrap_or(default_cpu),
+            node_label: workers.and_then(|w| w.node_label.as_deref()),
+        });
+    }
+
+    targets
+}
+
+/// Static CPU Manager only grants exclusive CPUs to Guaranteed pods with a
+/// whole-CPU request. Dimster already renders equal requests and limits for
+/// CPU and memory, so this check focuses on the value that can silently push a
+/// pod back into the shared pool: fractional CPU.
+fn require_whole_cpu_request(component: &str, cpu: &str) -> Result<u32> {
+    let trimmed = cpu.trim();
+    let cores = if let Some(millis) = trimmed.strip_suffix('m') {
+        let millis: u32 = millis
+            .parse()
+            .with_context(|| format!("Invalid {} CPU request '{}'", component, cpu))?;
+        if millis == 0 || millis % 1000 != 0 {
+            bail!(
+                "cpuManager.policy: static requires whole CPU requests for benchmark pods; \
+                 {} requests cpu: '{}'. Use values like \"1\", \"2\", or \"4\".",
+                component,
+                cpu
+            );
+        }
+        millis / 1000
+    } else {
+        let cores: u32 = trimmed
+            .parse()
+            .with_context(|| format!("Invalid {} CPU request '{}'", component, cpu))?;
+        if cores == 0 {
+            bail!(
+                "cpuManager.policy: static requires positive CPU requests for benchmark pods; \
+                 {} requests cpu: '{}'.",
+                component,
+                cpu
+            );
+        }
+        cores
+    };
+    Ok(cores)
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeList {
+    #[serde(default)]
+    items: Vec<NodeInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeInfo {
+    metadata: NodeMetadata,
+    #[serde(default)]
+    spec: NodeSpec,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeMetadata {
+    name: String,
+    #[serde(default)]
+    labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct NodeSpec {
+    #[serde(default)]
+    unschedulable: bool,
+}
+
+fn parse_nodes(json: &str) -> Result<Vec<NodeInfo>> {
+    let list: NodeList = serde_json::from_str(json).context("Cannot parse kubectl get nodes JSON")?;
+    Ok(list.items)
+}
+
+fn select_required_cpu_manager_nodes(
+    nodes: &[NodeInfo],
+    targets: &[BenchmarkCpuTarget<'_>],
+) -> Result<HashSet<String>> {
+    let mut selected = HashSet::new();
+    for target in targets {
+        let matches = nodes_matching_target(nodes, target)?;
+        if matches.is_empty() {
+            match target.node_label {
+                Some(label) => bail!(
+                    "cpuManager.policy is static, but no schedulable nodes matched {}.nodeLabel '{}'.",
+                    target.component,
+                    label
+                ),
+                None => bail!(
+                    "cpuManager.policy is static, but no schedulable nodes are available for {}.",
+                    target.component
+                ),
+            }
+        }
+        selected.extend(matches);
+    }
+    Ok(selected)
+}
+
+fn nodes_matching_target(nodes: &[NodeInfo], target: &BenchmarkCpuTarget<'_>) -> Result<Vec<String>> {
+    let required_label = match target.node_label {
+        Some(label) => Some(parse_node_label(label)?),
+        None => None,
+    };
+
+    let mut matches = Vec::new();
+    for node in nodes {
+        if node.spec.unschedulable {
+            continue;
+        }
+        if let Some((key, value)) = required_label {
+            if node.metadata.labels.get(key).map(|s| s.as_str()) != Some(value) {
+                continue;
+            }
+        }
+        matches.push(node.metadata.name.clone());
+    }
+    Ok(matches)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct KubeletCpuManagerConfig {
+    policy: Option<String>,
+    full_pcpus_only: bool,
+}
+
+fn parse_kubelet_cpu_manager_config(configz: &str) -> Result<KubeletCpuManagerConfig> {
+    let root: serde_json::Value = serde_json::from_str(configz)?;
+    let cfg = root
+        .get("kubeletconfig")
+        .or_else(|| root.get("kubeletConfig"))
+        .unwrap_or(&root);
+
+    let policy = cfg
+        .get("cpuManagerPolicy")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let full_pcpus_only = cfg
+        .get("cpuManagerPolicyOptions")
+        .and_then(|v| v.as_object())
+        .and_then(|options| options.get("full-pcpus-only"))
+        .map(kubelet_option_is_true)
+        .unwrap_or(false);
+
+    Ok(KubeletCpuManagerConfig {
+        policy,
+        full_pcpus_only,
+    })
+}
+
+fn kubelet_option_is_true(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Bool(v) => *v,
+        serde_json::Value::String(v) => v.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+fn validate_kubelet_cpu_manager_config(
+    node_name: &str,
+    expected: &CpuManagerConfig,
+    actual: &KubeletCpuManagerConfig,
+) -> Result<()> {
+    if expected.policy == CpuManagerPolicy::Static && actual.policy.as_deref() != Some("static") {
+        bail!(
+            "Node '{}' does not have kubelet cpuManagerPolicy=static (actual: {}). \
+             Configure kubelet CPU Manager static policy on benchmark nodes or set cpuManager.policy: none.",
+            node_name,
+            actual.policy.as_deref().unwrap_or("<missing>")
+        );
+    }
+    if expected.full_pcpus_only && !actual.full_pcpus_only {
+        bail!(
+            "Node '{}' does not have kubelet cpuManagerPolicyOptions.full-pcpus-only=true. \
+             Enable the option on benchmark nodes or set cpuManager.fullPcpusOnly: false.",
+            node_name
+        );
+    }
     Ok(())
 }
 
@@ -1357,5 +1641,133 @@ mod tests {
         // No files exist; if the function tried to walk them this would
         // error. The early-return for ns == "dimster" prevents that.
         rewrite_dns_namespace(tmp.path(), "dimster").unwrap();
+    }
+
+    #[test]
+    fn whole_cpu_request_accepts_integer_and_whole_millicores() {
+        assert_eq!(require_whole_cpu_request("workers", "1").unwrap(), 1);
+        assert_eq!(require_whole_cpu_request("workers", "2").unwrap(), 2);
+        assert_eq!(require_whole_cpu_request("workers", "4").unwrap(), 4);
+        assert_eq!(require_whole_cpu_request("workers", "1000m").unwrap(), 1);
+        assert_eq!(require_whole_cpu_request("workers", "4000m").unwrap(), 4);
+    }
+
+    #[test]
+    fn whole_cpu_request_rejects_fractional_or_zero_effective_cpu() {
+        for cpu in ["250m", "1500m", "1.5", "0"] {
+            let err = require_whole_cpu_request("workers", cpu).unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("workers") || msg.contains("Invalid workers CPU request"),
+                "unexpected error for {cpu}: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn kubelet_configz_parses_policy_options_as_bool_or_string() {
+        let bool_config = parse_kubelet_cpu_manager_config(
+            r#"{
+              "kubeletconfig": {
+                "cpuManagerPolicy": "static",
+                "cpuManagerPolicyOptions": {
+                  "full-pcpus-only": true
+                }
+              }
+            }"#,
+        ).unwrap();
+        assert_eq!(bool_config.policy.as_deref(), Some("static"));
+        assert!(bool_config.full_pcpus_only);
+
+        let string_config = parse_kubelet_cpu_manager_config(
+            r#"{
+              "kubeletconfig": {
+                "cpuManagerPolicy": "static",
+                "cpuManagerPolicyOptions": {
+                  "full-pcpus-only": "true"
+                }
+              }
+            }"#,
+        ).unwrap();
+        assert_eq!(string_config.policy.as_deref(), Some("static"));
+        assert!(string_config.full_pcpus_only);
+    }
+
+    #[test]
+    fn kubelet_config_validation_requires_static_and_full_pcpus_when_requested() {
+        let expected = CpuManagerConfig {
+            policy: CpuManagerPolicy::Static,
+            full_pcpus_only: true,
+        };
+        let ok = KubeletCpuManagerConfig {
+            policy: Some("static".into()),
+            full_pcpus_only: true,
+        };
+        validate_kubelet_cpu_manager_config("node-a", &expected, &ok).unwrap();
+
+        let missing_static = KubeletCpuManagerConfig {
+            policy: Some("none".into()),
+            full_pcpus_only: true,
+        };
+        let err = validate_kubelet_cpu_manager_config("node-a", &expected, &missing_static)
+            .unwrap_err();
+        assert!(err.to_string().contains("cpuManagerPolicy=static"));
+
+        let missing_full_cores = KubeletCpuManagerConfig {
+            policy: Some("static".into()),
+            full_pcpus_only: false,
+        };
+        let err = validate_kubelet_cpu_manager_config("node-a", &expected, &missing_full_cores)
+            .unwrap_err();
+        assert!(err.to_string().contains("full-pcpus-only"));
+    }
+
+    #[test]
+    fn node_selection_honors_labels_and_ignores_unschedulable_nodes() {
+        let nodes = parse_nodes(
+            r#"{
+              "items": [
+                {
+                  "metadata": {"name": "worker-a", "labels": {"role": "worker"}},
+                  "spec": {}
+                },
+                {
+                  "metadata": {"name": "worker-b", "labels": {"role": "worker"}},
+                  "spec": {"unschedulable": true}
+                },
+                {
+                  "metadata": {"name": "kafka-a", "labels": {"role": "kafka"}},
+                  "spec": {}
+                }
+              ]
+            }"#,
+        ).unwrap();
+        let target = BenchmarkCpuTarget {
+            component: "workers",
+            cpu_request: "2",
+            node_label: Some("role=worker"),
+        };
+        let matches = nodes_matching_target(&nodes, &target).unwrap();
+        assert_eq!(matches, vec!["worker-a"]);
+    }
+
+    #[test]
+    fn node_selection_without_label_uses_all_schedulable_nodes() {
+        let nodes = parse_nodes(
+            r#"{
+              "items": [
+                {"metadata": {"name": "node-a", "labels": {}}, "spec": {}},
+                {"metadata": {"name": "node-b", "labels": {}}, "spec": {"unschedulable": true}},
+                {"metadata": {"name": "node-c", "labels": {}}, "spec": {}}
+              ]
+            }"#,
+        ).unwrap();
+        let target = BenchmarkCpuTarget {
+            component: "workers",
+            cpu_request: "2",
+            node_label: None,
+        };
+        let matches = nodes_matching_target(&nodes, &target).unwrap();
+        assert_eq!(matches, vec!["node-a", "node-c"]);
     }
 }

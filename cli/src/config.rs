@@ -125,6 +125,42 @@ pub enum DeployMode {
     External,
 }
 
+/// Kubelet CPU Manager mode that a Dimster environment expects its target
+/// nodes to be running with. This is cluster/node configuration, not a
+/// namespaced Kubernetes object, so Dimster validates it during deploy rather
+/// than trying to mutate kubelet settings.
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CpuManagerPolicy {
+    /// Kubernetes' default CPU placement behaviour. In Dimster this also means
+    /// "do not run CPU Manager preflight validation" for the environment.
+    #[default]
+    #[serde(alias = "None", alias = "NONE")]
+    None,
+    /// Kubelet static CPU Manager policy. Guaranteed pods with integer CPU
+    /// requests can receive exclusive CPUs from the node cpuset.
+    #[serde(alias = "Static", alias = "STATIC")]
+    Static,
+}
+
+/// Desired kubelet CPU Manager shape for benchmark-fidelity deployments.
+/// The struct exists at the environment level because CPU Manager settings are
+/// properties of the nodes selected by an environment, while Kafka/worker
+/// manifests only provide the Guaranteed, integer-CPU pod shape that lets the
+/// kubelet use those settings.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuManagerConfig {
+    #[serde(default)]
+    pub policy: CpuManagerPolicy,
+    /// When true, `policy` must be `static`, and deploy validates that kubelet
+    /// has `cpuManagerPolicyOptions.full-pcpus-only` enabled. Kubernetes then
+    /// allocates whole physical cores on SMT systems instead of individual
+    /// hardware threads.
+    #[serde(default)]
+    pub full_pcpus_only: bool,
+}
+
 /// Local Kubernetes distribution. Determines how a freshly built image is
 /// loaded into the cluster — each distro has its own loader command (or
 /// none, in the case of Docker Desktop / OrbStack which share the host's
@@ -180,6 +216,12 @@ pub struct Environment {
     pub kafka_client_version: Option<String>,
     #[serde(default)]
     pub deploy: DeployMode,
+    /// Optional validation-only kubelet CPU Manager expectation. Omitted or
+    /// `policy: none` keeps current behaviour. `policy: static` asks deploy to
+    /// verify that benchmark pods can receive exclusive CPUs on their selected
+    /// nodes before any manifests are applied.
+    #[serde(default, rename = "cpuManager")]
+    pub cpu_manager: Option<CpuManagerConfig>,
     #[serde(default)]
     pub connection: Option<ConnectionConfig>,
     #[serde(default)]
@@ -417,6 +459,15 @@ impl Environment {
                 Some(conn) => { conn.bootstrap_servers()?; }
             }
         }
+        if let Some(cpu_manager) = &self.cpu_manager {
+            if cpu_manager.policy == CpuManagerPolicy::None && cpu_manager.full_pcpus_only {
+                bail!(
+                    "Environment '{}' sets cpuManager.fullPcpusOnly but cpuManager.policy is none. \
+                     Set policy: static or remove fullPcpusOnly.",
+                    name
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -541,6 +592,73 @@ mod tests {
             ..Default::default()
         };
         assert!(!env.is_minimal());
+    }
+
+    /// Omitting `cpuManager` keeps old configs validation-free. This is
+    /// important because CPU Manager is node/kubelet state that many local and
+    /// managed clusters will not expose or configure by default.
+    #[test]
+    fn cpu_manager_omitted_means_no_policy_requirement() {
+        let cfg: DimsterConfig = serde_yaml::from_str(
+            r#"
+environments:
+  local:
+    image: dimster
+"#,
+        ).unwrap();
+        let env = cfg.get_env("local").unwrap();
+        assert!(env.cpu_manager.is_none());
+    }
+
+    #[test]
+    fn cpu_manager_policy_none_disables_validation_intent() {
+        let cfg: DimsterConfig = serde_yaml::from_str(
+            r#"
+environments:
+  local:
+    cpuManager:
+      policy: none
+"#,
+        ).unwrap();
+        let env = cfg.get_env("local").unwrap();
+        let cpu_manager = env.cpu_manager.as_ref().unwrap();
+        assert_eq!(cpu_manager.policy, CpuManagerPolicy::None);
+        assert!(!cpu_manager.full_pcpus_only);
+    }
+
+    #[test]
+    fn cpu_manager_static_with_full_pcpus_deserializes() {
+        let cfg: DimsterConfig = serde_yaml::from_str(
+            r#"
+environments:
+  local:
+    cpuManager:
+      policy: static
+      fullPcpusOnly: true
+"#,
+        ).unwrap();
+        let env = cfg.get_env("local").unwrap();
+        let cpu_manager = env.cpu_manager.as_ref().unwrap();
+        assert_eq!(cpu_manager.policy, CpuManagerPolicy::Static);
+        assert!(cpu_manager.full_pcpus_only);
+    }
+
+    #[test]
+    fn cpu_manager_full_pcpus_requires_static_policy() {
+        let cfg: DimsterConfig = serde_yaml::from_str(
+            r#"
+environments:
+  local:
+    cpuManager:
+      policy: none
+      fullPcpusOnly: true
+"#,
+        ).unwrap();
+        let err = cfg.get_env("local").unwrap_err();
+        assert!(
+            err.to_string().contains("cpuManager.fullPcpusOnly"),
+            "unexpected error: {err:#}"
+        );
     }
 
     /// Default version must match the historical 4.2.0 image so that env
