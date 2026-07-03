@@ -160,6 +160,26 @@ def avg(lst):
     return sum(lst) / len(lst)
 
 
+def dict_or_empty(value):
+    """Return dict values as-is and coerce JSON null/missing values to {}.
+
+    Interrupted runs and runs without a separate kafka config can serialize
+    top-level config blocks such as baseKafkaConfig as null. The chart renderer
+    only reads optional fields from these blocks, so an empty dict is the
+    correct tolerant representation.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def text_or_empty(value):
+    """Return a display-safe metadata value.
+
+    JSON null should render as a blank cell in chart metadata, not as the
+    Python string "None".
+    """
+    return "" if value is None else value
+
+
 def time_labels(arr_len, sample_rate_ms):
     """Generate time labels in seconds."""
     step = sample_rate_ms / 1000
@@ -173,9 +193,9 @@ def build_chart_configs(data):
     scenario index to a dict with subsection chart index ranges:
       {"aggregate": (start, end), "per_partition": (start, end), "availability": (start, end)}
     """
-    run_config = data.get("runConfig", {})
+    run_config = dict_or_empty(data.get("runConfig"))
     sample_rate_ms = run_config.get("sampleRateMillis", 10000)
-    avail_config = data.get("availabilityConfig", {})
+    avail_config = dict_or_empty(data.get("availabilityConfig"))
     threshold_ms = avail_config.get("unavailabilityThresholdMs", 5000)
     scenarios = data.get("scenarioResults", [])
 
@@ -1408,19 +1428,19 @@ def build_html(data, chart_configs, chart_sections, mode="main", sibling_link=No
               partition subsection and sidebar; in per-partition mode it
               becomes the back-link to the main HTML.
     """
-    metadata = data.get("metadata", {})
-    kafka_config = data.get("baseKafkaConfig", {})
-    run_config = data.get("runConfig", {})
-    avail_config = data.get("availabilityConfig", {})
+    metadata = dict_or_empty(data.get("metadata"))
+    kafka_config = dict_or_empty(data.get("baseKafkaConfig"))
+    run_config = dict_or_empty(data.get("runConfig"))
+    avail_config = dict_or_empty(data.get("availabilityConfig"))
     scenarios = data.get("scenarioResults", [])
     has_avail = has_availability_data(data)
 
-    workload_name = metadata.get("name", "Unknown Workload")
-    kafka_config_name = metadata.get("kafkaConfigName", "")
-    environment = metadata.get("environment", "")
-    system = metadata.get("system", "")
-    begin_time = metadata.get("beginTime", "")
-    end_time = metadata.get("endTime", "")
+    workload_name = text_or_empty(metadata.get("name")) or "Unknown Workload"
+    kafka_config_name = text_or_empty(metadata.get("kafkaConfigName"))
+    environment = text_or_empty(metadata.get("environment"))
+    system = text_or_empty(metadata.get("system"))
+    begin_time = text_or_empty(metadata.get("beginTime"))
+    end_time = text_or_empty(metadata.get("endTime"))
     test_duration = run_config.get("testDurationMinutes", "")
     warmup_duration = run_config.get("warmupDurationMinutes", "")
     replication_factor = kafka_config.get("replicationFactor", "")
