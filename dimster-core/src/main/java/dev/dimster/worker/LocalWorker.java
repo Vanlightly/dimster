@@ -1,7 +1,5 @@
 package dev.dimster.worker;
 
-import static dev.dimster.utils.UniformRateLimiter.*;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
@@ -9,11 +7,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -124,6 +126,16 @@ public class LocalWorker implements Worker {
     // Null until startLoad fires.
     private volatile MessageDistributor activeMessageDistributor;
     private volatile List<byte[]> activePayloads;
+    // Producer wrapper ownership lives in the runProducer task, not in the
+    // modify thread. Restart/remove waits on these tasks before closing the
+    // wrappers so a rate-limited producer cannot wake up and send after close().
+    private final ConcurrentHashMap<String, Future<?>> producerTasks = new ConcurrentHashMap<>();
+    // The thread map lets removeProducers wake a task that is parked in the
+    // rate limiter. Generations prevent a late failure from an old task from
+    // being reported against the replacement producer with the same name.
+    private final ConcurrentHashMap<String, Thread> producerThreads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> activeProducerGenerations = new ConcurrentHashMap<>();
+    private final AtomicLong producerGenerationCounter = new AtomicLong(0);
     // Per-startLoad producer-id counter. Each runProducer task gets a unique
     // id used for correctness-mode sequence tracking. addProducers() takes
     // the next free id rather than re-using the count of existing producers
@@ -149,8 +161,14 @@ public class LocalWorker implements Worker {
     private Thread recreationThread = null;
 
     public LocalWorker() {
+        this(true);
+    }
+
+    LocalWorker(boolean startMetricsEndpoint) {
         this.metricsEndpoint = new PrometheusEndpoint(stats);
-        this.metricsEndpoint.run();
+        if (startMetricsEndpoint) {
+            this.metricsEndpoint.run();
+        }
     }
 
     @Override
@@ -192,6 +210,7 @@ public class LocalWorker implements Worker {
             var wrapper = new KafkaProducerWrapper(kafkaProducer, vp.topic(), vp.name(),
                     vp.pinnedPartitions(), transactional);
             initTransactionsTimed(wrapper, perProducerProps);
+            registerProducerInstance(vp.name());
             producers.add(wrapper);
             log.info("Producer {} topic={} pinnedPartitions={}{}",
                     vp.name(), vp.topic(),
@@ -335,10 +354,12 @@ public class LocalWorker implements Worker {
         this.activePayloads = payloads;
         this.producerIdCounter.set(0);
         this.stoppedProducerNames.clear();
+        this.producerTasks.clear();
+        this.producerThreads.clear();
 
         for (KafkaProducerWrapper producer : producers) {
             int producerId = producerIdCounter.getAndIncrement();
-            executor.submit(() -> runProducer(producer, messageDistributor, payloads, producerId));
+            submitProducerTask(producer, messageDistributor, payloads, producerId);
         }
     }
 
@@ -363,10 +384,9 @@ public class LocalWorker implements Worker {
     }
 
     private void runProducer(KafkaProducerWrapper producer, MessageDistributor messageDistributor,
-                             List<byte[]> payloads, int producerId) {
+                             List<byte[]> payloads, int producerId, long producerGeneration) {
         int payloadCount = payloads.size();
         ThreadLocalRandom r = ThreadLocalRandom.current();
-        byte[] firstPayload = payloads.get(0);
 
         // Correctness state for this producer
         boolean correctness = correctnessEnabled;
@@ -400,6 +420,7 @@ public class LocalWorker implements Worker {
         // Cache the producer's name so the per-producer stop check is a
         // straight set lookup (not a clientName() round-trip per loop).
         final String producerName = producer.clientName();
+        producerThreads.put(producerName, Thread.currentThread());
         try {
             while (!testCompleted && !stoppedProducerNames.contains(producerName)) {
                 if (producersPaused) {
@@ -420,16 +441,18 @@ public class LocalWorker implements Worker {
                 if (correctness) {
                     seq = sequenceCounter.getAndIncrement();
                     long timestampMs = System.currentTimeMillis();
-                    byte[] template = payloadCount == 0 ? firstPayload : payloads.get(r.nextInt(payloadCount));
+                    byte[] template = payloads.get(r.nextInt(payloadCount));
                     payloadData = java.util.Arrays.copyOf(template, template.length);
                     CorrectnessPayload.encode(payloadData, producerId, seq, timestampMs, crc);
                 } else {
                     seq = -1;
-                    payloadData = payloadCount == 0 ? firstPayload : payloads.get(r.nextInt(payloadCount));
+                    payloadData = payloads.get(r.nextInt(payloadCount));
                 }
 
                 final long intendedSendTime = acquireNextSendTime();
-                uninterruptibleSleepNs(intendedSendTime);
+                if (!sleepUntilSendTimeOrProducerStopped(intendedSendTime, producerName)) {
+                    break;
+                }
                 final long sendTime = System.nanoTime();
 
                 // Record publish delay before sendAsync(), else a period of unavailability
@@ -489,8 +512,8 @@ public class LocalWorker implements Worker {
                 }
             }
         } catch (Throwable t) {
-            producerFailures.put(producer.getTopic(),
-                    t.getClass().getName() + ": " + t.getMessage());
+            recordProducerFailureIfCurrent(producerName, producerGeneration,
+                    producer.getTopic(), t);
             log.error("Fatal error in producer for topic: {}", producer.getTopic(), t);
         } finally {
             // Drain any in-flight transaction at shutdown so we don't leak
@@ -498,7 +521,57 @@ public class LocalWorker implements Worker {
             if (transactional && inTxn) {
                 finishTransaction(producer);
             }
+            producerThreads.remove(producerName, Thread.currentThread());
         }
+    }
+
+    /**
+     * Submit one producer loop and record the Future under the producer's
+     * stable topology name. That Future is the handshake used by remove and
+     * restart: the KafkaProducer is closed only after its owning loop exits.
+     */
+    private void submitProducerTask(KafkaProducerWrapper producer, MessageDistributor messageDistributor,
+                                    List<byte[]> payloads, int producerId) {
+        long generation = activeProducerGenerations.computeIfAbsent(producer.clientName(),
+                name -> producerGenerationCounter.incrementAndGet());
+        Future<?> task = executor.submit(() -> runProducer(
+                producer, messageDistributor, payloads, producerId, generation));
+        producerTasks.put(producer.clientName(), task);
+    }
+
+    private long registerProducerInstance(String producerName) {
+        long generation = producerGenerationCounter.incrementAndGet();
+        activeProducerGenerations.put(producerName, generation);
+        producerFailures.remove(producerName);
+        return generation;
+    }
+
+    private void recordProducerFailureIfCurrent(String producerName, long producerGeneration,
+                                                String topic, Throwable t) {
+        Long currentGeneration = activeProducerGenerations.get(producerName);
+        if (currentGeneration != null && currentGeneration == producerGeneration) {
+            producerFailures.put(producerName,
+                    t.getClass().getName() + ": " + t.getMessage() + " (topic=" + topic + ")");
+            return;
+        }
+        log.warn("Ignoring stale producer failure for {} generation {} on topic {}: {}",
+                producerName, producerGeneration, topic, t.toString());
+    }
+
+    /**
+     * Sleep until the shared rate limiter's next send time. removeProducers
+     * unparks the producer thread after setting the stop flag, so a parked
+     * task can leave promptly instead of waking later and sending after close.
+     */
+    private boolean sleepUntilSendTimeOrProducerStopped(long intendedTime, String producerName) {
+        long sleepNs;
+        while ((sleepNs = intendedTime - System.nanoTime()) > 0) {
+            if (testCompleted || stoppedProducerNames.contains(producerName)) {
+                return false;
+            }
+            LockSupport.parkNanos(sleepNs);
+        }
+        return !(testCompleted || stoppedProducerNames.contains(producerName));
     }
 
     /**
@@ -727,6 +800,9 @@ public class LocalWorker implements Worker {
                 log.error("Error during parallel close", e);
             } finally {
                 producers.clear();
+                producerTasks.clear();
+                producerThreads.clear();
+                activeProducerGenerations.clear();
                 consumers.clear();
                 probeProducersList.clear();
                 probeConsumer = null;
@@ -785,11 +861,11 @@ public class LocalWorker implements Worker {
         for (var producer : producerSnapshot) {
             // Use clientName() (the planner's stable identity, e.g.
             // "producer-{topic}-i{idx}") so each producer shows up
-            // distinctly. The producerFailures map is still keyed by
-            // topic — pre-existing limitation: a single failure on a
-            // topic surfaces against every producer for that topic.
+            // distinctly. Failures are keyed by this same name, not by
+            // topic, so one failed producer task does not poison every
+            // replacement/current producer on that topic.
             String name = producer.clientName();
-            String error = producerFailures.get(producer.getTopic());
+            String error = producerFailures.get(name);
             if (error != null) {
                 health.add(ClientStatus.failed(name, "PRODUCER", error));
             } else {
@@ -894,23 +970,17 @@ public class LocalWorker implements Worker {
             var wrapper = new KafkaProducerWrapper(kafkaProducer, vp.topic(), vp.name(),
                     vp.pinnedPartitions(), transactional);
             initTransactionsTimed(wrapper, perProducerProps);
+            registerProducerInstance(vp.name());
             producers.add(wrapper);
             log.info("ADD-PRODUCER {} topic={} pinnedPartitions={}",
                     vp.name(), vp.topic(), Arrays.toString(vp.pinnedPartitions()));
-            // If startLoad has already fired (we have a captured distributor /
-            // payloads), spin up the runProducer task right away so the new
-            // producer joins the load immediately. The runProducer thread
-            // captures the activePayloads value at submission time, so an
-            // updatePayloads() call before this addProducers() ensures the
-            // new producer ships the new payloads from its first send.
-            // (This is how the messageSize-change path lands new payloads:
-            // updatePayloads() sets the field, then restartProducers() →
-            // removeProducers() → addProducers() captures the field.)
+            // If startLoad has already fired, spin up the runProducer task
+            // right away so the new producer joins the load immediately. It
+            // captures the current payload pool, which is why messageSize
+            // changes push payloads before restarting producers.
             if (activeMessageDistributor != null && activePayloads != null) {
                 int producerId = producerIdCounter.getAndIncrement();
-                final var dist = activeMessageDistributor;
-                final var payloads = activePayloads;
-                executor.submit(() -> runProducer(wrapper, dist, payloads, producerId));
+                submitProducerTask(wrapper, activeMessageDistributor, activePayloads, producerId);
             }
         }
         updateKafkaMetricsSources();
@@ -919,18 +989,13 @@ public class LocalWorker implements Worker {
     @Override
     public synchronized void removeProducers(List<String> producerNames) throws IOException {
         if (producerNames.isEmpty()) return;
-        // Phase 1: signal each producer's runProducer task to exit cleanly
-        // on its next loop iteration. The check is a volatile set lookup,
-        // so the next sendAsync() interval is the bound on how long this
-        // takes (typically 1/rate ms, often <100ms even at low rates).
+        // Phase 1: signal each producer's runProducer task to exit cleanly.
+        // The loop checks this set before and after its rate-limiter sleep.
         for (String name : producerNames) {
             stoppedProducerNames.add(name);
         }
-        // Brief grace period so in-flight sends complete and the loop sees
-        // the flag. We don't strictly need to wait — close() blocks on
-        // pending sends — but waiting first reduces the number of sends
-        // that race against close.
-        try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        unparkProducerTasks(producerNames);
+        waitForProducerTasksToStop(producerNames);
         // Phase 2: snapshot matching wrappers, drop them from `producers`
         // before closing (so readers don't see closing-but-still-listed
         // wrappers), then close in parallel. close() is blocking and flushes
@@ -956,6 +1021,10 @@ public class LocalWorker implements Worker {
             }
         }).toList();
         closeInParallel("producers", wrapped);
+        producerTasks.keySet().removeAll(producerNames);
+        producerThreads.keySet().removeAll(producerNames);
+        activeProducerGenerations.keySet().removeAll(producerNames);
+        producerFailures.keySet().removeAll(producerNames);
         // Clean up stoppedProducerNames for ALL requested names, not just
         // those whose wrappers we found. A name can appear in the request
         // without a corresponding wrapper if a prior failed
@@ -966,6 +1035,48 @@ public class LocalWorker implements Worker {
         // stoppedProducerNames still flags the name as stopped.
         stoppedProducerNames.removeAll(producerNames);
         updateKafkaMetricsSources();
+    }
+
+    private void unparkProducerTasks(List<String> producerNames) {
+        for (String name : producerNames) {
+            Thread thread = producerThreads.get(name);
+            if (thread != null) {
+                LockSupport.unpark(thread);
+            }
+        }
+    }
+
+    /**
+     * Wait briefly for producer loops to acknowledge their stop flags before
+     * close() is called on the underlying KafkaProducer. The timeout keeps a
+     * modify from hanging forever if a producer loop is already wedged in a
+     * Kafka call; in that rare case close() is still attempted and the warning
+     * gives the worker log a direct clue about the lifecycle race.
+     */
+    private void waitForProducerTasksToStop(List<String> producerNames) {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        for (String name : producerNames) {
+            Future<?> task = producerTasks.get(name);
+            if (task == null || task.isDone()) {
+                continue;
+            }
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                log.warn("Timed out waiting for producer task {} to stop before close", name);
+                continue;
+            }
+            try {
+                task.get(remainingNanos, TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                log.warn("Timed out waiting for producer task {} to stop before close", name);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (ExecutionException e) {
+                log.warn("Producer task {} exited with failure before close: {}",
+                        name, e.getCause() == null ? e.toString() : e.getCause().toString());
+            }
+        }
     }
 
     @Override
@@ -1067,8 +1178,9 @@ public class LocalWorker implements Worker {
         if (payloads == null || payloads.isEmpty()) {
             throw new IOException("updatePayloads requires a non-empty payload list");
         }
-        // Volatile write — runProducer threads pick up the new pool on
-        // their next iteration. No KafkaProducer restart needed.
+        // Volatile write for lifecycle operations only: add/restart captures
+        // this pool when it submits the producer task. The hot send loop does
+        // not reread this field per message.
         this.activePayloads = payloads;
         log.info("UPDATE-PAYLOADS: {} payloads, size={} bytes",
                 payloads.size(), payloads.get(0).length);
