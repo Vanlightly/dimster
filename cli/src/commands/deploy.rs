@@ -31,7 +31,7 @@ struct Log4jConfigFile {
 
 /// Deployable components, matching the sections in dimster-config.yaml.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Component {
+pub(crate) enum Component {
     Kafka,
     Workers,
     Coordinator,
@@ -74,7 +74,7 @@ impl Component {
         }
     }
 
-    fn all() -> HashSet<Component> {
+    pub(crate) fn all() -> HashSet<Component> {
         HashSet::from([
             Component::Kafka,
             Component::Workers,
@@ -85,7 +85,7 @@ impl Component {
 }
 
 /// Parse the --only flag into a component set. Empty input means all components.
-fn parse_components(only: &[String]) -> Result<HashSet<Component>> {
+pub(crate) fn parse_components(only: &[String]) -> Result<HashSet<Component>> {
     if only.is_empty() {
         return Ok(Component::all());
     }
@@ -548,10 +548,57 @@ fn show_deploy_diagnostics(kubectl: &Kubectl, label: &str) {
     }
 }
 
-/// Build the kustomize resource list for the selected components.
+/// Build the deploy-time kustomize resource list for the selected components.
 /// Each resource path is prefixed with "base/" for the temporary overlay directory.
 fn build_resource_list(components: &HashSet<Component>, external: bool) -> String {
-    let mut resources = vec!["  - base/namespace.yaml".to_string()];
+    build_component_resource_list(
+        components,
+        external,
+        true,
+        if external {
+            PrometheusConfigResource::ExternalGenerated
+        } else {
+            PrometheusConfigResource::Base
+        },
+    )
+}
+
+/// Build the teardown-time kustomize resource list for the selected
+/// components. Partial teardowns deliberately omit the Namespace object so
+/// that omitted components keep running inside the same namespace.
+pub(crate) fn build_teardown_resource_list(
+    components: &HashSet<Component>,
+    external: bool,
+    include_namespace: bool,
+) -> String {
+    build_component_resource_list(
+        components,
+        external,
+        include_namespace,
+        PrometheusConfigResource::Base,
+    )
+}
+
+/// Which prometheus-config manifest path should be listed in the temporary
+/// overlay. Deploy in external mode writes a generated file at the overlay
+/// root; teardown can always use the base resource because delete only needs
+/// the resource identity, not the exact ConfigMap data.
+#[derive(Clone, Copy)]
+enum PrometheusConfigResource {
+    Base,
+    ExternalGenerated,
+}
+
+fn build_component_resource_list(
+    components: &HashSet<Component>,
+    external: bool,
+    include_namespace: bool,
+    prometheus_config: PrometheusConfigResource,
+) -> String {
+    let mut resources = Vec::new();
+    if include_namespace {
+        resources.push("  - base/namespace.yaml".to_string());
+    }
 
     if !external && components.contains(&Component::Kafka) {
         resources.push("  - base/kafka/configmap.yaml".into());
@@ -573,11 +620,15 @@ fn build_resource_list(components: &HashSet<Component>, external: bool) -> Strin
     }
 
     if components.contains(&Component::Monitoring) {
-        if external {
-            // External mode uses an inline prometheus config without kafka scrape job
-            resources.push("  - prometheus-config.yaml".into());
-        } else {
-            resources.push("  - base/monitoring/prometheus-config.yaml".into());
+        match prometheus_config {
+            PrometheusConfigResource::Base => {
+                resources.push("  - base/monitoring/prometheus-config.yaml".into());
+            }
+            PrometheusConfigResource::ExternalGenerated => {
+                // External deploy mode uses an inline prometheus config without
+                // the Kafka scrape job, written at the temporary overlay root.
+                resources.push("  - prometheus-config.yaml".into());
+            }
         }
         resources.push("  - base/monitoring/prometheus.yaml".into());
         resources.push("  - base/monitoring/grafana-config.yaml".into());
@@ -2226,6 +2277,57 @@ spec:
                 "kafka-data-kafka-2".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn teardown_kafka_resources_exclude_namespace_and_include_jmx_config() {
+        let components = HashSet::from([Component::Kafka]);
+        let resources = build_teardown_resource_list(&components, false, false);
+
+        assert!(!resources.contains("base/namespace.yaml"));
+        assert!(resources.contains("base/kafka/configmap.yaml"));
+        assert!(resources.contains("base/kafka/service.yaml"));
+        assert!(resources.contains("base/kafka/statefulset.yaml"));
+        assert!(resources.contains("base/monitoring/kafka-jmx-config.yaml"));
+        assert!(!resources.contains("base/workers/deployment.yaml"));
+    }
+
+    #[test]
+    fn teardown_coordinator_resources_include_results_pvc() {
+        let components = HashSet::from([Component::Coordinator]);
+        let resources = build_teardown_resource_list(&components, false, false);
+
+        assert!(resources.contains("base/coordinator/deployment.yaml"));
+        assert!(resources.contains("base/coordinator/service.yaml"));
+        assert!(resources.contains("base/results/pvc.yaml"));
+        assert!(!resources.contains("base/kafka/statefulset.yaml"));
+        assert!(!resources.contains("base/monitoring/prometheus.yaml"));
+    }
+
+    #[test]
+    fn teardown_workers_resources_are_component_scoped() {
+        let components = HashSet::from([Component::Workers]);
+        let resources = build_teardown_resource_list(&components, false, false);
+
+        assert!(resources.contains("base/workers/deployment.yaml"));
+        assert!(resources.contains("base/workers/service.yaml"));
+        assert!(!resources.contains("base/kafka/statefulset.yaml"));
+        assert!(!resources.contains("base/coordinator/deployment.yaml"));
+        assert!(!resources.contains("base/monitoring/prometheus.yaml"));
+    }
+
+    #[test]
+    fn teardown_kafka_coordinator_workers_omits_monitoring_and_namespace() {
+        let components =
+            HashSet::from([Component::Kafka, Component::Coordinator, Component::Workers]);
+        let resources = build_teardown_resource_list(&components, false, false);
+
+        assert!(!resources.contains("base/namespace.yaml"));
+        assert!(resources.contains("base/kafka/statefulset.yaml"));
+        assert!(resources.contains("base/coordinator/deployment.yaml"));
+        assert!(resources.contains("base/workers/deployment.yaml"));
+        assert!(!resources.contains("base/monitoring/prometheus.yaml"));
+        assert!(!resources.contains("base/monitoring/grafana.yaml"));
     }
 
     #[test]

@@ -201,6 +201,10 @@ enum Commands {
     Teardown {
         /// Environment name
         env: String,
+
+        /// Tear down only specific components (comma-separated: kafka,workers,coordinator,monitoring)
+        #[arg(short = 'o', long = "only", value_delimiter = ',')]
+        only: Vec<String>,
     },
 
     /// Generate charts from results
@@ -659,7 +663,7 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::csv::run(&path, output.as_deref())?;
         }
 
-        Commands::Teardown { env } => {
+        Commands::Teardown { env, only } => {
             let kubectl = require_kubectl(&config, &env)?;
             let env_config = config.get_env(&env)?;
             let reset_local_storage_pvs = env_config
@@ -667,7 +671,14 @@ fn run_command(cli: Cli) -> Result<()> {
                 .as_ref()
                 .and_then(|k| k.pvc_storage_class.as_deref())
                 == Some("local-storage");
-            commands::teardown::run(&kubectl, &env, &k8s_dir, reset_local_storage_pvs)?;
+            commands::teardown::run(
+                &kubectl,
+                &env,
+                &k8s_dir,
+                reset_local_storage_pvs,
+                env_config.is_external(),
+                &only,
+            )?;
         }
 
         Commands::Chart { results_dir } => {
@@ -830,4 +841,36 @@ fn find_script_dir() -> Result<PathBuf> {
     }
 
     Ok(std::env::current_dir()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn teardown_accepts_comma_separated_only_components() {
+        let cli = Cli::try_parse_from([
+            "dimster",
+            "teardown",
+            "local",
+            "--only",
+            "kafka,coordinator,workers",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Teardown { env, only } => {
+                assert_eq!(env, "local");
+                assert_eq!(
+                    only,
+                    vec![
+                        "kafka".to_string(),
+                        "coordinator".to_string(),
+                        "workers".to_string(),
+                    ]
+                );
+            }
+            _ => panic!("expected teardown command"),
+        }
+    }
 }

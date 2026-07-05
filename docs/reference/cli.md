@@ -256,10 +256,23 @@ dimster compare baseline=results/2026-04-15/run.json tuned=results/2026-04-20/ru
 Remove Dimster resources from Kubernetes.
 
 ```
-dimster teardown <env>
+dimster teardown <env> [--only <components>]
 ```
 
 Deletes the pods and PVCs. The namespace itself is left in place.
+
+| Argument / Flag | Required | Default | Description |
+|-----------------|----------|---------|-------------|
+| `env` | Yes | -- | Environment name. |
+| `-o`, `--only <components>` | No | all | Comma-separated component list: `kafka`, `workers`, `coordinator`, `monitoring`. Partial teardown leaves omitted components and the namespace in place. |
+
+Example:
+
+```
+dimster teardown local --only kafka,coordinator,workers
+```
+
+This removes Kafka, workers, the coordinator, and the results PVC while leaving monitoring running.
 
 ---
 
