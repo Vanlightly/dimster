@@ -44,7 +44,7 @@ import dev.dimster.availability.ProbeAssignment;
 import dev.dimster.engines.correctness.CorrectnessConfig;
 import dev.dimster.engines.correctness.CorrectnessResult;
 import dev.dimster.kafka.KafkaConfig;
-import dev.dimster.worker.commands.ClientStatus;
+import dev.dimster.worker.commands.ClientHealth;
 import dev.dimster.worker.commands.CountersStats;
 import dev.dimster.worker.commands.PerPartitionStats;
 import dev.dimster.worker.commands.PeriodStats;
@@ -425,15 +425,15 @@ public class RemoteWorkerClient implements Worker {
 
 
     @Override
-    public List<ClientStatus> getHealth() {
+    public ClientHealth getHealth() {
         List<String> allWorkers = planner.allWorkers();
-        List<CompletableFuture<List<ClientStatus>>> futures = allWorkers.stream()
-                .map(h -> getAsync(h, "/health", new TypeReference<List<ClientStatus>>() {}))
+        List<CompletableFuture<ClientHealth>> futures = allWorkers.stream()
+                .map(h -> getAsync(h, "/health", ClientHealth.class))
                 .toList();
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        return futures.stream()
-                .flatMap(f -> f.join().stream())
-                .toList();
+        return ClientHealth.aggregate(futures.stream()
+                .map(CompletableFuture::join)
+                .toList());
     }
 
     @Override

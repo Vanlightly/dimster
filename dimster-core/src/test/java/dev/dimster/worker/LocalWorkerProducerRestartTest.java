@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import dev.dimster.kafka.KafkaProducerWrapper;
 import dev.dimster.spi.kafka.RawProducer;
 import dev.dimster.utils.distributor.MessageDistributorType;
+import dev.dimster.worker.commands.ClientHealth;
 import dev.dimster.worker.commands.ProducerWorkAssignment;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -73,12 +74,15 @@ public class LocalWorkerProducerRestartTest {
 
         recordProducerFailureIfCurrent(worker, name, oldGeneration,
                 new IllegalStateException("old task failed after replacement"));
-        assertEquals("RUNNING", worker.getHealth().get(0).status());
+        assertEquals(1, worker.getHealth().producers().running());
+        assertTrue(worker.getHealth().failedClients().isEmpty());
 
         recordProducerFailureIfCurrent(worker, name, replacementGeneration,
                 new IllegalStateException("current task failed"));
-        assertEquals("FAILED", worker.getHealth().get(0).status());
-        assertTrue(worker.getHealth().get(0).error().contains("current task failed"));
+        ClientHealth failedHealth = worker.getHealth();
+        assertEquals(1, failedHealth.producers().failed());
+        assertEquals("FAILED", failedHealth.failedClients().get(0).status());
+        assertTrue(failedHealth.failedClients().get(0).error().contains("current task failed"));
         worker.close();
     }
 

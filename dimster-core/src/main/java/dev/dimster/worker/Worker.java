@@ -12,7 +12,7 @@ import dev.dimster.availability.ProbeAssignment;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.engines.correctness.CorrectnessConfig;
 import dev.dimster.engines.correctness.CorrectnessResult;
-import dev.dimster.worker.commands.ClientStatus;
+import dev.dimster.worker.commands.ClientHealth;
 import dev.dimster.worker.commands.CountersStats;
 import dev.dimster.worker.commands.PerPartitionStats;
 import dev.dimster.worker.commands.PeriodStats;
@@ -102,7 +102,7 @@ public interface Worker extends AutoCloseable {
         }
     }
 
-    List<ClientStatus> getHealth();
+    ClientHealth getHealth();
 
     default void enableCorrectness(CorrectnessConfig config) {}
 

@@ -1,4 +1,5 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
+use serde::Deserialize;
 
 use crate::kubectl::Kubectl;
 
@@ -6,9 +7,13 @@ pub fn run(kubectl: &Kubectl) -> Result<()> {
     // Discover worker pods
     println!("==> Discovering worker pods...");
     let pod_output = kubectl.run(&[
-        "get", "pods", "-l", "app=benchmark-worker",
+        "get",
+        "pods",
+        "-l",
+        "app=benchmark-worker",
         "--field-selector=status.phase=Running",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{.status.podIP}{\"\\n\"}{end}",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name}{\" \"}{.status.podIP}{\"\\n\"}{end}",
     ])?;
 
     let pods: Vec<(&str, &str)> = pod_output
@@ -30,11 +35,7 @@ pub fn run(kubectl: &Kubectl) -> Result<()> {
         println!("\n==> Worker: {}", pod_name);
         match kubectl.exec_curl(pod_name, "GET", "http://localhost:8080/health", None) {
             Ok(response) => {
-                if response.trim() == "[]" {
-                    println!("    No clients registered");
-                } else {
-                    print_health(&response);
-                }
+                print_health(&response);
             }
             Err(e) => {
                 println!("    Error querying health: {}", e);
@@ -45,22 +46,63 @@ pub fn run(kubectl: &Kubectl) -> Result<()> {
     Ok(())
 }
 
-fn print_health(json: &str) {
-    // Parse as JSON array and print each entry
-    let entries: Result<Vec<serde_json::Value>, _> = serde_json::from_str(json);
-    match entries {
-        Ok(clients) => {
-            for client in &clients {
-                let name = client["name"].as_str().unwrap_or("?");
-                let client_type = client["clientType"].as_str().unwrap_or("?");
-                let status = client["status"].as_str().unwrap_or("?");
-                let error = client["error"].as_str();
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientHealth {
+    producers: ClientCounts,
+    consumers: ClientCounts,
+    failed_clients: Vec<ClientStatus>,
+    omitted_failed_clients: i64,
+}
 
-                if let Some(err) = error {
-                    println!("    {} ({}) — {} — {}", name, client_type, status, err);
-                } else {
-                    println!("    {} ({}) — {}", name, client_type, status);
+#[derive(Deserialize)]
+struct ClientCounts {
+    total: i64,
+    running: i64,
+    pending: i64,
+    recreating: i64,
+    failed: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientStatus {
+    name: String,
+    client_type: String,
+    status: String,
+    error: Option<String>,
+}
+
+fn print_health(json: &str) {
+    let parsed: Result<ClientHealth, _> = serde_json::from_str(json);
+    match parsed {
+        Ok(health) => {
+            if health.producers.total + health.consumers.total == 0 {
+                println!("    No clients registered");
+                return;
+            }
+
+            print_counts("Producers", &health.producers);
+            print_counts("Consumers", &health.consumers);
+
+            for client in &health.failed_clients {
+                match &client.error {
+                    Some(err) => println!(
+                        "    FAILED: {} ({}) - {} - {}",
+                        client.name, client.client_type, client.status, err
+                    ),
+                    None => println!(
+                        "    FAILED: {} ({}) - {}",
+                        client.name, client.client_type, client.status
+                    ),
                 }
+            }
+
+            if health.omitted_failed_clients > 0 {
+                println!(
+                    "    ... {} additional failed client(s) omitted",
+                    health.omitted_failed_clients
+                );
             }
         }
         Err(_) => {
@@ -68,4 +110,11 @@ fn print_health(json: &str) {
             println!("    {}", json);
         }
     }
+}
+
+fn print_counts(label: &str, counts: &ClientCounts) {
+    println!(
+        "    {}: total={} running={} pending={} recreating={} failed={}",
+        label, counts.total, counts.running, counts.pending, counts.recreating, counts.failed
+    );
 }

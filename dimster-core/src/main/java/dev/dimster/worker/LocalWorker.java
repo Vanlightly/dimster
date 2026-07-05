@@ -59,6 +59,7 @@ import org.slf4j.LoggerFactory;
 
 import dev.dimster.utils.Timer;
 import dev.dimster.utils.distributor.MessageDistributor;
+import dev.dimster.worker.commands.ClientHealth;
 import dev.dimster.worker.commands.ClientStatus;
 import dev.dimster.worker.commands.CountersStats;
 import dev.dimster.worker.commands.PerPartitionStats;
@@ -853,8 +854,8 @@ public class LocalWorker implements Worker {
     }
 
     @Override
-    public List<ClientStatus> getHealth() {
-        var health = new ArrayList<ClientStatus>();
+    public ClientHealth getHealth() {
+        var health = ClientHealth.builder();
         // Snapshot lists to avoid ConcurrentModificationException from concurrent stopAll/setup
         var producerSnapshot = List.copyOf(producers);
         var consumerSnapshot = List.copyOf(consumers);
@@ -867,22 +868,22 @@ public class LocalWorker implements Worker {
             String name = producer.clientName();
             String error = producerFailures.get(name);
             if (error != null) {
-                health.add(ClientStatus.failed(name, "PRODUCER", error));
+                health.addProducer(ClientStatus.failed(name, "PRODUCER", error));
             } else {
-                health.add(ClientStatus.running(name, "PRODUCER"));
+                health.addProducer(ClientStatus.running(name, "PRODUCER"));
             }
         }
         for (int i = 0; i < consumerSnapshot.size(); i++) {
             var consumer = consumerSnapshot.get(i);
             if (consumer instanceof KafkaConsumerWrapper cc) {
-                health.add(consumerStatus(i, cc.getName(), "CLASSIC_CONSUMER",
+                health.addConsumer(consumerStatus(i, cc.getName(), "CLASSIC_CONSUMER",
                         cc.isRunning(), cc.getFailureReason()));
             } else if (consumer instanceof KafkaShareConsumerWrapper sc) {
-                health.add(consumerStatus(i, sc.getName(), "SHARE_CONSUMER",
+                health.addConsumer(consumerStatus(i, sc.getName(), "SHARE_CONSUMER",
                         sc.isRunning(), sc.getFailureReason()));
             }
         }
-        return health;
+        return health.build();
     }
 
     private ClientStatus consumerStatus(int index, String name, String type, boolean running, String failureReason) {

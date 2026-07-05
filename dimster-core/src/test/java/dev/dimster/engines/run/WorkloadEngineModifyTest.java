@@ -113,8 +113,8 @@ public class WorkloadEngineModifyTest {
         @Override public void stopAll() {}
         @Override public boolean isStopComplete() { return true; }
         @Override public void awaitStopComplete(Duration t) {}
-        @Override public List<dev.dimster.worker.commands.ClientStatus> getHealth() {
-            return List.of();
+        @Override public dev.dimster.worker.commands.ClientHealth getHealth() {
+            return dev.dimster.worker.commands.ClientHealth.empty();
         }
         @Override public void close() {}
     }

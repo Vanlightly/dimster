@@ -7,7 +7,7 @@ import dev.dimster.utils.distributor.MessageDistributorType;
 import dev.dimster.utils.payload.FilePayloadReader;
 import dev.dimster.utils.payload.PayloadReader;
 import dev.dimster.worker.Worker;
-import dev.dimster.worker.commands.ClientStatus;
+import dev.dimster.worker.commands.ClientHealth;
 import dev.dimster.worker.topology.TopologyFormatter;
 import dev.dimster.worker.topology.TopologyPlanner;
 import dev.dimster.worker.topology.TopologyRecorder;
@@ -153,12 +153,9 @@ public abstract class BaseEngine implements AutoCloseable {
             throw new StopRequestedException();
     }
 
-    protected void checkForFailedClients(List<ClientStatus> health) {
-        for (ClientStatus cs : health) {
-            if ("FAILED".equals(cs.status())) {
-                throw new RuntimeException("Client '" + cs.name() + "' (" + cs.clientType()
-                        + ") failed: " + cs.error());
-            }
+    protected void checkForFailedClients(ClientHealth health) {
+        if (health.hasFailures()) {
+            throw health.failureException();
         }
     }
 
@@ -167,12 +164,10 @@ public abstract class BaseEngine implements AutoCloseable {
         log.info("Waiting for {}s to be running", label);
         Instant deadline = Instant.now().plus(Duration.ofSeconds(timeoutSeconds));
         while (Instant.now().isBefore(deadline)) {
-            List<ClientStatus> health = worker.getHealth();
-            List<ClientStatus> filtered = health.stream()
-                    .filter(cs -> cs.clientType().contains(clientTypeFilter))
-                    .toList();
-            checkForFailedClients(filtered);
-            if (!filtered.isEmpty() && filtered.stream().allMatch(cs -> "RUNNING".equals(cs.status()))) {
+            ClientHealth health = worker.getHealth();
+            checkForFailedClients(health);
+            ClientHealth.ClientCounts counts = health.countsFor(clientTypeFilter);
+            if (counts.total() > 0 && counts.allRunning()) {
                 log.info("All {}s are running", label);
                 return;
             }
@@ -186,9 +181,9 @@ public abstract class BaseEngine implements AutoCloseable {
         log.info("Waiting for all clients to be running");
         Instant deadline = Instant.now().plus(Duration.ofSeconds(readyTimeoutSeconds));
         while (Instant.now().isBefore(deadline)) {
-            List<ClientStatus> health = worker.getHealth();
+            ClientHealth health = worker.getHealth();
             checkForFailedClients(health);
-            if (health.stream().allMatch(cs -> "RUNNING".equals(cs.status()))) {
+            if (health.allRunning()) {
                 log.info("All clients are running");
                 break;
             }

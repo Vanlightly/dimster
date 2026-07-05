@@ -509,7 +509,9 @@ public class WorkerHttpServer {
             exchange.sendResponseHeaders(200, -1);
         } catch (Exception e) {
             long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
-            logRequestError(exchange, e, elapsedMs);
+            if (logRequestError(exchange, e, elapsedMs)) {
+                return;
+            }
             sendError(exchange, e);
         } finally {
             exchange.close();
@@ -526,30 +528,52 @@ public class WorkerHttpServer {
             }
         } catch (Exception e) {
             long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
-            logRequestError(exchange, e, elapsedMs);
+            if (logRequestError(exchange, e, elapsedMs)) {
+                return;
+            }
             sendError(exchange, e);
         } finally {
             exchange.close();
         }
     }
 
-    private void logRequestError(HttpExchange exchange, Exception e, long elapsedMs) {
+    private boolean logRequestError(HttpExchange exchange, Exception e, long elapsedMs) {
         String path = exchange.getRequestURI().getPath();
-        if (isBrokenPipe(e)) {
-            log.warn("Request handler: {} - client disconnected (broken pipe) after {}ms", path, elapsedMs);
+        boolean clientDisconnect = isClientDisconnect(e);
+        if (clientDisconnect) {
+            log.debug("Request handler: {} - client disconnected after {}ms: {}", path, elapsedMs, e.getMessage());
         } else {
             log.error("Request handler: {} - Exception after {}ms: {}", path, elapsedMs, e.getMessage(), e);
         }
+        return clientDisconnect;
     }
 
-    private static boolean isBrokenPipe(Throwable t) {
+    static boolean isClientDisconnect(Throwable t) {
         while (t != null) {
-            if (t instanceof java.io.IOException && "Broken pipe".equals(t.getMessage())) {
+            if (isClientDisconnectMessage(t)) {
                 return true;
+            }
+            for (Throwable suppressed : t.getSuppressed()) {
+                if (isClientDisconnect(suppressed)) {
+                    return true;
+                }
             }
             t = t.getCause();
         }
         return false;
+    }
+
+    private static boolean isClientDisconnectMessage(Throwable t) {
+        if (!(t instanceof java.io.IOException) || t.getMessage() == null) {
+            return false;
+        }
+        // JDK HttpServer surfaces ordinary peer disconnects with platform-specific
+        // IOException messages. Treat only these narrow write/read failures as
+        // benign so real worker exceptions still get logged and returned as 500s.
+        String message = t.getMessage();
+        return "Broken pipe".equals(message)
+                || "Connection reset by peer".equals(message)
+                || "Connection reset".equals(message);
     }
 
     private void sendError(HttpExchange exchange, Exception e) throws IOException {
