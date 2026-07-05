@@ -105,7 +105,9 @@ pub fn prepare_run_dir(
             bail!(
                 "Two workload files share the stem '{}': '{}' and '{}'. \
                  Rename one — the run-time HashMap would silently drop one of them.",
-                stem, prev, wl_path
+                stem,
+                prev,
+                wl_path
             );
         }
         seen_stems.insert(stem.clone(), wl_path.clone());
@@ -162,10 +164,7 @@ pub fn prepare_run_dir(
     // rationale on which fields are removed.
     write_env_capture(config_path, env_name, &configs_dir.join("environment.yaml"))?;
 
-    println!(
-        "==> Captured run configs to {}/",
-        configs_dir.display()
-    );
+    println!("==> Captured run configs to {}/", configs_dir.display());
 
     Ok(run_dir)
 }
@@ -310,8 +309,14 @@ mod tests {
         .unwrap();
 
         let configs = run_dir.join("configs");
-        assert_eq!(fs::read_to_string(configs.join("workload-myload.yaml")).unwrap(), "wl: 1");
-        assert_eq!(fs::read_to_string(configs.join("kafka.yaml")).unwrap(), "kc: 1");
+        assert_eq!(
+            fs::read_to_string(configs.join("workload-myload.yaml")).unwrap(),
+            "wl: 1"
+        );
+        assert_eq!(
+            fs::read_to_string(configs.join("kafka.yaml")).unwrap(),
+            "kc: 1"
+        );
 
         // Broker config is captured as the effective YAML, not the source file.
         let captured = fs::read_to_string(configs.join("broker.yaml")).unwrap();
@@ -351,12 +356,9 @@ mod tests {
 
         // Re-parse the captured YAML and check the merge took effect.
         let captured_path = run_dir.join("configs/broker.yaml");
-        let eff = broker_config::resolve_effective(
-            Some(&captured_path.to_string_lossy()),
-            None,
-        )
-        .unwrap()
-        .unwrap();
+        let eff = broker_config::resolve_effective(Some(&captured_path.to_string_lossy()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(eff.properties.get("num.io.threads").unwrap(), "16");
         assert_eq!(eff.properties.get("log.retention.hours").unwrap(), "1");
         assert_eq!(eff.properties.get("foo").unwrap(), "bar");
@@ -385,12 +387,9 @@ mod tests {
 
         // Re-parse and verify shape, rather than asserting on YAML quoting style.
         let captured_path = run_dir.join("configs/broker.yaml");
-        let eff = broker_config::resolve_effective(
-            Some(&captured_path.to_string_lossy()),
-            None,
-        )
-        .unwrap()
-        .unwrap();
+        let eff = broker_config::resolve_effective(Some(&captured_path.to_string_lossy()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(eff.name, "(inline)");
         assert_eq!(eff.properties.get("a").unwrap(), "1");
     }
@@ -513,16 +512,26 @@ mod tests {
 
         // Stripped: image, context, connection.
         assert!(map.get(serde_yaml::Value::String("image".into())).is_none());
-        assert!(map.get(serde_yaml::Value::String("context".into())).is_none());
-        assert!(map.get(serde_yaml::Value::String("connection".into())).is_none());
+        assert!(
+            map.get(serde_yaml::Value::String("context".into()))
+                .is_none()
+        );
+        assert!(
+            map.get(serde_yaml::Value::String("connection".into()))
+                .is_none()
+        );
 
         // Surviving fields are still there.
         assert_eq!(
-            map.get(serde_yaml::Value::String("namespace".into())).unwrap().as_str(),
+            map.get(serde_yaml::Value::String("namespace".into()))
+                .unwrap()
+                .as_str(),
             Some("dimster")
         );
         assert_eq!(
-            map.get(serde_yaml::Value::String("hardware".into())).unwrap().as_str(),
+            map.get(serde_yaml::Value::String("hardware".into()))
+                .unwrap()
+                .as_str(),
             Some("local-laptop")
         );
 
@@ -534,11 +543,17 @@ mod tests {
             .as_mapping()
             .unwrap();
         assert_eq!(
-            kafka.get(serde_yaml::Value::String("version".into())).unwrap().as_str(),
+            kafka
+                .get(serde_yaml::Value::String("version".into()))
+                .unwrap()
+                .as_str(),
             Some("4.2.0")
         );
         assert_eq!(
-            kafka.get(serde_yaml::Value::String("image".into())).unwrap().as_str(),
+            kafka
+                .get(serde_yaml::Value::String("image".into()))
+                .unwrap()
+                .as_str(),
             Some("apache/kafka")
         );
     }
@@ -642,7 +657,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("Environment 'production' not found"),
+            err.to_string()
+                .contains("Environment 'production' not found"),
             "actual error: {}",
             err
         );

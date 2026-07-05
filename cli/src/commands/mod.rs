@@ -15,8 +15,8 @@ pub mod logs;
 pub mod pivot;
 pub mod reattach;
 pub mod resources;
-pub mod resume;
 pub mod results;
+pub mod resume;
 pub mod run;
 pub mod run_configs;
 pub mod stop;
@@ -42,12 +42,17 @@ pub fn is_registry_image(image: &str) -> bool {
 /// label/selector logic.
 pub fn find_coordinator(kubectl: &Kubectl) -> Result<String> {
     // Use range-based jsonpath to avoid error when no items exist
-    let pods = kubectl.run(&[
-        "get", "pods",
-        "-l", "app=benchmark-coordinator",
-        "--field-selector=status.phase=Running",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-    ]).unwrap_or_default();
+    let pods = kubectl
+        .run(&[
+            "get",
+            "pods",
+            "-l",
+            "app=benchmark-coordinator",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        ])
+        .unwrap_or_default();
 
     let pod = pods.lines().next().unwrap_or("").trim().to_string();
     if pod.is_empty() {
@@ -63,7 +68,9 @@ mod tests {
     #[test]
     fn is_registry_image_detects_dot() {
         assert!(is_registry_image("registry.example.com/dimster"));
-        assert!(is_registry_image("123.dkr.ecr.us-west-2.amazonaws.com/dimster"));
+        assert!(is_registry_image(
+            "123.dkr.ecr.us-west-2.amazonaws.com/dimster"
+        ));
         assert!(!is_registry_image("dimster"));
         assert!(!is_registry_image("local-image"));
     }

@@ -37,8 +37,12 @@ struct BaseWorkload {
     kafka_config: Option<EmbeddedKafkaConfig>,
 }
 
-fn default_one() -> u32 { 1 }
-fn default_1024() -> u32 { 1024 }
+fn default_one() -> u32 {
+    1
+}
+fn default_1024() -> u32 {
+    1024
+}
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -237,13 +241,23 @@ fn expand_workload(
         let count = determine_count(scenario)?;
         let labels = expand_labels(scenario, count)?;
         let topics = expand_field(&scenario.topics, count, base.topics)?;
-        let partitions = expand_field(&scenario.partitions_per_topic, count, base.partitions_per_topic)?;
+        let partitions = expand_field(
+            &scenario.partitions_per_topic,
+            count,
+            base.partitions_per_topic,
+        )?;
         let msg_sizes = expand_field(&scenario.message_size, count, base.message_size)?;
         let rates = expand_field_f64(&scenario.producer_rate, count, base.producer_rate)?;
-        let cg = expand_field(&scenario.consumer_groups_per_topic, count, base.consumer_groups_per_topic)?;
+        let cg = expand_field(
+            &scenario.consumer_groups_per_topic,
+            count,
+            base.consumer_groups_per_topic,
+        )?;
 
         for i in 0..count {
-            let scenario_rf = scenario.kafka_config.as_ref()
+            let scenario_rf = scenario
+                .kafka_config
+                .as_ref()
                 .and_then(|cfgs| cfgs.get(i))
                 .and_then(|c| c.replication_factor);
             let rf = resolve_rf(scenario_rf, base.kafka_config.as_ref(), kafka_config_rf);
@@ -275,7 +289,10 @@ fn determine_count(scenario: &Scenario) -> Result<usize> {
                 if l != existing {
                     bail!(
                         "Scenario '{}': {} has {} elements but expected {}",
-                        scenario.name, field, l, existing
+                        scenario.name,
+                        field,
+                        l,
+                        existing
                     );
                 }
             } else {
@@ -285,12 +302,24 @@ fn determine_count(scenario: &Scenario) -> Result<usize> {
         Ok(())
     };
 
-    if let Some(ref v) = scenario.label { check(v.vec_len(), "label")?; }
-    if let Some(ref v) = scenario.topics { check(v.vec_len(), "topics")?; }
-    if let Some(ref v) = scenario.partitions_per_topic { check(v.vec_len(), "partitionsPerTopic")?; }
-    if let Some(ref v) = scenario.message_size { check(v.vec_len(), "messageSize")?; }
-    if let Some(ref v) = scenario.producer_rate { check(v.vec_len(), "producerRate")?; }
-    if let Some(ref v) = scenario.consumer_groups_per_topic { check(v.vec_len(), "consumerGroupsPerTopic")?; }
+    if let Some(ref v) = scenario.label {
+        check(v.vec_len(), "label")?;
+    }
+    if let Some(ref v) = scenario.topics {
+        check(v.vec_len(), "topics")?;
+    }
+    if let Some(ref v) = scenario.partitions_per_topic {
+        check(v.vec_len(), "partitionsPerTopic")?;
+    }
+    if let Some(ref v) = scenario.message_size {
+        check(v.vec_len(), "messageSize")?;
+    }
+    if let Some(ref v) = scenario.producer_rate {
+        check(v.vec_len(), "producerRate")?;
+    }
+    if let Some(ref v) = scenario.consumer_groups_per_topic {
+        check(v.vec_len(), "consumerGroupsPerTopic")?;
+    }
     if let Some(ref cfgs) = scenario.kafka_config {
         if cfgs.len() > 1 {
             check(Some(cfgs.len()), "kafkaConfig")?;
@@ -307,20 +336,30 @@ fn expand_labels(scenario: &Scenario, count: usize) -> Result<Vec<String>> {
             if count == 1 {
                 Ok(vec![scenario.name.clone()])
             } else {
-                Ok((0..count).map(|i| format!("{} #{}", scenario.name, i + 1)).collect())
+                Ok((0..count)
+                    .map(|i| format!("{} #{}", scenario.name, i + 1))
+                    .collect())
             }
         }
     }
 }
 
-fn expand_field(field: &Option<ScalarOrVec<u32>>, count: usize, base_default: u32) -> Result<Vec<u32>> {
+fn expand_field(
+    field: &Option<ScalarOrVec<u32>>,
+    count: usize,
+    base_default: u32,
+) -> Result<Vec<u32>> {
     match field {
         Some(sv) => sv.expand(count),
         None => Ok(vec![base_default; count]),
     }
 }
 
-fn expand_field_f64(field: &Option<ScalarOrVec<f64>>, count: usize, base_default: f64) -> Result<Vec<f64>> {
+fn expand_field_f64(
+    field: &Option<ScalarOrVec<f64>>,
+    count: usize,
+    base_default: f64,
+) -> Result<Vec<f64>> {
     match field {
         Some(sv) => sv.expand(count),
         None => Ok(vec![base_default; count]),
@@ -365,7 +404,7 @@ fn calculate_resources(tp: TestPoint, broker_count: Option<u32>) -> ResourceEsti
         };
     }
 
-    let rate = tp.producer_rate as u64;  // truncate to whole msg/s for resource estimation
+    let rate = tp.producer_rate as u64; // truncate to whole msg/s for resource estimation
     let msg = tp.message_size as u64;
     let rf = tp.replication_factor as u64;
     let cg = tp.consumer_groups_per_topic as u64;
@@ -378,7 +417,16 @@ fn calculate_resources(tp: TestPoint, broker_count: Option<u32>) -> ResourceEsti
     let total_net = total_in + total_out;
     let disk_write = rate * msg * rf;
 
-    let (pb_ingress, pb_rep_in, pb_rep_out, pb_cons_out, pb_net_in, pb_net_out, pb_net_total, pb_disk) = match broker_count {
+    let (
+        pb_ingress,
+        pb_rep_in,
+        pb_rep_out,
+        pb_cons_out,
+        pb_net_in,
+        pb_net_out,
+        pb_net_total,
+        pb_disk,
+    ) = match broker_count {
         Some(n) if n > 0 => {
             let n = n as u64;
             (
@@ -436,7 +484,6 @@ fn format_throughput(bytes_per_sec: u64) -> String {
     }
 }
 
-
 fn throughput_or_na(val: Option<u64>) -> String {
     match val {
         Some(v) => format_throughput(v),
@@ -479,10 +526,26 @@ fn print_workload_resources(
     // Peak resource summary
     let has_rates = estimates.iter().any(|e| e.producer_ingress.is_some());
     if has_rates {
-        let max_net_total = estimates.iter().filter_map(|e| e.total_network).max().unwrap_or(0);
-        let max_disk = estimates.iter().filter_map(|e| e.disk_write_rate).max().unwrap_or(0);
-        let max_pb_net = estimates.iter().filter_map(|e| e.pb_net_total).max().unwrap_or(0);
-        let max_pb_disk = estimates.iter().filter_map(|e| e.pb_disk_write).max().unwrap_or(0);
+        let max_net_total = estimates
+            .iter()
+            .filter_map(|e| e.total_network)
+            .max()
+            .unwrap_or(0);
+        let max_disk = estimates
+            .iter()
+            .filter_map(|e| e.disk_write_rate)
+            .max()
+            .unwrap_or(0);
+        let max_pb_net = estimates
+            .iter()
+            .filter_map(|e| e.pb_net_total)
+            .max()
+            .unwrap_or(0);
+        let max_pb_disk = estimates
+            .iter()
+            .filter_map(|e| e.pb_disk_write)
+            .max()
+            .unwrap_or(0);
 
         println!();
         println!(
@@ -498,17 +561,17 @@ fn print_workload_resources(
         );
         println!();
         println!("  Note: per-broker numbers assume uniform load distribution and do not account");
-        println!("  for increased load when brokers are offline. This is not a capacity planning tool.");
+        println!(
+            "  for increased load when brokers are offline. This is not a capacity planning tool."
+        );
     }
 }
 
-fn print_scenario(
-    scenario_name: &str,
-    estimates: &[&ResourceEstimate],
-    broker_count: u32,
-) {
+fn print_scenario(scenario_name: &str, estimates: &[&ResourceEstimate], broker_count: u32) {
     let rf = estimates[0].test_point.replication_factor;
-    let all_same_rf = estimates.iter().all(|e| e.test_point.replication_factor == rf);
+    let all_same_rf = estimates
+        .iter()
+        .all(|e| e.test_point.replication_factor == rf);
 
     println!();
     if all_same_rf {
@@ -586,7 +649,13 @@ fn print_table_header() {
     println!(
         "  {:<20} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12}",
         "LABEL",
-        "INGRESS", "REP IN", "REP OUT", "CONS OUT",
-        "NET IN", "NET OUT", "NET TOTAL", "DISK WR"
+        "INGRESS",
+        "REP IN",
+        "REP OUT",
+        "CONS OUT",
+        "NET IN",
+        "NET OUT",
+        "NET TOTAL",
+        "DISK WR"
     );
 }

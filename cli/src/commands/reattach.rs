@@ -4,9 +4,9 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 
+use crate::commands::find_coordinator;
 use crate::commands::results;
 use crate::commands::run::stream_and_wait;
-use crate::commands::find_coordinator;
 use crate::kubectl::Kubectl;
 
 pub fn run(

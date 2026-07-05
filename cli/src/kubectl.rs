@@ -231,10 +231,15 @@ impl Kubectl {
         // Fallback: direct kubectl cp (uses tar internally but has its own retry logic)
         let src = format!("{}/{}:{}", self.namespace, pod, remote_path);
         self.run_no_ns(&[
-            "-n", &self.namespace,
-            "cp", &src, local_path,
-            "--retries", "3",
-        ]).is_ok()
+            "-n",
+            &self.namespace,
+            "cp",
+            &src,
+            local_path,
+            "--retries",
+            "3",
+        ])
+        .is_ok()
     }
 
     /// Stream a file from a pod via a kubectl exec tar pipe:
@@ -249,8 +254,19 @@ impl Kubectl {
     ) -> bool {
         let remote_proc = self
             .base_cmd()
-            .args(["-n", &self.namespace, "exec", pod, "--",
-                   "tar", "czf", "-", "-C", remote_dir, remote_filename])
+            .args([
+                "-n",
+                &self.namespace,
+                "exec",
+                pod,
+                "--",
+                "tar",
+                "czf",
+                "-",
+                "-C",
+                remote_dir,
+                remote_filename,
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();

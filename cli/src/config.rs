@@ -382,9 +382,9 @@ impl ConnectionConfig {
         self.properties
             .get("bootstrap.servers")
             .map(|s| s.as_str())
-            .ok_or_else(|| anyhow::anyhow!(
-                "connection section is missing required key 'bootstrap.servers'"
-            ))
+            .ok_or_else(|| {
+                anyhow::anyhow!("connection section is missing required key 'bootstrap.servers'")
+            })
     }
 
     /// Format all connection properties as Java-style key=value lines.
@@ -456,7 +456,9 @@ impl Environment {
                      External mode requires a connection with at least bootstrap.servers.",
                     name
                 ),
-                Some(conn) => { conn.bootstrap_servers()?; }
+                Some(conn) => {
+                    conn.bootstrap_servers()?;
+                }
             }
         }
         if let Some(cpu_manager) = &self.cpu_manager {
@@ -485,15 +487,10 @@ impl DimsterConfig {
     }
 
     pub fn get_env(&self, name: &str) -> Result<&Environment> {
-        let env = self.environments
-            .get(name)
-            .with_context(|| {
-                let available: Vec<&String> = self.environments.keys().collect();
-                format!(
-                    "Unknown environment '{}'. Available: {:?}",
-                    name, available
-                )
-            })?;
+        let env = self.environments.get(name).with_context(|| {
+            let available: Vec<&String> = self.environments.keys().collect();
+            format!("Unknown environment '{}'. Available: {:?}", name, available)
+        })?;
         env.validate(name)?;
         Ok(env)
     }
@@ -605,7 +602,8 @@ environments:
   local:
     image: dimster
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let env = cfg.get_env("local").unwrap();
         assert!(env.cpu_manager.is_none());
     }
@@ -619,7 +617,8 @@ environments:
     cpuManager:
       policy: none
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let env = cfg.get_env("local").unwrap();
         let cpu_manager = env.cpu_manager.as_ref().unwrap();
         assert_eq!(cpu_manager.policy, CpuManagerPolicy::None);
@@ -636,7 +635,8 @@ environments:
       policy: static
       fullPcpusOnly: true
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let env = cfg.get_env("local").unwrap();
         let cpu_manager = env.cpu_manager.as_ref().unwrap();
         assert_eq!(cpu_manager.policy, CpuManagerPolicy::Static);
@@ -653,7 +653,8 @@ environments:
       policy: none
       fullPcpusOnly: true
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let err = cfg.get_env("local").unwrap_err();
         assert!(
             err.to_string().contains("cpuManager.fullPcpusOnly"),

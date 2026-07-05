@@ -182,7 +182,10 @@ mod tests {
 
         let eff = resolve_effective(Some(&path), None).unwrap().unwrap();
         assert_eq!(eff.name, "default");
-        assert_eq!(eff.properties.get("default.replication.factor").unwrap(), "3");
+        assert_eq!(
+            eff.properties.get("default.replication.factor").unwrap(),
+            "3"
+        );
         assert_eq!(eff.properties.get("min.insync.replicas").unwrap(), "2");
     }
 
@@ -205,18 +208,19 @@ mod tests {
 
     #[test]
     fn extra_config_only_synthesizes_inline_name() {
-        let eff = resolve_effective(None, Some("a=1,b=2"))
-            .unwrap()
-            .unwrap();
+        let eff = resolve_effective(None, Some("a=1,b=2")).unwrap().unwrap();
         assert_eq!(eff.name, "(inline)");
         assert_eq!(eff.properties.len(), 2);
     }
 
     #[test]
     fn extra_config_value_can_contain_equals() {
-        let eff = resolve_effective(None, Some("listener.security.protocol.map=PLAINTEXT:PLAINTEXT,X=Y=Z"))
-            .unwrap()
-            .unwrap();
+        let eff = resolve_effective(
+            None,
+            Some("listener.security.protocol.map=PLAINTEXT:PLAINTEXT,X=Y=Z"),
+        )
+        .unwrap()
+        .unwrap();
         // Split on first '=', so X=Y=Z becomes X -> "Y=Z"
         assert_eq!(eff.properties.get("X").unwrap(), "Y=Z");
     }

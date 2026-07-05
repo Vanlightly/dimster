@@ -2,19 +2,32 @@ use anyhow::{Result, bail};
 
 use crate::kubectl::Kubectl;
 
-pub fn run(kubectl: &Kubectl, component: &str, follow: bool, previous: bool, tail: Option<u32>) -> Result<()> {
+pub fn run(
+    kubectl: &Kubectl,
+    component: &str,
+    follow: bool,
+    previous: bool,
+    tail: Option<u32>,
+) -> Result<()> {
     let label = match component {
         "worker" | "workers" => "app=benchmark-worker",
         "coordinator" => "app=benchmark-coordinator",
         "kafka" => "app=kafka",
-        other => bail!("Unknown component '{}'. Use: worker, coordinator, kafka", other),
+        other => bail!(
+            "Unknown component '{}'. Use: worker, coordinator, kafka",
+            other
+        ),
     };
 
     // Find pods
     let pod_output = kubectl.run(&[
-        "get", "pods", "-l", label,
+        "get",
+        "pods",
+        "-l",
+        label,
         "--field-selector=status.phase=Running",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
     ])?;
 
     let pods: Vec<&str> = pod_output
@@ -52,7 +65,11 @@ pub fn run(kubectl: &Kubectl, component: &str, follow: bool, previous: bool, tai
         args.push(&tail_str);
     }
 
-    println!("==> Streaming logs for {} ({} pod(s))...", component, pods.len());
+    println!(
+        "==> Streaming logs for {} ({} pod(s))...",
+        component,
+        pods.len()
+    );
     kubectl.run_inherit(&args)?;
 
     Ok(())

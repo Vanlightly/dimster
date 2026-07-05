@@ -164,8 +164,12 @@ spec:
 
     let subdir = kubectl
         .run(&[
-            "exec", &helper_name, "--",
-            "sh", "-c", LATEST_PVC_SUBDIR_CMD,
+            "exec",
+            &helper_name,
+            "--",
+            "sh",
+            "-c",
+            LATEST_PVC_SUBDIR_CMD,
         ])
         .unwrap_or_default();
     let subdir = subdir.trim().to_string();
@@ -199,7 +203,10 @@ fn find_latest_local_subdir(output_dir: &str) -> Result<String> {
 
     match subdirs.first() {
         Some(name) => {
-            println!("==> Using latest local result directory: {}/{}", output_dir, name);
+            println!(
+                "==> Using latest local result directory: {}/{}",
+                output_dir, name
+            );
             Ok(name.clone())
         }
         None => bail!("No result subdirectories found in {}", output_dir),
@@ -211,8 +218,12 @@ fn find_latest_local_subdir(output_dir: &str) -> Result<String> {
 fn find_coordinator_node(kubectl: &Kubectl) -> String {
     kubectl
         .run(&[
-            "get", "pods", "-l", "app=benchmark-coordinator",
-            "-o", "jsonpath={.items[0].spec.nodeName}",
+            "get",
+            "pods",
+            "-l",
+            "app=benchmark-coordinator",
+            "-o",
+            "jsonpath={.items[0].spec.nodeName}",
         ])
         .unwrap_or_default()
         .trim()
@@ -239,7 +250,11 @@ fn wait_for_pod(kubectl: &Kubectl, pod_name: &str, max_attempts: usize, stop: &A
 
 /// Copy results from PVC via a temporary busybox pod.
 /// Returns the local directory where results were saved, if any.
-pub fn copy_results_from_pvc(kubectl: &Kubectl, output_dir: &str, stop: &AtomicBool) -> Result<Option<String>> {
+pub fn copy_results_from_pvc(
+    kubectl: &Kubectl,
+    output_dir: &str,
+    stop: &AtomicBool,
+) -> Result<Option<String>> {
     println!("==> Copying results from PVC...");
 
     let timestamp = std::time::SystemTime::now()
@@ -285,10 +300,7 @@ spec:
     // Apply via stdin
     let tmp = tempfile::NamedTempFile::new()?;
     std::fs::write(tmp.path(), &manifest)?;
-    kubectl.run_no_ns(&[
-        "-n", ns,
-        "apply", "-f", &tmp.path().to_string_lossy(),
-    ])?;
+    kubectl.run_no_ns(&["-n", ns, "apply", "-f", &tmp.path().to_string_lossy()])?;
 
     if !wait_for_pod(kubectl, &helper_name, 30, stop) {
         if !stop.load(Ordering::Relaxed) {
@@ -305,8 +317,12 @@ spec:
     // Find the latest timestamped subdir on the PVC
     let latest_subdir = kubectl
         .run(&[
-            "exec", &helper_name, "--",
-            "sh", "-c", LATEST_PVC_SUBDIR_CMD,
+            "exec",
+            &helper_name,
+            "--",
+            "sh",
+            "-c",
+            LATEST_PVC_SUBDIR_CMD,
         ])
         .unwrap_or_default();
     let latest_subdir = latest_subdir.trim().to_string();
@@ -318,8 +334,12 @@ spec:
         // Count files in the latest subdir only
         let count_str = kubectl
             .run(&[
-                "exec", &helper_name, "--",
-                "sh", "-c", &format!(
+                "exec",
+                &helper_name,
+                "--",
+                "sh",
+                "-c",
+                &format!(
                     "find /results/{} -name '*.json' -type f 2>/dev/null | wc -l",
                     latest_subdir
                 ),
@@ -328,7 +348,10 @@ spec:
         let count: usize = count_str.trim().parse().unwrap_or(0);
 
         if count == 0 {
-            println!("    No result files found in latest directory ({}).", latest_subdir);
+            println!(
+                "    No result files found in latest directory ({}).",
+                latest_subdir
+            );
             None
         } else {
             let local_dir = format!("{}/{}", output_dir, latest_subdir);
@@ -337,8 +360,12 @@ spec:
             // List individual files and copy each one via kubectl cp
             let file_list = kubectl
                 .run(&[
-                    "exec", &helper_name, "--",
-                    "sh", "-c", &format!(
+                    "exec",
+                    &helper_name,
+                    "--",
+                    "sh",
+                    "-c",
+                    &format!(
                         "find /results/{} -name '*.json' -type f 2>/dev/null",
                         latest_subdir
                     ),
@@ -411,12 +438,17 @@ pub fn save_logs(kubectl: &Kubectl, result_dir: &str, full: bool) -> Result<()> 
 
     match mode {
         LogCaptureMode::Filtered { begin, end } => {
-            println!("    Filtering pod log files to [{} ± 15s, {} ± 15s]",
-                     format_log_timestamp(begin), format_log_timestamp(end));
+            println!(
+                "    Filtering pod log files to [{} ± 15s, {} ± 15s]",
+                format_log_timestamp(begin),
+                format_log_timestamp(end)
+            );
         }
         LogCaptureMode::Full => {
             if full {
-                println!("    Capturing full coordinator/worker log files (--full: no time filter)");
+                println!(
+                    "    Capturing full coordinator/worker log files (--full: no time filter)"
+                );
             } else {
                 println!("    Warning: no result metadata yet — capturing full pod log files");
             }
@@ -424,43 +456,72 @@ pub fn save_logs(kubectl: &Kubectl, result_dir: &str, full: bool) -> Result<()> 
     }
 
     // Save coordinator logs
-    let coord_pods = kubectl.run(&[
-        "get", "pods", "-l", "app=benchmark-coordinator",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-    ]).unwrap_or_default();
+    let coord_pods = kubectl
+        .run(&[
+            "get",
+            "pods",
+            "-l",
+            "app=benchmark-coordinator",
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        ])
+        .unwrap_or_default();
 
     for pod in coord_pods.lines().filter(|l| !l.trim().is_empty()) {
         let pod = pod.trim();
         save_pod_persisted_or_kubectl_logs(
-            kubectl, pod, "/benchmark/results/.dimster-logs/coordinator.log",
-            &logs_dir, mode, since_time.as_deref(),
+            kubectl,
+            pod,
+            "/benchmark/results/.dimster-logs/coordinator.log",
+            &logs_dir,
+            mode,
+            since_time.as_deref(),
         );
     }
 
     // Save worker logs
-    let worker_pods = kubectl.run(&[
-        "get", "pods", "-l", "app=benchmark-worker",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-    ]).unwrap_or_default();
+    let worker_pods = kubectl
+        .run(&[
+            "get",
+            "pods",
+            "-l",
+            "app=benchmark-worker",
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        ])
+        .unwrap_or_default();
 
     for pod in worker_pods.lines().filter(|l| !l.trim().is_empty()) {
         let pod = pod.trim();
         save_pod_persisted_or_kubectl_logs(
-            kubectl, pod, "/dimster/logs/worker.log",
-            &logs_dir, mode, since_time.as_deref(),
+            kubectl,
+            pod,
+            "/dimster/logs/worker.log",
+            &logs_dir,
+            mode,
+            since_time.as_deref(),
         );
     }
 
     // Save Kafka logs (file-based for reliability — kubectl logs truncates on long campaigns)
-    let kafka_pods = kubectl.run(&[
-        "get", "pods", "-l", "app=kafka",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-    ]).unwrap_or_default();
+    let kafka_pods = kubectl
+        .run(&[
+            "get",
+            "pods",
+            "-l",
+            "app=kafka",
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        ])
+        .unwrap_or_default();
 
     for pod in kafka_pods.lines().filter(|l| !l.trim().is_empty()) {
         let pod = pod.trim();
         if !save_kafka_file_logs(kubectl, pod, &logs_dir) {
-            eprintln!("    Warning: file-based log download failed for {}, falling back to kubectl logs", pod);
+            eprintln!(
+                "    Warning: file-based log download failed for {}, falling back to kubectl logs",
+                pod
+            );
             save_pod_logs(kubectl, pod, &logs_dir, since_time.as_deref());
         }
     }
@@ -508,7 +569,10 @@ fn save_pod_logs_previous(kubectl: &Kubectl, pod: &str, logs_dir: &str, since_ti
         if !logs.is_empty() {
             let path = format!("{}/{}.previous.log", logs_dir, pod);
             if let Err(e) = std::fs::write(&path, &logs) {
-                eprintln!("    Warning: failed to write previous logs for {}: {}", pod, e);
+                eprintln!(
+                    "    Warning: failed to write previous logs for {}: {}",
+                    pod, e
+                );
             } else {
                 println!("    Saved {} (previous container)", path);
             }
@@ -549,7 +613,10 @@ fn save_pod_logs(kubectl: &Kubectl, pod: &str, logs_dir: &str, since_time: Optio
         if !logs.is_empty() {
             let path = format!("{}/{}.previous.log", logs_dir, pod);
             if let Err(e) = std::fs::write(&path, &logs) {
-                eprintln!("    Warning: failed to write previous logs for {}: {}", pod, e);
+                eprintln!(
+                    "    Warning: failed to write previous logs for {}: {}",
+                    pod, e
+                );
             } else {
                 println!("    Saved {} (previous container)", path);
             }
@@ -568,9 +635,20 @@ fn save_kafka_file_logs(kubectl: &Kubectl, pod: &str, logs_dir: &str) -> bool {
 
     // List log files on the pod
     let file_list = kubectl.run(&[
-        "exec", pod, "--",
-        "find", "/opt/kafka/logs", "-type", "f",
-        "(", "-name", "*.log", "-o", "-name", "*.log.*", ")",
+        "exec",
+        pod,
+        "--",
+        "find",
+        "/opt/kafka/logs",
+        "-type",
+        "f",
+        "(",
+        "-name",
+        "*.log",
+        "-o",
+        "-name",
+        "*.log.*",
+        ")",
     ]);
 
     let files: Vec<&str> = match &file_list {
@@ -603,7 +681,10 @@ fn save_kafka_file_logs(kubectl: &Kubectl, pod: &str, logs_dir: &str) -> bool {
         if kubectl.copy_file_from_pod(pod, remote_path, &local_path) {
             copied += 1;
         } else {
-            eprintln!("    Warning: failed to download {} from {}", remote_path, pod);
+            eprintln!(
+                "    Warning: failed to download {} from {}",
+                remote_path, pod
+            );
         }
     }
 
@@ -656,7 +737,10 @@ exit 0
     let raw = match kubectl.run(&["exec", pod, "--", "sh", "-c", &script]) {
         Ok(content) => content,
         Err(e) => {
-            eprintln!("    Warning: could not read {} on {}: {}", remote_log_path, pod, e);
+            eprintln!(
+                "    Warning: could not read {} on {}: {}",
+                remote_log_path, pod, e
+            );
             return false;
         }
     };
@@ -725,21 +809,33 @@ fn filter_log_by_timestamp(raw: &str, begin_ts: i64, end_ts: i64, buffer: i64) -
 /// leading bytes are ASCII (which guarantees a valid char boundary).
 fn leading_log_timestamp(line: &str) -> Option<&str> {
     let b = line.as_bytes();
-    if b.len() < 23 { return None; }
+    if b.len() < 23 {
+        return None;
+    }
     let is_digit = |i: usize| b[i].is_ascii_digit();
-    if is_digit(0) && is_digit(1) && is_digit(2) && is_digit(3)
+    if is_digit(0)
+        && is_digit(1)
+        && is_digit(2)
+        && is_digit(3)
         && b[4] == b'-'
-        && is_digit(5) && is_digit(6)
+        && is_digit(5)
+        && is_digit(6)
         && b[7] == b'-'
-        && is_digit(8) && is_digit(9)
+        && is_digit(8)
+        && is_digit(9)
         && b[10] == b' '
-        && is_digit(11) && is_digit(12)
+        && is_digit(11)
+        && is_digit(12)
         && b[13] == b':'
-        && is_digit(14) && is_digit(15)
+        && is_digit(14)
+        && is_digit(15)
         && b[16] == b':'
-        && is_digit(17) && is_digit(18)
+        && is_digit(17)
+        && is_digit(18)
         && b[19] == b'.'
-        && is_digit(20) && is_digit(21) && is_digit(22)
+        && is_digit(20)
+        && is_digit(21)
+        && is_digit(22)
     {
         // All 23 leading bytes are ASCII, so the slice is on a char boundary.
         Some(&line[..23])
@@ -758,15 +854,31 @@ fn format_log_timestamp(unix_ts: i64) -> String {
     loop {
         let days_in_year = if is_leap_year(year) { 366 } else { 365 };
         let secs_in_year = days_in_year * secs_per_day;
-        if remaining < secs_in_year { break; }
+        if remaining < secs_in_year {
+            break;
+        }
         remaining -= secs_in_year;
         year += 1;
     }
-    let month_days = [31, 28 + if is_leap_year(year) { 1 } else { 0 },
-                      31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        28 + if is_leap_year(year) { 1 } else { 0 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1;
     for &md in &month_days {
-        if remaining < md * secs_per_day { break; }
+        if remaining < md * secs_per_day {
+            break;
+        }
         remaining -= md * secs_per_day;
         month += 1;
     }
@@ -776,8 +888,10 @@ fn format_log_timestamp(unix_ts: i64) -> String {
     remaining %= 3600;
     let minute = remaining / 60;
     let second = remaining % 60;
-    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.000",
-            year, month, day, hour, minute, second)
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.000",
+        year, month, day, hour, minute, second
+    )
 }
 
 /// Format a Unix timestamp as RFC3339 for kubectl --since-time.
@@ -788,15 +902,31 @@ fn format_rfc3339(unix_ts: i64) -> String {
     loop {
         let days_in_year = if is_leap_year(year) { 366 } else { 365 };
         let secs_in_year = days_in_year * secs_per_day;
-        if remaining < secs_in_year { break; }
+        if remaining < secs_in_year {
+            break;
+        }
         remaining -= secs_in_year;
         year += 1;
     }
-    let month_days = [31, 28 + if is_leap_year(year) { 1 } else { 0 },
-                      31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        28 + if is_leap_year(year) { 1 } else { 0 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1;
     for &md in &month_days {
-        if remaining < md * secs_per_day { break; }
+        if remaining < md * secs_per_day {
+            break;
+        }
         remaining -= md * secs_per_day;
         month += 1;
     }
@@ -806,7 +936,10 @@ fn format_rfc3339(unix_ts: i64) -> String {
     remaining %= 3600;
     let minute = remaining / 60;
     let second = remaining % 60;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hour, minute, second)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
 }
 
 /// Export Grafana dashboards as static HTML by running a short-lived pod
@@ -818,7 +951,12 @@ pub fn export_dashboards(kubectl: &Kubectl, result_dir: &str, stop: &AtomicBool)
     // window splitting are both handled by export.py (see --window-hours
     // and --window-buffer-minutes below), so we pass the raw range through.
     let (raw_start, raw_end) = extract_time_range(result_dir)?;
-    println!("    Time range: {} -> {} ({}s)", raw_start, raw_end, raw_end - raw_start);
+    println!(
+        "    Time range: {} -> {} ({}s)",
+        raw_start,
+        raw_end,
+        raw_end - raw_start
+    );
 
     // Per-scenario time ranges, used by export.py to align HTML-window cuts
     // with scenario boundaries so a scenario's test points stay together in
@@ -826,8 +964,10 @@ pub fn export_dashboards(kubectl: &Kubectl, result_dir: &str, stop: &AtomicBool)
     // timestamps — export.py then falls back to its even-split algorithm.
     let scenario_boundaries = extract_scenario_boundaries(result_dir).unwrap_or_default();
     if !scenario_boundaries.is_empty() {
-        println!("    Discovered {} scenario boundary range(s) for window alignment",
-                 scenario_boundaries.len());
+        println!(
+            "    Discovered {} scenario boundary range(s) for window alignment",
+            scenario_boundaries.len()
+        );
     }
 
     // Derive PVC subdir name from the local result_dir path
@@ -913,21 +1053,32 @@ spec:
     // --scenario-boundaries lets export.py align cuts with scenario
     // transitions, keeping a scenario's test points in the same file.
     let output_path = format!("/results/{}/dashboards", pvc_subdir);
-    let boundaries_json = serde_json::to_string(&scenario_boundaries)
-        .unwrap_or_else(|_| "[]".to_string());
+    let boundaries_json =
+        serde_json::to_string(&scenario_boundaries).unwrap_or_else(|_| "[]".to_string());
     let raw_start_str = raw_start.to_string();
     let raw_end_str = raw_end.to_string();
     let exec_result = kubectl.run(&[
-        "exec", &helper_name, "--",
-        "python3", "/scripts/export.py",
-        "--prometheus-url", "http://prometheus:9090",
-        "--start", &raw_start_str,
-        "--end", &raw_end_str,
-        "--dashboard-dirs", "/dashboards/main,/dashboards/system",
-        "--output-dir", &output_path,
-        "--window-hours", "3",
-        "--window-buffer-minutes", "10",
-        "--scenario-boundaries", &boundaries_json,
+        "exec",
+        &helper_name,
+        "--",
+        "python3",
+        "/scripts/export.py",
+        "--prometheus-url",
+        "http://prometheus:9090",
+        "--start",
+        &raw_start_str,
+        "--end",
+        &raw_end_str,
+        "--dashboard-dirs",
+        "/dashboards/main,/dashboards/system",
+        "--output-dir",
+        &output_path,
+        "--window-hours",
+        "3",
+        "--window-buffer-minutes",
+        "10",
+        "--scenario-boundaries",
+        &boundaries_json,
     ]);
 
     match &exec_result {
@@ -942,8 +1093,12 @@ spec:
     // List generated files
     let file_list = kubectl
         .run(&[
-            "exec", &helper_name, "--",
-            "sh", "-c", &format!("find {} -name '*.html' -type f 2>/dev/null", output_path),
+            "exec",
+            &helper_name,
+            "--",
+            "sh",
+            "-c",
+            &format!("find {} -name '*.html' -type f 2>/dev/null", output_path),
         ])
         .unwrap_or_default();
 
@@ -963,7 +1118,10 @@ spec:
         }
     }
 
-    println!("    {} dashboard file(s) saved to {}/", copied_count, local_dashboards);
+    println!(
+        "    {} dashboard file(s) saved to {}/",
+        copied_count, local_dashboards
+    );
 
     // Cleanup
     let _ = kubectl.run(&["delete", "pod", &helper_name, "--ignore-not-found"]);
@@ -982,14 +1140,16 @@ fn extract_time_range(result_dir: &str) -> Result<(i64, i64)> {
             let content = std::fs::read_to_string(&path)?;
             let val: serde_json::Value = serde_json::from_str(&content)?;
             if let Some(metadata) = val.get("metadata") {
-                let begin = metadata.get("beginTime")
+                let begin = metadata
+                    .get("beginTime")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 if begin.is_empty() {
                     continue;
                 }
                 let start_ts = parse_dimster_timestamp(begin)?;
-                let end = metadata.get("endTime")
+                let end = metadata
+                    .get("endTime")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let end_ts = if end.is_empty() {
@@ -1007,7 +1167,10 @@ fn extract_time_range(result_dir: &str) -> Result<(i64, i64)> {
             }
         }
     }
-    bail!("No result JSON with metadata.beginTime found in {}", result_dir)
+    bail!(
+        "No result JSON with metadata.beginTime found in {}",
+        result_dir
+    )
 }
 
 /// One scenario's wall-clock range as serialized for export.py. The Python
@@ -1045,7 +1208,11 @@ fn extract_scenario_boundaries(result_dir: &str) -> Result<Vec<ScenarioBoundary>
             continue;
         };
         for sc in scenarios {
-            let name = sc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = sc
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let begin = sc.get("beginTime").and_then(|v| v.as_str()).unwrap_or("");
             let end = sc.get("endTime").and_then(|v| v.as_str()).unwrap_or("");
             // Synthetic merged scenarios and unfinished scenarios won't have
@@ -1053,13 +1220,16 @@ fn extract_scenario_boundaries(result_dir: &str) -> Result<Vec<ScenarioBoundary>
             if begin.is_empty() || end.is_empty() {
                 continue;
             }
-            let (Ok(start_ts), Ok(end_ts)) = (
-                parse_dimster_timestamp(begin),
-                parse_dimster_timestamp(end),
-            ) else {
+            let (Ok(start_ts), Ok(end_ts)) =
+                (parse_dimster_timestamp(begin), parse_dimster_timestamp(end))
+            else {
                 continue;
             };
-            out.push(ScenarioBoundary { name, start: start_ts, end: end_ts });
+            out.push(ScenarioBoundary {
+                name,
+                start: start_ts,
+                end: end_ts,
+            });
         }
     }
     // Sort by start time so the Python bin-packer can walk in chronological order
@@ -1087,8 +1257,20 @@ fn parse_dimster_timestamp(s: &str) -> Result<i64> {
     for y in 1970..year {
         days += if is_leap_year(y) { 366 } else { 365 };
     }
-    let month_days = [31, 28 + if is_leap_year(year) { 1 } else { 0 },
-                      31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        28 + if is_leap_year(year) { 1 } else { 0 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     for m in 0..(month - 1) as usize {
         days += month_days[m];
     }
@@ -1106,7 +1288,12 @@ fn count_json_files(dir: &Path) -> usize {
 }
 
 /// Copy results, save logs, export dashboards, generate charts, and print summary.
-pub fn collect_results(kubectl: &Kubectl, output_dir: &str, script_dir: &Path, stop: &AtomicBool) -> Result<()> {
+pub fn collect_results(
+    kubectl: &Kubectl,
+    output_dir: &str,
+    script_dir: &Path,
+    stop: &AtomicBool,
+) -> Result<()> {
     let result_dir = copy_results_from_pvc(kubectl, output_dir, stop)?;
     if let Some(ref dir) = result_dir {
         if !stop.load(Ordering::Relaxed) {
@@ -1206,9 +1393,7 @@ fn print_result_summary(result_dir: &str) {
         let mut kafka_logs: Vec<String> = Vec::new();
         if kafka_dir.is_dir() {
             if let Ok(pods) = std::fs::read_dir(&kafka_dir) {
-                let mut pod_dirs: Vec<_> = pods.flatten()
-                    .filter(|e| e.path().is_dir())
-                    .collect();
+                let mut pod_dirs: Vec<_> = pods.flatten().filter(|e| e.path().is_dir()).collect();
                 pod_dirs.sort_by_key(|e| e.file_name());
                 for pod_entry in pod_dirs {
                     let pod_name = pod_entry.file_name().to_string_lossy().to_string();
@@ -1286,17 +1471,38 @@ mod tests {
         let yr: i64 = std::str::from_utf8(&bytes[0..4]).unwrap().parse().unwrap();
         let mo: i64 = std::str::from_utf8(&bytes[5..7]).unwrap().parse().unwrap();
         let da: i64 = std::str::from_utf8(&bytes[8..10]).unwrap().parse().unwrap();
-        let hr: i64 = std::str::from_utf8(&bytes[11..13]).unwrap().parse().unwrap();
-        let mi: i64 = std::str::from_utf8(&bytes[14..16]).unwrap().parse().unwrap();
-        let se: i64 = std::str::from_utf8(&bytes[17..19]).unwrap().parse().unwrap();
+        let hr: i64 = std::str::from_utf8(&bytes[11..13])
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mi: i64 = std::str::from_utf8(&bytes[14..16])
+            .unwrap()
+            .parse()
+            .unwrap();
+        let se: i64 = std::str::from_utf8(&bytes[17..19])
+            .unwrap()
+            .parse()
+            .unwrap();
         // Re-implement the inverse of format_log_timestamp using the same
         // leap-year and month-table logic so the round-trip is consistent.
         let mut days: i64 = 0;
         for y in 1970..yr {
             days += if is_leap_year(y) { 366 } else { 365 };
         }
-        let month_days = [31, 28 + if is_leap_year(yr) { 1 } else { 0 },
-                          31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let month_days = [
+            31,
+            28 + if is_leap_year(yr) { 1 } else { 0 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         for m in 0..(mo - 1) as usize {
             days += month_days[m];
         }
@@ -1328,7 +1534,10 @@ mod tests {
             Some("2026-05-01 12:00:00.123"),
         );
         // Stack trace continuation
-        assert_eq!(leading_log_timestamp("\tat com.example.Foo(Bar.java:42)\n"), None);
+        assert_eq!(
+            leading_log_timestamp("\tat com.example.Foo(Bar.java:42)\n"),
+            None
+        );
         // Wrong width
         assert_eq!(leading_log_timestamp("2026-5-01 12:00:00.123 hi\n"), None);
         // Letters where digits expected

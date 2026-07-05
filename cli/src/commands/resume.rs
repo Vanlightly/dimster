@@ -33,7 +33,9 @@ pub fn run(
     if status.contains("\"RUNNING\"") || status.contains("\"STOPPING\"") {
         bail!(
             "Coordinator is busy ({}). Use 'dimster reattach {}' to follow it, or 'dimster stop {}' first.",
-            status, environment, environment
+            status,
+            environment,
+            environment
         );
     }
 
@@ -46,8 +48,12 @@ pub fn run(
     // Discover workers
     println!("==> Discovering worker pods...");
     let worker_ips = kubectl.run(&[
-        "get", "pods", "-l", "app=benchmark-worker",
-        "-o", "jsonpath={range .items[?(@.status.phase==\"Running\")]}{.status.podIP}{\"\\n\"}{end}",
+        "get",
+        "pods",
+        "-l",
+        "app=benchmark-worker",
+        "-o",
+        "jsonpath={range .items[?(@.status.phase==\"Running\")]}{.status.podIP}{\"\\n\"}{end}",
     ])?;
 
     let workers: Vec<String> = worker_ips

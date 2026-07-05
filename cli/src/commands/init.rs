@@ -14,10 +14,9 @@
 /// an existing user-edited file. The new file always opens with a commented
 /// guidance header covering image-naming rules per target, kubectl context
 /// discovery, CPU/memory sizing tips, and node-label conventions.
-
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::config::Distro;
 
@@ -309,11 +308,11 @@ const TEMPLATE_REMOTE_EXT: &str = "  # Example: remote k8s (EKS/GKE/etc.) + depl
 /// gets distro-substituted; the two remote bodies are static.
 fn template_envs(distro: Distro) -> Vec<(&'static str, String)> {
     vec![
-        ("local",             render(TEMPLATE_LOCAL, distro)),
-        ("exampleLocalFull",  render(TEMPLATE_LOCAL_FULL, distro)),
-        ("exampleLocalExt",   render(TEMPLATE_LOCAL_EXT, distro)),
+        ("local", render(TEMPLATE_LOCAL, distro)),
+        ("exampleLocalFull", render(TEMPLATE_LOCAL_FULL, distro)),
+        ("exampleLocalExt", render(TEMPLATE_LOCAL_EXT, distro)),
         ("exampleRemoteFull", TEMPLATE_REMOTE_FULL.to_string()),
-        ("exampleRemoteExt",  TEMPLATE_REMOTE_EXT.to_string()),
+        ("exampleRemoteExt", TEMPLATE_REMOTE_EXT.to_string()),
     ]
 }
 
@@ -392,12 +391,8 @@ pub fn run(config_path: &Path, distro: Distro) -> Result<()> {
         "Template written to {} — added: local, exampleLocalFull, exampleLocalExt, exampleRemoteFull, exampleRemoteExt",
         config_path.display()
     );
-    println!(
-        "Edit the file to set image registries, kubectl contexts, and resource sizes."
-    );
-    println!(
-        "Uncomment an example block by removing the leading '#' from each of its lines."
-    );
+    println!("Edit the file to set image registries, kubectl contexts, and resource sizes.");
+    println!("Uncomment an example block by removing the leading '#' from each of its lines.");
     Ok(())
 }
 
@@ -488,28 +483,60 @@ mod tests {
     #[test]
     fn test_render_per_distro() {
         for (d, ctx, dis, host) in [
-            (Distro::Minikube,      "minikube",       "minikube",       "host.minikube.internal"),
-            (Distro::K3d,           "k3d-dimster",    "k3d",            "host.k3d.internal"),
-            (Distro::Kind,          "kind-dimster",   "kind",           "host.docker.internal"),
-            (Distro::DockerDesktop, "docker-desktop", "docker-desktop", "host.docker.internal"),
+            (
+                Distro::Minikube,
+                "minikube",
+                "minikube",
+                "host.minikube.internal",
+            ),
+            (Distro::K3d, "k3d-dimster", "k3d", "host.k3d.internal"),
+            (Distro::Kind, "kind-dimster", "kind", "host.docker.internal"),
+            (
+                Distro::DockerDesktop,
+                "docker-desktop",
+                "docker-desktop",
+                "host.docker.internal",
+            ),
         ] {
             for tmpl in [TEMPLATE_LOCAL, TEMPLATE_LOCAL_FULL, TEMPLATE_LOCAL_EXT] {
                 let rendered = render(tmpl, d);
-                assert!(rendered.contains(&format!("context: {ctx}"))
-                            || rendered.contains(&format!("context: {ctx}\n")),
-                    "{:?}: missing 'context: {}'", d, ctx);
-                assert!(rendered.contains(&format!("distro: {dis}")),
-                    "{:?}: missing 'distro: {}'", d, dis);
-                assert!(!rendered.contains("__CONTEXT__"),
-                    "{:?}: unrendered __CONTEXT__", d);
-                assert!(!rendered.contains("__DISTRO__"),
-                    "{:?}: unrendered __DISTRO__", d);
+                assert!(
+                    rendered.contains(&format!("context: {ctx}"))
+                        || rendered.contains(&format!("context: {ctx}\n")),
+                    "{:?}: missing 'context: {}'",
+                    d,
+                    ctx
+                );
+                assert!(
+                    rendered.contains(&format!("distro: {dis}")),
+                    "{:?}: missing 'distro: {}'",
+                    d,
+                    dis
+                );
+                assert!(
+                    !rendered.contains("__CONTEXT__"),
+                    "{:?}: unrendered __CONTEXT__",
+                    d
+                );
+                assert!(
+                    !rendered.contains("__DISTRO__"),
+                    "{:?}: unrendered __DISTRO__",
+                    d
+                );
             }
             // host_internal substitution is only relevant in the external template.
             let ext = render(TEMPLATE_LOCAL_EXT, d);
-            assert!(ext.contains(host), "{:?}: missing host_internal '{}'", d, host);
-            assert!(!ext.contains("__HOST_INTERNAL__"),
-                "{:?}: unrendered __HOST_INTERNAL__", d);
+            assert!(
+                ext.contains(host),
+                "{:?}: missing host_internal '{}'",
+                d,
+                host
+            );
+            assert!(
+                !ext.contains("__HOST_INTERNAL__"),
+                "{:?}: unrendered __HOST_INTERNAL__",
+                d
+            );
         }
     }
 
@@ -528,7 +555,10 @@ mod tests {
 
         // File parses as valid DimsterConfig.
         let cfg: DimsterConfig = serde_yaml::from_str(&content).unwrap_or_else(|e| {
-            panic!("template file should parse, error: {}\n--- file ---\n{}", e, content)
+            panic!(
+                "template file should parse, error: {}\n--- file ---\n{}",
+                e, content
+            )
         });
 
         // Active `local` env picks up the chosen distro's defaults.
@@ -556,15 +586,23 @@ mod tests {
         // `local`, once in commented exampleLocalFull, once in commented
         // exampleLocalExt. The remote examples use a different (registry)
         // context so they don't add to the count.
-        assert_eq!(content.matches("k3d-dimster").count(), 3,
-            "expected 'k3d-dimster' in active local + 2 commented locals\n{}", content);
+        assert_eq!(
+            content.matches("k3d-dimster").count(),
+            3,
+            "expected 'k3d-dimster' in active local + 2 commented locals\n{}",
+            content
+        );
 
         // The external example's bootstrap.servers uses the k3d-specific
         // host hostname, not the literal "minikube" value.
-        assert!(content.contains("host.k3d.internal:19092"),
-            "expected k3d host in external example bootstrap.servers");
-        assert!(!content.contains("host.minikube.internal"),
-            "minikube host hostname leaked into k3d-rendered file");
+        assert!(
+            content.contains("host.k3d.internal:19092"),
+            "expected k3d host in external example bootstrap.servers"
+        );
+        assert!(
+            !content.contains("host.minikube.internal"),
+            "minikube host hostname leaked into k3d-rendered file"
+        );
 
         // Standard top-level sections present.
         assert!(content.contains("kubernetes:\n  namespace: dimster"));
@@ -612,8 +650,11 @@ mod tests {
 
         let err = run(&config_path, Distro::Minikube).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(msg.contains("already exists"),
-            "expected 'already exists' in error, got: {}", msg);
+        assert!(
+            msg.contains("already exists"),
+            "expected 'already exists' in error, got: {}",
+            msg
+        );
 
         // File is byte-identical — refused without any modification.
         let after = std::fs::read_to_string(&config_path).unwrap();

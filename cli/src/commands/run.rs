@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Result, bail};
 use serde::Serialize;
 
+use crate::commands::find_coordinator;
 use crate::commands::kafka_tls;
 use crate::commands::results;
 use crate::commands::run_configs;
-use crate::commands::find_coordinator;
 use crate::config::{ConnectionConfig, KafkaTlsConfig};
 use crate::kubectl::Kubectl;
 
@@ -91,10 +91,15 @@ pub fn run(
         println!("==> Checking Kafka readiness...");
         let mut kafka_ready = false;
         for attempt in 0..30 {
-            let total_str = kubectl.run(&[
-                "get", "statefulset", "kafka",
-                "-o", "jsonpath={.spec.replicas}",
-            ]).unwrap_or_else(|_| "0".to_string());
+            let total_str = kubectl
+                .run(&[
+                    "get",
+                    "statefulset",
+                    "kafka",
+                    "-o",
+                    "jsonpath={.spec.replicas}",
+                ])
+                .unwrap_or_else(|_| "0".to_string());
             let total: usize = total_str.trim().parse().unwrap_or(0);
 
             if total == 0 {
@@ -116,7 +121,10 @@ pub fn run(
                 kafka_ready = true;
                 break;
             }
-            println!("    Waiting for Kafka pods ({}/{} ready)...", ready_count, total);
+            println!(
+                "    Waiting for Kafka pods ({}/{} ready)...",
+                ready_count, total
+            );
             std::thread::sleep(std::time::Duration::from_secs(10));
             if stop.load(Ordering::Relaxed) {
                 bail!("Interrupted while waiting for Kafka readiness");
@@ -140,15 +148,22 @@ pub fn run(
         .exec_curl(&coord_pod, "GET", "http://localhost:8080/status", None)
         .unwrap_or_else(|_| "{}".to_string());
     if status.contains("\"RUNNING\"") || status.contains("\"STOPPING\"") {
-        bail!("Coordinator is busy ({}). Use 'dimster stop' first.", status);
+        bail!(
+            "Coordinator is busy ({}). Use 'dimster stop' first.",
+            status
+        );
     }
     println!("    Coordinator is ready ({}).", coord_pod);
 
     // Discover workers
     println!("==> Discovering worker pods...");
     let worker_ips = kubectl.run(&[
-        "get", "pods", "-l", "app=benchmark-worker",
-        "-o", "jsonpath={range .items[?(@.status.phase==\"Running\")]}{.status.podIP}{\"\\n\"}{end}",
+        "get",
+        "pods",
+        "-l",
+        "app=benchmark-worker",
+        "-o",
+        "jsonpath={range .items[?(@.status.phase==\"Running\")]}{.status.podIP}{\"\\n\"}{end}",
     ])?;
 
     let workers: Vec<String> = worker_ips
@@ -171,8 +186,11 @@ pub fn run(
     } else {
         let replicas_str = kubectl
             .run(&[
-                "get", "statefulset", "kafka",
-                "-o", "jsonpath={.spec.replicas}",
+                "get",
+                "statefulset",
+                "kafka",
+                "-o",
+                "jsonpath={.spec.replicas}",
             ])
             .unwrap_or_else(|_| "0".to_string());
         replicas_str.trim().parse().unwrap_or(0)
@@ -222,13 +240,14 @@ pub fn run(
     // below. The value carries no secret — the unencrypted PEM key is the
     // only "credential" needed at runtime, and that's already mounted into
     // the pod from the kafka-tls-client Secret.
-    let tls_active = args.tls_config.is_some()
-        && (kafka_config_uses_tls || any_workload_uses_tls);
+    let tls_active = args.tls_config.is_some() && (kafka_config_uses_tls || any_workload_uses_tls);
     if tls_active {
         let tls = args.tls_config.as_ref().unwrap();
         println!(
             "    Detected TLS opt-in (kafka-config: {}, workloads: {}); using SSL bootstrap on port {}",
-            kafka_config_uses_tls, any_workload_uses_tls, tls.resolved_ssl_port()
+            kafka_config_uses_tls,
+            any_workload_uses_tls,
+            tls.resolved_ssl_port()
         );
     }
 
@@ -254,7 +273,12 @@ pub fn run(
             9092
         };
         let bs: String = (0..kafka_replicas)
-            .map(|i| format!("kafka-{}.kafka-headless.{}.svc.cluster.local:{}", i, ns, port))
+            .map(|i| {
+                format!(
+                    "kafka-{}.kafka-headless.{}.svc.cluster.local:{}",
+                    i, ns, port
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
         println!("    Bootstrap: {}", bs);
@@ -319,7 +343,9 @@ pub fn run(
         || kafka_config_yaml
             .as_ref()
             .map_or(false, |c| c.contains("bootstrap.servers:"))
-        || workloads_map.values().any(|w| w.contains("bootstrap.servers:"));
+        || workloads_map
+            .values()
+            .any(|w| w.contains("bootstrap.servers:"));
 
     if !has_bootstrap {
         bail!(
@@ -457,9 +483,11 @@ pub fn try_handle_modify(args: &[String]) -> Option<Result<()>> {
     }
     let env = match env {
         Some(e) => e,
-        None => return Some(Err(anyhow::anyhow!(
-            "`dimster run --modify` requires an environment name (e.g. `dimster run localBeefy --modify ...`)"
-        ))),
+        None => {
+            return Some(Err(anyhow::anyhow!(
+                "`dimster run --modify` requires an environment name (e.g. `dimster run localBeefy --modify ...`)"
+            )));
+        }
     };
 
     Some(execute_modify(env, &args[modify_idx.unwrap() + 1..]))
@@ -484,21 +512,34 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
     let mut iter = modify_args.iter();
     while let Some(flag) = iter.next() {
         match flag.as_str() {
-            "--terminate" => { terminate = true; continue; }
-            "--discard-stats" => { discard_stats = true; continue; }
-            "--skip-phase" => { skip_phase = true; continue; }
+            "--terminate" => {
+                terminate = true;
+                continue;
+            }
+            "--discard-stats" => {
+                discard_stats = true;
+                continue;
+            }
+            "--skip-phase" => {
+                skip_phase = true;
+                continue;
+            }
             "--run-for-minutes" => {
-                let v = iter.next().ok_or_else(|| anyhow::anyhow!(
-                    "--run-for-minutes requires a value"))?;
-                run_for_minutes = Some(v.parse().map_err(|_| anyhow::anyhow!(
-                    "--run-for-minutes value must be an integer, got {}", v))?);
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--run-for-minutes requires a value"))?;
+                run_for_minutes = Some(v.parse().map_err(|_| {
+                    anyhow::anyhow!("--run-for-minutes value must be an integer, got {}", v)
+                })?);
                 continue;
             }
             "--restart-consumers" => {
-                let v = iter.next().ok_or_else(|| anyhow::anyhow!(
-                    "--restart-consumers requires a value"))?;
-                let count = v.parse::<i64>().map_err(|_| anyhow::anyhow!(
-                    "--restart-consumers value must be an integer, got {}", v))?;
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--restart-consumers requires a value"))?;
+                let count = v.parse::<i64>().map_err(|_| {
+                    anyhow::anyhow!("--restart-consumers value must be an integer, got {}", v)
+                })?;
                 if count < 0 {
                     bail!("--restart-consumers must be >= 0, got {}", count);
                 }
@@ -512,8 +553,9 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
                         bail!("--set expects key=value pairs, got flag: {}", arg);
                     }
 
-                    let (key, value_raw) = arg.split_once('=').ok_or_else(|| anyhow::anyhow!(
-                        "--set expects key=value format, got: {}", arg))?;
+                    let (key, value_raw) = arg.split_once('=').ok_or_else(|| {
+                        anyhow::anyhow!("--set expects key=value format, got: {}", arg)
+                    })?;
 
                     if key.is_empty() {
                         bail!("--set: key cannot be empty in: {}", arg);
@@ -523,7 +565,9 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
 
                     if let Some(path) = key.strip_prefix("kafkaConfig.") {
                         if path.is_empty() {
-                            bail!("--set kafkaConfig requires a path, e.g. kafkaConfig.producerConfig.batch.size=65536");
+                            bail!(
+                                "--set kafkaConfig requires a path, e.g. kafkaConfig.producerConfig.batch.size=65536"
+                            );
                         }
                         kafka_overrides.insert(path.to_string(), value);
                     } else {
@@ -545,8 +589,11 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
                         ];
 
                         if !VALID_WORKLOAD_FIELDS.contains(&key) {
-                            bail!("not a supported workload field: {}. Valid fields: {}",
-                                  key, VALID_WORKLOAD_FIELDS.join(", "));
+                            bail!(
+                                "not a supported workload field: {}. Valid fields: {}",
+                                key,
+                                VALID_WORKLOAD_FIELDS.join(", ")
+                            );
                         }
 
                         workload_overrides.insert(key.to_string(), value);
@@ -558,20 +605,32 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         }
 
         // If we get here, it's an unrecognized flag
-        bail!("unrecognized modify flag: {}. Valid action flags: --terminate, --discard-stats, \
-               --skip-phase, --run-for-minutes, --restart-consumers, --set", flag);
+        bail!(
+            "unrecognized modify flag: {}. Valid action flags: --terminate, --discard-stats, \
+               --skip-phase, --run-for-minutes, --restart-consumers, --set",
+            flag
+        );
     }
 
     // Client-side combo validation — mirrors the coordinator-side rules so
     // the operator gets a fast, descriptive error instead of a 409 round-trip.
     let has_field_overrides = !workload_overrides.is_empty() || !kafka_overrides.is_empty();
-    if !has_field_overrides && !terminate && !discard_stats && !skip_phase
-       && run_for_minutes.is_none() && restart_consumers_count.is_none() {
-        bail!("--modify requires at least one workload override, --kafkaConfig.* override, \
+    if !has_field_overrides
+        && !terminate
+        && !discard_stats
+        && !skip_phase
+        && run_for_minutes.is_none()
+        && restart_consumers_count.is_none()
+    {
+        bail!(
+            "--modify requires at least one workload override, --kafkaConfig.* override, \
                or action flag (--terminate / --discard-stats / --run-for-minutes / \
-               --skip-phase / --restart-consumers)");
+               --skip-phase / --restart-consumers)"
+        );
     }
-    if terminate && (has_field_overrides || discard_stats || skip_phase || run_for_minutes.is_some()) {
+    if terminate
+        && (has_field_overrides || discard_stats || skip_phase || run_for_minutes.is_some())
+    {
         bail!("--terminate must be sent alone (no other --modify fields with it)");
     }
     if skip_phase && (has_field_overrides || discard_stats || run_for_minutes.is_some()) {
@@ -579,16 +638,23 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         bail!("--skip-phase must be sent alone (no other --modify fields with it)");
     }
     if discard_stats && has_field_overrides {
-        bail!("--discard-stats must be sent alone (send field overrides first in a \
-               separate --modify call, then --discard-stats to lock in)");
+        bail!(
+            "--discard-stats must be sent alone (send field overrides first in a \
+               separate --modify call, then --discard-stats to lock in)"
+        );
     }
     if let Some(m) = run_for_minutes {
         if m <= 0 {
             bail!("--run-for-minutes must be > 0, got {}", m);
         }
     }
-    if restart_consumers_count.is_some() && (has_field_overrides || discard_stats
-       || terminate || skip_phase || run_for_minutes.is_some()) {
+    if restart_consumers_count.is_some()
+        && (has_field_overrides
+            || discard_stats
+            || terminate
+            || skip_phase
+            || run_for_minutes.is_some())
+    {
         bail!("--restart-consumers must be sent alone (no other --modify fields with it)");
     }
 
@@ -640,9 +706,17 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         "/tmp/modify-request.json",
     )?;
     let response = kubectl.run(&[
-        "exec", &coord_pod, "--", "curl", "-s", "-X", "POST",
-        "-H", "Content-Type: application/json",
-        "-d", "@/tmp/modify-request.json",
+        "exec",
+        &coord_pod,
+        "--",
+        "curl",
+        "-s",
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        "@/tmp/modify-request.json",
         "http://localhost:8080/modify",
     ])?;
     println!("    {}", response);
@@ -671,16 +745,22 @@ fn coerce_value(s: &str) -> serde_json::Value {
             return serde_json::Value::Number(n);
         }
     }
-    if s.eq_ignore_ascii_case("true") { return serde_json::Value::Bool(true); }
-    if s.eq_ignore_ascii_case("false") { return serde_json::Value::Bool(false); }
+    if s.eq_ignore_ascii_case("true") {
+        return serde_json::Value::Bool(true);
+    }
+    if s.eq_ignore_ascii_case("false") {
+        return serde_json::Value::Bool(false);
+    }
     serde_json::Value::String(s.to_string())
 }
 
 /// Build a Kubectl for the modify path. The main path threads kubectl
 /// down through a long argument list — for modify we just need the
 /// env-resolved context + namespace.
-fn make_kubectl_for_modify(config: &crate::config::DimsterConfig, env: &str)
-    -> Result<crate::kubectl::Kubectl> {
+fn make_kubectl_for_modify(
+    config: &crate::config::DimsterConfig,
+    env: &str,
+) -> Result<crate::kubectl::Kubectl> {
     config.get_env(env)?;
     let context = config.kubectl_context(env);
     let ns = config.kubectl_namespace(env);
@@ -700,26 +780,26 @@ fn find_config_path() -> Result<std::path::PathBuf> {
     let mut dir = std::env::current_dir()?;
     for _ in 0..5 {
         let candidate = dir.join("dimster-config.yaml");
-        if candidate.exists() { return Ok(candidate); }
-        if let Some(p) = dir.parent() { dir = p.to_path_buf(); } else { break; }
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+        if let Some(p) = dir.parent() {
+            dir = p.to_path_buf();
+        } else {
+            break;
+        }
     }
     Ok(std::path::PathBuf::from("dimster-config.yaml"))
 }
 
 /// Stream coordinator logs and poll for completion.
 /// Returns Ok(true) if detached via Ctrl+C, Ok(false) if completed normally.
-pub fn stream_and_wait(
-    kubectl: &Kubectl,
-    coord_pod: &str,
-    stop: Arc<AtomicBool>,
-) -> Result<bool> {
+pub fn stream_and_wait(kubectl: &Kubectl, coord_pod: &str, stop: Arc<AtomicBool>) -> Result<bool> {
     let log_since = chrono_now_utc();
 
     // Spawn kubectl logs -f as a child process
     let since_arg = format!("--since-time={}", log_since);
-    let mut log_child = kubectl.spawn(&[
-        "logs", "-f", coord_pod, &since_arg,
-    ])?;
+    let mut log_child = kubectl.spawn(&["logs", "-f", coord_pod, &since_arg])?;
 
     // Share the log child's PID with the poller so it can kill it to unblock the reader
     let log_pid = log_child.id();
@@ -800,9 +880,7 @@ fn inject_connection(content: &str, connection_lines: Option<&[String]>) -> Stri
     // Build a map of YAML key -> full line from connection config
     let conn_map: HashMap<&str, &str> = conn_lines
         .iter()
-        .filter_map(|line| {
-            line.split_once(':').map(|(k, _)| (k.trim(), line.as_str()))
-        })
+        .filter_map(|line| line.split_once(':').map(|(k, _)| (k.trim(), line.as_str())))
         .collect();
 
     let src_lines: Vec<&str> = content.lines().collect();
@@ -832,7 +910,10 @@ fn inject_connection(content: &str, connection_lines: Option<&[String]>) -> Stri
         if in_common_config {
             let trimmed = line.trim();
             // Still in the block if indented or empty
-            if trimmed.is_empty() || line.starts_with(common_config_indent) || line.starts_with('\t') {
+            if trimmed.is_empty()
+                || line.starts_with(common_config_indent)
+                || line.starts_with('\t')
+            {
                 // Check if this line has a YAML key we want to replace
                 if let Some((key, _)) = trimmed.split_once(':') {
                     if let Some(replacement) = conn_map.get(key.trim()) {
@@ -902,7 +983,10 @@ fn opts_into_tls(content: &str) -> bool {
         }
         // Match "security.protocol: SSL" / "SASL_SSL" with optional quotes.
         if let Some((_, value)) = line.split_once(':') {
-            let v = value.trim().trim_matches(|c| c == '"' || c == '\'').to_uppercase();
+            let v = value
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_uppercase();
             if v == "SSL" || v == "SASL_SSL" {
                 return true;
             }
@@ -932,10 +1016,7 @@ fn opts_into_tls(content: &str) -> bool {
 /// for the MVP — TLS workloads are typically short copies of a base
 /// PLAINTEXT workload, and the lost comments live in the un-injected
 /// source file the user authored.
-fn inject_workload_tls(
-    content: &str,
-    ssl_bootstrap: &str,
-) -> Result<Option<String>> {
+fn inject_workload_tls(content: &str, ssl_bootstrap: &str) -> Result<Option<String>> {
     use serde_yaml::Value;
 
     let mut value: Value = serde_yaml::from_str(content)
@@ -982,8 +1063,12 @@ fn inject_workload_tls(
         }
     }
 
-    let serialized = serde_yaml::to_string(&value)
-        .map_err(|e| anyhow::anyhow!("Failed to re-serialize workload YAML after TLS injection: {}", e))?;
+    let serialized = serde_yaml::to_string(&value).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to re-serialize workload YAML after TLS injection: {}",
+            e
+        )
+    })?;
     Ok(Some(serialized))
 }
 
@@ -1020,7 +1105,9 @@ pub(crate) fn exec_curl_standalone(
     if let Some(ctx) = context {
         cmd.args(["--context", ctx]);
     }
-    cmd.args(["-n", namespace, "exec", pod, "--", "curl", "-sf", "-X", method, url]);
+    cmd.args([
+        "-n", namespace, "exec", pod, "--", "curl", "-sf", "-X", method, url,
+    ]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
 
@@ -1124,9 +1211,12 @@ topicConfig:
         // YAML's flexible quoting / ordering rules)
         let v: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         let cc = v
-            .get("baseWorkload").unwrap()
-            .get("kafkaConfig").unwrap()
-            .get("commonConfig").unwrap();
+            .get("baseWorkload")
+            .unwrap()
+            .get("kafkaConfig")
+            .unwrap()
+            .get("commonConfig")
+            .unwrap();
 
         assert_eq!(
             cc.get("bootstrap.servers").and_then(|v| v.as_str()),
@@ -1147,10 +1237,14 @@ topicConfig:
         );
         // Other parts of the workload are untouched
         assert_eq!(
-            v.get("baseWorkload").unwrap()
-                .get("kafkaConfig").unwrap()
-                .get("producerConfig").unwrap()
-                .get("acks").and_then(|v| v.as_str()),
+            v.get("baseWorkload")
+                .unwrap()
+                .get("kafkaConfig")
+                .unwrap()
+                .get("producerConfig")
+                .unwrap()
+                .get("acks")
+                .and_then(|v| v.as_str()),
             Some("all")
         );
     }
@@ -1172,9 +1266,12 @@ baseWorkload:
             .unwrap();
         let v: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         let cc = v
-            .get("baseWorkload").unwrap()
-            .get("kafkaConfig").unwrap()
-            .get("commonConfig").unwrap();
+            .get("baseWorkload")
+            .unwrap()
+            .get("kafkaConfig")
+            .unwrap()
+            .get("commonConfig")
+            .unwrap();
         assert_eq!(
             cc.get("ssl.keystore.location").and_then(|v| v.as_str()),
             Some("/custom/keystore.pem"),

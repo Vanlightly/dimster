@@ -16,7 +16,9 @@ pub fn run(kubectl: &Kubectl, stop: &AtomicBool) -> Result<()> {
     if !response.is_empty() {
         println!("    {}", response);
     } else {
-        println!("    Stop signal sent. The current workload will finish and results will be saved.");
+        println!(
+            "    Stop signal sent. The current workload will finish and results will be saved."
+        );
     }
 
     println!("==> Waiting for benchmark to complete...");

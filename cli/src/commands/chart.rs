@@ -41,7 +41,9 @@ pub fn run(results_dir: &str, script_dir: &Path) -> Result<()> {
             .status()?;
 
         if !status.success() {
-            let name = script.trim_start_matches("generate_").trim_end_matches("_charts.py");
+            let name = script
+                .trim_start_matches("generate_")
+                .trim_end_matches("_charts.py");
             eprintln!("Warning: {} chart generation failed", name);
         }
     }

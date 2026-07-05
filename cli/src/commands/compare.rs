@@ -16,9 +16,7 @@ pub fn run(files: &[String], output: Option<&str>, script_dir: &Path) -> Result<
     let output_dir = match output {
         Some(d) => d.to_string(),
         None => {
-            let parent = Path::new(entries[0].1)
-                .parent()
-                .unwrap_or(Path::new("."));
+            let parent = Path::new(entries[0].1).parent().unwrap_or(Path::new("."));
             parent.to_string_lossy().to_string()
         }
     };
@@ -53,7 +51,10 @@ pub fn run(files: &[String], output: Option<&str>, script_dir: &Path) -> Result<
 
 fn parse_labeled_file(arg: &str) -> Result<(&str, &str)> {
     let Some((label, file)) = arg.split_once('=') else {
-        bail!("Invalid format '{}': expected LABEL=FILE (e.g. t1=results.json)", arg);
+        bail!(
+            "Invalid format '{}': expected LABEL=FILE (e.g. t1=results.json)",
+            arg
+        );
     };
     if label.is_empty() {
         bail!("Empty label in '{}'", arg);

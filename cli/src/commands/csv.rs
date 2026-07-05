@@ -35,22 +35,30 @@ impl ExploreResult {
         }
     }
     fn effective_environment(&self) -> &str {
-        self.metadata.environment.as_deref()
+        self.metadata
+            .environment
+            .as_deref()
             .or(self.environment.as_deref())
             .unwrap_or("")
     }
     fn effective_system(&self) -> &str {
-        self.metadata.system.as_deref()
+        self.metadata
+            .system
+            .as_deref()
             .or(self.system.as_deref())
             .unwrap_or("")
     }
     fn effective_begin_time(&self) -> &str {
-        self.metadata.begin_time.as_deref()
+        self.metadata
+            .begin_time
+            .as_deref()
             .or(self.begin_time.as_deref())
             .unwrap_or("")
     }
     fn effective_end_time(&self) -> &str {
-        self.metadata.end_time.as_deref()
+        self.metadata
+            .end_time
+            .as_deref()
             .or(self.end_time.as_deref())
             .unwrap_or("")
     }
@@ -548,8 +556,12 @@ fn convert_run(result: &RunResult, rows: &mut Vec<String>) {
                 wc.test_duration_minutes,
                 wc.warmup_duration_minutes,
                 wc.sample_rate_millis,
-                prod_avg, prod_min, prod_max,
-                con_avg, con_min, con_max,
+                prod_avg,
+                prod_min,
+                prod_max,
+                con_avg,
+                con_min,
+                con_max,
                 r.aggregated_publish_latency_avg,
                 r.aggregated_publish_latency_p50,
                 r.aggregated_publish_latency_p75,
@@ -594,8 +606,7 @@ fn convert_drain_backlog(result: &DrainBacklogResult, rows: &mut Vec<String>) {
             // Average MB/s consumed during drain. Guard against div-by-zero
             // for the timeout case where drain_duration_ms is 0.
             let drain_throughput_mbs = if d.drain_duration_ms > 0 {
-                (d.backlog_size_bytes as f64 / 1_048_576.0)
-                    / (d.drain_duration_ms as f64 / 1000.0)
+                (d.backlog_size_bytes as f64 / 1_048_576.0) / (d.drain_duration_ms as f64 / 1000.0)
             } else {
                 0.0
             };

@@ -33,7 +33,7 @@ use std::process::Command;
 use anyhow::{Result, bail};
 
 use crate::commands::is_registry_image;
-use crate::config::{Distro, DimsterConfig};
+use crate::config::{DimsterConfig, Distro};
 
 pub fn run(
     config: &DimsterConfig,
@@ -69,7 +69,9 @@ pub fn run(
         let env_config = config.environments.get(t.as_str());
         let (flavor, version) = match env_config {
             Some(e) => e.kafka_flavor()?,
-            None => crate::config::parse_kafka_client_version(crate::config::DEFAULT_KAFKA_VERSION)?,
+            None => {
+                crate::config::parse_kafka_client_version(crate::config::DEFAULT_KAFKA_VERSION)?
+            }
         };
         resolved.push(Target {
             name: t.as_str(),
@@ -118,9 +120,7 @@ pub fn run(
     // referencing any of the tags resolve end-to-end. `all_tags` already
     // deduplicates, so pushing/loading happens at most once per tag.
     for r in &resolved {
-        let repo = r.env
-            .and_then(|e| e.image.as_deref())
-            .unwrap_or("dimster");
+        let repo = r.env.and_then(|e| e.image.as_deref()).unwrap_or("dimster");
         let local_tags = all_tags(local_image, image_tag, &r.version);
         let repo_tags = all_tags(repo, image_tag, &r.version);
 
@@ -148,8 +148,10 @@ pub fn run(
             for tag in &local_tags {
                 load_image_into_distro(distro, tag, context)?;
             }
-            println!("==> Built: {} (kafka-clients {}) for env {}",
-                     local_tags[0], r.version, r.name);
+            println!(
+                "==> Built: {} (kafka-clients {}) for env {}",
+                local_tags[0], r.version, r.name
+            );
         }
     }
 
@@ -207,9 +209,7 @@ fn docker_tag(source: &str, dest: &str) -> Result<()> {
 /// uniform error message; the caller is responsible for echoing context
 /// before/after.
 fn docker_push(image: &str) -> Result<()> {
-    let status = Command::new("docker")
-        .args(["push", image])
-        .status()?;
+    let status = Command::new("docker").args(["push", image]).status()?;
     if !status.success() {
         bail!("Docker push failed: {}", image);
     }
@@ -270,7 +270,12 @@ fn ensure_dimster_base(script_dir: &Path) -> Result<()> {
 /// runtime stage then unpacks the produced tarball. Each (flavor, version)
 /// invocation produces one image - layer caching across calls is bounded
 /// by what changes between builds.
-fn build_image_in_docker(base_image: &str, flavor: &str, version: &str, script_dir: &Path) -> Result<()> {
+fn build_image_in_docker(
+    base_image: &str,
+    flavor: &str,
+    version: &str,
+    script_dir: &Path,
+) -> Result<()> {
     println!(
         "==> Building Docker image {} (in-docker Maven build, flavor={}, kafka-clients={})...",
         base_image, flavor, version
@@ -291,7 +296,11 @@ fn build_image_in_docker(base_image: &str, flavor: &str, version: &str, script_d
         .current_dir(script_dir)
         .status()?;
     if !status.success() {
-        bail!("Docker build failed for flavor={} kafka-clients={}", flavor, version);
+        bail!(
+            "Docker build failed for flavor={} kafka-clients={}",
+            flavor,
+            version
+        );
     }
     Ok(())
 }
@@ -333,7 +342,8 @@ fn run_host_maven_for(flavor: &str, version: &str, script_dir: &Path) -> Result<
         bail!(
             "Host Maven build failed for flavor={} kafka-clients={}. Either fix \
              the build, or retry with `--in-docker` to build inside a container instead.",
-            flavor, version
+            flavor,
+            version
         );
     }
     Ok(())
@@ -347,7 +357,10 @@ fn run_host_maven_for(flavor: &str, version: &str, script_dir: &Path) -> Result<
 /// build-arg. KAFKA_VERSION is not needed here - the host already baked
 /// the right version into the tarball.
 fn package_image_from_host_build(base_image: &str, flavor: &str, script_dir: &Path) -> Result<()> {
-    println!("==> Packaging Docker image {} (flavor {})...", base_image, flavor);
+    println!(
+        "==> Packaging Docker image {} (flavor {})...",
+        base_image, flavor
+    );
     let status = Command::new("docker")
         .args([
             "build",
@@ -410,11 +423,7 @@ fn docker_daemon_arch() -> Option<String> {
 // the warning context here as a starting point.
 
 /// Load the freshly built image into the cluster matching `distro`.
-fn load_image_into_distro(
-    distro: Distro,
-    image: &str,
-    context: Option<&str>,
-) -> Result<()> {
+fn load_image_into_distro(distro: Distro, image: &str, context: Option<&str>) -> Result<()> {
     match distro {
         Distro::Minikube => load_into_minikube(image),
         Distro::K3d => load_into_k3d(image, context),
@@ -657,5 +666,4 @@ mod tests {
         let tags = all_tags("dimster", "anything-at-all", "4.2.0");
         assert_eq!(tags[0], format!("dimster:{}-kafka4.2.0", CLI_VERSION));
     }
-
 }

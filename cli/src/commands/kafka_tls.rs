@@ -64,11 +64,7 @@ const VALIDITY_DAYS: u32 = 3650;
 /// `replicas` and `namespace` are used to derive the SANs on the broker
 /// cert: every `kafka-N.kafka-headless.<ns>.svc.cluster.local`, plus the
 /// `kafka-bootstrap.<ns>.svc.cluster.local` Service and its short alias.
-pub fn ensure_secrets(
-    kubectl: &Kubectl,
-    replicas: u32,
-    namespace: &str,
-) -> Result<()> {
+pub fn ensure_secrets(kubectl: &Kubectl, replicas: u32, namespace: &str) -> Result<()> {
     let broker_exists = secret_exists(kubectl, BROKER_SECRET)?;
     let client_exists = secret_exists(kubectl, CLIENT_SECRET)?;
 
@@ -86,7 +82,10 @@ pub fn ensure_secrets(
             let _ = kubectl.run(&["delete", "secret", BROKER_SECRET, "--ignore-not-found"]);
             let _ = kubectl.run(&["delete", "secret", CLIENT_SECRET, "--ignore-not-found"]);
         } else {
-            println!("    Reusing existing TLS secrets ({}, {})", BROKER_SECRET, CLIENT_SECRET);
+            println!(
+                "    Reusing existing TLS secrets ({}, {})",
+                BROKER_SECRET, CLIENT_SECRET
+            );
             return Ok(());
         }
     } else if broker_exists != client_exists {
@@ -125,7 +124,10 @@ pub fn ensure_secrets(
         ],
     )?;
 
-    println!("    Created TLS secrets ({}, {})", BROKER_SECRET, CLIENT_SECRET);
+    println!(
+        "    Created TLS secrets ({}, {})",
+        BROKER_SECRET, CLIENT_SECRET
+    );
     Ok(())
 }
 
@@ -134,10 +136,7 @@ pub fn ensure_secrets(
 /// keep referencing `ssl.keystore.key.password.file=.../password`.
 fn has_legacy_password_key(kubectl: &Kubectl, name: &str) -> bool {
     kubectl
-        .run(&[
-            "get", "secret", name,
-            "-o", "jsonpath={.data.password}",
-        ])
+        .run(&["get", "secret", name, "-o", "jsonpath={.data.password}"])
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false)
 }
@@ -162,10 +161,7 @@ fn generate_bundle(replicas: u32, namespace: &str) -> Result<CertBundle> {
     let mut ca_params = CertificateParams::default();
     ca_params.distinguished_name = dn("dimster-ca");
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-    ];
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     ca_params.not_before = time_now();
     ca_params.not_after = time_after_days(VALIDITY_DAYS);
 
@@ -178,7 +174,10 @@ fn generate_bundle(replicas: u32, namespace: &str) -> Result<CertBundle> {
     // brokers later (without regenerating certs) continues to work.
     let mut sans: Vec<String> = Vec::new();
     for i in 0..replicas {
-        sans.push(format!("kafka-{}.kafka-headless.{}.svc.cluster.local", i, namespace));
+        sans.push(format!(
+            "kafka-{}.kafka-headless.{}.svc.cluster.local",
+            i, namespace
+        ));
     }
     sans.push(format!("*.kafka-headless.{}.svc.cluster.local", namespace));
     sans.push(format!("kafka-bootstrap.{}.svc.cluster.local", namespace));
@@ -312,13 +311,20 @@ pub fn broker_tls_lines(ssl_port: u16, inter_broker: bool) -> Vec<String> {
             "advertised.listeners=PLAINTEXT://${{ADVERTISED_HOSTNAME}}:9092,SSL://${{ADVERTISED_HOSTNAME}}:{}",
             ssl_port
         ),
-        "listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,CONTROLLER:PLAINTEXT".to_string(),
+        "listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,CONTROLLER:PLAINTEXT"
+            .to_string(),
         format!("inter.broker.listener.name={}", inter_listener),
         "ssl.client.auth=required".to_string(),
         "ssl.keystore.type=PEM".to_string(),
-        format!("ssl.keystore.location={}/{}", BROKER_MOUNT_PATH, KEYSTORE_FILE),
+        format!(
+            "ssl.keystore.location={}/{}",
+            BROKER_MOUNT_PATH, KEYSTORE_FILE
+        ),
         "ssl.truststore.type=PEM".to_string(),
-        format!("ssl.truststore.location={}/{}", BROKER_MOUNT_PATH, TRUSTSTORE_FILE),
+        format!(
+            "ssl.truststore.location={}/{}",
+            BROKER_MOUNT_PATH, TRUSTSTORE_FILE
+        ),
     ]
 }
 
@@ -388,7 +394,10 @@ mod tests {
     #[test]
     fn broker_tls_lines_inter_broker_toggle() {
         let off = broker_tls_lines(9094, false);
-        assert!(off.iter().any(|l| l == "inter.broker.listener.name=PLAINTEXT"));
+        assert!(
+            off.iter()
+                .any(|l| l == "inter.broker.listener.name=PLAINTEXT")
+        );
 
         let on = broker_tls_lines(9094, true);
         assert!(on.iter().any(|l| l == "inter.broker.listener.name=SSL"));
@@ -400,7 +409,11 @@ mod tests {
         // broker pointed at a `password` Secret entry and made the SSL
         // factory try to decrypt the (unencrypted) PEM key on listener bind.
         for line in broker_tls_lines(9094, false) {
-            assert!(!line.contains("password"), "unexpected password line: {}", line);
+            assert!(
+                !line.contains("password"),
+                "unexpected password line: {}",
+                line
+            );
         }
     }
 
@@ -412,8 +425,16 @@ mod tests {
         assert!(keystore.is_some(), "missing ssl.keystore.location");
         assert!(keystore.unwrap().1.starts_with(CLIENT_MOUNT_PATH));
         // PEM type for both keystore and truststore (Kafka 2.7+ native PEM support)
-        assert!(pairs.iter().any(|(k, v)| *k == "ssl.keystore.type" && v == "PEM"));
-        assert!(pairs.iter().any(|(k, v)| *k == "ssl.truststore.type" && v == "PEM"));
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| *k == "ssl.keystore.type" && v == "PEM")
+        );
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| *k == "ssl.truststore.type" && v == "PEM")
+        );
         // Regression: must not emit ssl.key.password — Kafka treats the
         // presence of that key as "decrypt the PEM private key" and our
         // PEM key is unencrypted.

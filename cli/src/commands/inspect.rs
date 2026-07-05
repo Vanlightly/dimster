@@ -36,11 +36,21 @@ impl InspectFilters {
 /// everything, matching the Java side).
 fn build_inspect_argv(filters: &InspectFilters) -> Vec<&'static str> {
     let mut out = Vec::new();
-    if filters.dimster_only { out.push("--dimster-only"); }
-    if filters.topics { out.push("--topics"); }
-    if filters.group_offsets { out.push("--group-offsets"); }
-    if filters.group_members { out.push("--group-members"); }
-    if filters.metadata_quorum { out.push("--metadata-quorum"); }
+    if filters.dimster_only {
+        out.push("--dimster-only");
+    }
+    if filters.topics {
+        out.push("--topics");
+    }
+    if filters.group_offsets {
+        out.push("--group-offsets");
+    }
+    if filters.group_members {
+        out.push("--group-members");
+    }
+    if filters.metadata_quorum {
+        out.push("--metadata-quorum");
+    }
     out
 }
 
@@ -141,10 +151,7 @@ else
 fi
 "#;
 
-    kubectl.run_inherit(&[
-        "exec", pod, "-c", "kafka", "--",
-        "bash", "-c", script,
-    ])?;
+    kubectl.run_inherit(&["exec", pod, "-c", "kafka", "--", "bash", "-c", script])?;
 
     Ok(())
 }
@@ -181,14 +188,13 @@ pub fn run_external(
     // Probe for the launcher script. A coordinator image built before this
     // change won't have it; without this probe the user gets a confusing
     // "exec: ...: not found" from kubectl. With it they get a clear hint.
-    let probe = kubectl.run(&[
-        "exec", &pod, "--", "test", "-x", INSPECT_TOOL_PATH,
-    ]);
+    let probe = kubectl.run(&["exec", &pod, "--", "test", "-x", INSPECT_TOOL_PATH]);
     if probe.is_err() {
         bail!(
             "inspect pod image does not include {} — rebuild with 'dimster build <env>' \
              then `kubectl delete pod {}` to refresh",
-            INSPECT_TOOL_PATH, INSPECT_POD,
+            INSPECT_TOOL_PATH,
+            INSPECT_POD,
         );
     }
 
@@ -198,10 +204,7 @@ pub fn run_external(
     // Build the full argv: fixed prefix + filter flag tail. Done as an owned
     // Vec<&str> rather than chaining slices because run_inherit_with_stdin
     // wants a single contiguous &[&str].
-    let mut argv: Vec<&str> = vec![
-        "exec", "-i", &pod, "--",
-        INSPECT_TOOL_PATH, "--props", "-",
-    ];
+    let mut argv: Vec<&str> = vec!["exec", "-i", &pod, "--", INSPECT_TOOL_PATH, "--props", "-"];
     argv.extend(build_inspect_argv(filters));
     kubectl.run_inherit_with_stdin(&props, &argv)?;
 
@@ -231,8 +234,7 @@ fn ensure_inspect_pod(kubectl: &Kubectl) -> Result<String> {
         let manifest = render_inspect_pod_manifest(kubectl.namespace(), &image, &pull_policy);
         let tmp = tempfile::NamedTempFile::new()
             .context("Failed to create temp file for inspect-pod manifest")?;
-        std::fs::write(tmp.path(), &manifest)
-            .context("Failed to write inspect-pod manifest")?;
+        std::fs::write(tmp.path(), &manifest).context("Failed to write inspect-pod manifest")?;
         println!("==> Creating {} pod (image: {})", INSPECT_POD, image);
         kubectl.run(&["apply", "-f", &tmp.path().to_string_lossy()])?;
     }
@@ -250,7 +252,11 @@ fn ensure_inspect_pod(kubectl: &Kubectl) -> Result<String> {
         bail!(
             "{} pod did not become Ready: {}\n    Check `kubectl describe pod {}` and \
              `kubectl logs {}` for details. Delete with `kubectl delete pod {}` to retry.",
-            INSPECT_POD, e, INSPECT_POD, INSPECT_POD, INSPECT_POD,
+            INSPECT_POD,
+            e,
+            INSPECT_POD,
+            INSPECT_POD,
+            INSPECT_POD,
         );
     }
 
@@ -265,9 +271,12 @@ fn ensure_inspect_pod(kubectl: &Kubectl) -> Result<String> {
 fn read_coordinator_image_spec(kubectl: &Kubectl) -> Result<(String, String)> {
     let image = kubectl
         .run(&[
-            "get", "pod",
-            "-l", "app=benchmark-coordinator",
-            "-o", "jsonpath={.items[0].spec.containers[0].image}",
+            "get",
+            "pod",
+            "-l",
+            "app=benchmark-coordinator",
+            "-o",
+            "jsonpath={.items[0].spec.containers[0].image}",
         ])
         .context("Failed to read coordinator pod image")?;
     let image = image.trim().to_string();
@@ -278,9 +287,12 @@ fn read_coordinator_image_spec(kubectl: &Kubectl) -> Result<(String, String)> {
     }
     let pull_policy = kubectl
         .run(&[
-            "get", "pod",
-            "-l", "app=benchmark-coordinator",
-            "-o", "jsonpath={.items[0].spec.containers[0].imagePullPolicy}",
+            "get",
+            "pod",
+            "-l",
+            "app=benchmark-coordinator",
+            "-o",
+            "jsonpath={.items[0].spec.containers[0].imagePullPolicy}",
         ])
         .unwrap_or_default()
         .trim()
@@ -399,17 +411,22 @@ mod tests {
         // from the live coordinator pod, so the test just confirms they
         // land in the right YAML fields and the static bits (name, label,
         // command, namespace) are correct.
-        let yaml = render_inspect_pod_manifest(
-            "ns1",
-            "dimster:latest-kafka4.2.0",
-            "IfNotPresent",
+        let yaml = render_inspect_pod_manifest("ns1", "dimster:latest-kafka4.2.0", "IfNotPresent");
+        assert!(
+            yaml.contains("image: dimster:latest-kafka4.2.0"),
+            "manifest:\n{yaml}"
         );
-        assert!(yaml.contains("image: dimster:latest-kafka4.2.0"), "manifest:\n{yaml}");
-        assert!(yaml.contains("imagePullPolicy: IfNotPresent"), "manifest:\n{yaml}");
+        assert!(
+            yaml.contains("imagePullPolicy: IfNotPresent"),
+            "manifest:\n{yaml}"
+        );
         assert!(yaml.contains("name: dimster-inspect"), "manifest:\n{yaml}");
         assert!(yaml.contains("namespace: ns1"), "manifest:\n{yaml}");
         assert!(yaml.contains("app: dimster-inspect"), "manifest:\n{yaml}");
-        assert!(yaml.contains(r#"command: ["sleep", "infinity"]"#), "manifest:\n{yaml}");
+        assert!(
+            yaml.contains(r#"command: ["sleep", "infinity"]"#),
+            "manifest:\n{yaml}"
+        );
     }
 
     #[test]
@@ -423,7 +440,10 @@ mod tests {
             yaml.contains("image: 123.dkr.ecr.us-west-2.amazonaws.com/dimster:latest-kafka4.2.0"),
             "manifest:\n{yaml}"
         );
-        assert!(yaml.contains("imagePullPolicy: Always"), "manifest:\n{yaml}");
+        assert!(
+            yaml.contains("imagePullPolicy: Always"),
+            "manifest:\n{yaml}"
+        );
     }
 
     // ----------------------------------------------------------------------
@@ -516,7 +536,10 @@ mod tests {
             group_members: false,
             metadata_quorum: true,
         });
-        assert_eq!(argv, vec!["--dimster-only", "--group-offsets", "--metadata-quorum"]);
+        assert_eq!(
+            argv,
+            vec!["--dimster-only", "--group-offsets", "--metadata-quorum"]
+        );
     }
 
     #[test]
@@ -526,10 +549,40 @@ mod tests {
 
     #[test]
     fn inspect_filters_any_true_when_one_flag_set() {
-        assert!(InspectFilters { topics: true, ..Default::default() }.any());
-        assert!(InspectFilters { dimster_only: true, ..Default::default() }.any());
-        assert!(InspectFilters { group_offsets: true, ..Default::default() }.any());
-        assert!(InspectFilters { group_members: true, ..Default::default() }.any());
-        assert!(InspectFilters { metadata_quorum: true, ..Default::default() }.any());
+        assert!(
+            InspectFilters {
+                topics: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            InspectFilters {
+                dimster_only: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            InspectFilters {
+                group_offsets: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            InspectFilters {
+                group_members: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            InspectFilters {
+                metadata_quorum: true,
+                ..Default::default()
+            }
+            .any()
+        );
     }
 }

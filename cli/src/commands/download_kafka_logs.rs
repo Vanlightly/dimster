@@ -7,9 +7,13 @@ use crate::kubectl::Kubectl;
 pub fn run(kubectl: &Kubectl, output_dir: &str) -> Result<()> {
     // Find running Kafka pods
     let pod_output = kubectl.run(&[
-        "get", "pods", "-l", "app=kafka",
+        "get",
+        "pods",
+        "-l",
+        "app=kafka",
         "--field-selector=status.phase=Running",
-        "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
     ])?;
 
     let pods: Vec<&str> = pod_output
@@ -33,9 +37,20 @@ pub fn run(kubectl: &Kubectl, output_dir: &str) -> Result<()> {
 
         // List log files on the pod
         let file_list = kubectl.run(&[
-            "exec", pod, "--",
-            "find", "/opt/kafka/logs", "-type", "f",
-            "(", "-name", "*.log", "-o", "-name", "*.log.*", ")",
+            "exec",
+            pod,
+            "--",
+            "find",
+            "/opt/kafka/logs",
+            "-type",
+            "f",
+            "(",
+            "-name",
+            "*.log",
+            "-o",
+            "-name",
+            "*.log.*",
+            ")",
         ]);
 
         let files: Vec<&str> = match &file_list {
@@ -67,11 +82,17 @@ pub fn run(kubectl: &Kubectl, output_dir: &str) -> Result<()> {
             if kubectl.copy_file_from_pod(pod, remote_path, &local_path) {
                 total_files += 1;
             } else {
-                eprintln!("    Warning: failed to download {} from {}", remote_path, pod);
+                eprintln!(
+                    "    Warning: failed to download {} from {}",
+                    remote_path, pod
+                );
             }
         }
     }
 
-    println!("==> Downloaded {} log file(s) to {}/", total_files, output_dir);
+    println!(
+        "==> Downloaded {} log file(s) to {}/",
+        total_files, output_dir
+    );
     Ok(())
 }
