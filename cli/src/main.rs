@@ -13,7 +13,10 @@ use config::{DimsterConfig, Distro};
 use kubectl::Kubectl;
 
 #[derive(Parser)]
-#[command(name = "dimster", about = "Dimster - DIMensional teSTER for Apache Kafka (or compatible)")]
+#[command(
+    name = "dimster",
+    about = "Dimster - DIMensional teSTER for Apache Kafka (or compatible)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -399,9 +402,20 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::build::run(&config, vec![env], &script_dir, in_docker)?;
         }
 
-        Commands::Deploy { env, log_config, only } => {
+        Commands::Deploy {
+            env,
+            log_config,
+            only,
+        } => {
             let kubectl = require_kubectl(&config, &env)?;
-            commands::deploy::run(&kubectl, &config, &env, &k8s_dir, log_config.as_deref(), &only)?;
+            commands::deploy::run(
+                &kubectl,
+                &config,
+                &env,
+                &k8s_dir,
+                log_config.as_deref(),
+                &only,
+            )?;
         }
 
         Commands::Run {
@@ -423,7 +437,10 @@ fn run_command(cli: Cli) -> Result<()> {
             // Worker assignment lives under workers.assignment in the env
             // config — pull each field out so the run request can carry
             // them through to the coordinator.
-            let assignment = env_config.workers.as_ref().and_then(|w| w.assignment.as_ref());
+            let assignment = env_config
+                .workers
+                .as_ref()
+                .and_then(|w| w.assignment.as_ref());
             let run_args = commands::run::RunArgs {
                 mode: "run".to_string(),
                 kafka_config,
@@ -436,12 +453,25 @@ fn run_command(cli: Cli) -> Result<()> {
                 environment: env.clone(),
                 hardware: env_config.hardware.clone(),
                 connection: env_config.connection.clone(),
-                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
-                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                broker_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.broker_config.clone()),
+                extra_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
             };
             let output_dir = config.results.dir.clone();
-            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+            commands::run::run(
+                &kubectl,
+                run_args,
+                &output_dir,
+                &script_dir,
+                &config_path,
+                stop,
+            )?;
         }
 
         Commands::Explore {
@@ -451,10 +481,7 @@ fn run_command(cli: Cli) -> Result<()> {
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
-                anyhow::bail!(
-                    "Explore workload not found: {}",
-                    workload
-                );
+                anyhow::bail!("Explore workload not found: {}", workload);
             }
             let workload_path = workload;
             let env_config = config.get_env(&env)?;
@@ -470,12 +497,25 @@ fn run_command(cli: Cli) -> Result<()> {
                 environment: env.clone(),
                 hardware: env_config.hardware.clone(),
                 connection: env_config.connection.clone(),
-                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
-                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                broker_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.broker_config.clone()),
+                extra_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
             };
             let output_dir = config.results.dir.clone();
-            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+            commands::run::run(
+                &kubectl,
+                run_args,
+                &output_dir,
+                &script_dir,
+                &config_path,
+                stop,
+            )?;
         }
 
         Commands::Correctness {
@@ -485,10 +525,7 @@ fn run_command(cli: Cli) -> Result<()> {
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
-                anyhow::bail!(
-                    "Correctness workload not found: {}",
-                    workload
-                );
+                anyhow::bail!("Correctness workload not found: {}", workload);
             }
             let workload_path = workload;
             let env_config = config.get_env(&env)?;
@@ -504,12 +541,25 @@ fn run_command(cli: Cli) -> Result<()> {
                 environment: env.clone(),
                 hardware: env_config.hardware.clone(),
                 connection: env_config.connection.clone(),
-                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
-                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                broker_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.broker_config.clone()),
+                extra_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
             };
             let output_dir = config.results.dir.clone();
-            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+            commands::run::run(
+                &kubectl,
+                run_args,
+                &output_dir,
+                &script_dir,
+                &config_path,
+                stop,
+            )?;
         }
 
         Commands::DrainBacklog {
@@ -519,10 +569,7 @@ fn run_command(cli: Cli) -> Result<()> {
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
-                anyhow::bail!(
-                    "Drain-backlog workload not found: {}",
-                    workload
-                );
+                anyhow::bail!("Drain-backlog workload not found: {}", workload);
             }
             let workload_path = workload;
             let env_config = config.get_env(&env)?;
@@ -538,12 +585,25 @@ fn run_command(cli: Cli) -> Result<()> {
                 environment: env.clone(),
                 hardware: env_config.hardware.clone(),
                 connection: env_config.connection.clone(),
-                broker_config: env_config.kafka.as_ref().and_then(|k| k.broker_config.clone()),
-                extra_config: env_config.kafka.as_ref().and_then(|k| k.extra_config.clone()),
+                broker_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.broker_config.clone()),
+                extra_config: env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
             };
             let output_dir = config.results.dir.clone();
-            commands::run::run(&kubectl, run_args, &output_dir, &script_dir, &config_path, stop)?;
+            commands::run::run(
+                &kubectl,
+                run_args,
+                &output_dir,
+                &script_dir,
+                &config_path,
+                stop,
+            )?;
         }
 
         Commands::Resume { env } => {
@@ -558,7 +618,11 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::reattach::run(&kubectl, &output_dir, &script_dir, stop, &env)?;
         }
 
-        Commands::Resources { broker_count, workloads, kafka_config } => {
+        Commands::Resources {
+            broker_count,
+            workloads,
+            kafka_config,
+        } => {
             commands::resources::run(broker_count, &workloads, kafka_config.as_deref())?;
         }
 
@@ -567,10 +631,28 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::stop::run(&kubectl, &stop)?;
         }
 
-        Commands::Results { env, output_dir, data, logs, dashboards, charts, full } => {
+        Commands::Results {
+            env,
+            output_dir,
+            data,
+            logs,
+            dashboards,
+            charts,
+            full,
+        } => {
             let kubectl = require_kubectl(&config, &env)?;
             let dir = output_dir.unwrap_or_else(|| config.results.dir.clone());
-            commands::results::run(&kubectl, &dir, &script_dir, data, logs, dashboards, charts, full, &stop)?;
+            commands::results::run(
+                &kubectl,
+                &dir,
+                &script_dir,
+                data,
+                logs,
+                dashboards,
+                charts,
+                full,
+                &stop,
+            )?;
         }
 
         Commands::Csv { path, output } => {
@@ -579,7 +661,13 @@ fn run_command(cli: Cli) -> Result<()> {
 
         Commands::Teardown { env } => {
             let kubectl = require_kubectl(&config, &env)?;
-            commands::teardown::run(&kubectl, &env, &k8s_dir)?;
+            let env_config = config.get_env(&env)?;
+            let reset_local_storage_pvs = env_config
+                .kafka
+                .as_ref()
+                .and_then(|k| k.pvc_storage_class.as_deref())
+                == Some("local-storage");
+            commands::teardown::run(&kubectl, &env, &k8s_dir, reset_local_storage_pvs)?;
         }
 
         Commands::Chart { results_dir } => {
@@ -596,12 +684,7 @@ fn run_command(cli: Cli) -> Result<()> {
             output,
             scenarios,
         } => {
-            commands::pivot::run(
-                &file,
-                output.as_deref(),
-                scenarios.as_deref(),
-                &script_dir,
-            )?;
+            commands::pivot::run(&file, output.as_deref(), scenarios.as_deref(), &script_dir)?;
         }
 
         Commands::Dashboard {
@@ -613,7 +696,13 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::dashboard::run(&kubectl, grafana_port, prometheus_port, stop)?;
         }
 
-        Commands::Logs { env, component, follow, previous, tail } => {
+        Commands::Logs {
+            env,
+            component,
+            follow,
+            previous,
+            tail,
+        } => {
             let kubectl = require_kubectl(&config, &env)?;
             commands::logs::run(&kubectl, &component, follow, previous, tail)?;
         }
@@ -667,7 +756,9 @@ fn run_command(cli: Cli) -> Result<()> {
         } => {
             let env_config = config.get_env(&env)?;
             if env_config.is_external() {
-                anyhow::bail!("The 'kafka' command is not available in external deploy mode (no Kafka pods deployed).");
+                anyhow::bail!(
+                    "The 'kafka' command is not available in external deploy mode (no Kafka pods deployed)."
+                );
             }
             let kubectl = require_kubectl(&config, &env)?;
             let cmd = if command.is_empty() {
@@ -679,10 +770,7 @@ fn run_command(cli: Cli) -> Result<()> {
         }
 
         Commands::Init { local_k8s_distro } => {
-            commands::init::run(
-                &config_path,
-                local_k8s_distro.unwrap_or(Distro::Minikube),
-            )?;
+            commands::init::run(&config_path, local_k8s_distro.unwrap_or(Distro::Minikube))?;
         }
     }
 

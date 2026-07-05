@@ -14,9 +14,25 @@ use crate::kubectl::Kubectl;
 /// target the literal `dimster` namespace baked into the base manifests —
 /// which is wrong for any env that overrides `namespace:` (and would even
 /// silently delete a sibling deploy living in `dimster`).
-pub fn run(kubectl: &Kubectl, env: &str, k8s_dir: &Path) -> Result<()> {
+pub fn run(
+    kubectl: &Kubectl,
+    env: &str,
+    k8s_dir: &Path,
+    reset_local_storage_pvs: bool,
+) -> Result<()> {
     let ns = kubectl.namespace();
-    println!("==> Tearing down Dimster ({}) from namespace {}...", env, ns);
+    println!(
+        "==> Tearing down Dimster ({}) from namespace {}...",
+        env, ns
+    );
+
+    // Kafka is the only Dimster component whose application state lives in
+    // generated StatefulSet PVCs. Clean it through the same helper deploy uses
+    // for Kafka recreates so local and remote clusters get identical PVC
+    // deletion behavior.
+    if let Err(e) = deploy::cleanup_kafka_cluster(kubectl, reset_local_storage_pvs) {
+        eprintln!("==> Warning: Kafka cleanup step failed: {e:#}");
+    }
 
     // Stage a temp overlay that mirrors the deploy-time overlay structure.
     // We list every component's resources so that a teardown invoked
@@ -60,9 +76,9 @@ pub fn run(kubectl: &Kubectl, env: &str, k8s_dir: &Path) -> Result<()> {
     // resources are not errors, so any failure here is a real problem
     // (kustomize build error, wrong context, RBAC, etc.) and should be shown
     // rather than silently swallowed.
-    if let Err(e) = kubectl.run_inherit(&[
-        "delete", "-k", &tmp.to_string_lossy(), "--ignore-not-found",
-    ]) {
+    if let Err(e) =
+        kubectl.run_inherit(&["delete", "-k", &tmp.to_string_lossy(), "--ignore-not-found"])
+    {
         eprintln!("==> kustomize delete failed: {e:#}");
         return Err(e);
     }
@@ -74,13 +90,24 @@ pub fn run(kubectl: &Kubectl, env: &str, k8s_dir: &Path) -> Result<()> {
     // dimster instances in different namespaces. These are best-effort:
     // surface the error to stderr but don't abort the teardown.
     for args in [
-        &["delete", "pods", "-l", "app=benchmark-results-copy", "--ignore-not-found"][..],
+        &[
+            "delete",
+            "pods",
+            "-l",
+            "app=benchmark-results-copy",
+            "--ignore-not-found",
+        ][..],
         // dimster-inspect is the long-lived helper pod created on demand by
         // `dimster inspect <env>` in external deploy mode. It is not part of
         // the kustomize overlay (lazy-created on first inspect) so it needs
         // explicit cleanup here to avoid lingering past teardown.
-        &["delete", "pods", "-l", "app=dimster-inspect", "--ignore-not-found"][..],
-        &["delete", "pvc", "-l", "app=kafka", "--ignore-not-found"][..],
+        &[
+            "delete",
+            "pods",
+            "-l",
+            "app=dimster-inspect",
+            "--ignore-not-found",
+        ][..],
         &["delete", "pvc", "benchmark-results", "--ignore-not-found"][..],
     ] {
         if let Err(e) = kubectl.run(args) {

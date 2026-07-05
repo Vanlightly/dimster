@@ -10,6 +10,13 @@ use crate::commands::kafka_tls;
 use crate::config::{CpuManagerConfig, CpuManagerPolicy, DimsterConfig, Environment};
 use crate::kubectl::Kubectl;
 
+/// Annotation that records the exact Kafka manifest shape Dimster last
+/// deployed. Kafka owns persistent state, so deploy uses this small piece of
+/// state to decide whether a Kafka deploy can be an ordinary apply or must
+/// first delete the StatefulSet and its generated data PVCs.
+const KAFKA_SPEC_HASH_ANNOTATION: &str = "dimster.dev/kafka-spec-hash";
+const KAFKA_DATA_PVC_PREFIX: &str = "kafka-data-kafka-";
+
 /// Same `name:` + `properties:` shape as broker configs, but consumed by
 /// the entrypoint as pipe-separated key=value pairs (commas appear in
 /// log4j layout patterns, so `,` can't be the separator). Kept local to
@@ -29,6 +36,28 @@ enum Component {
     Workers,
     Coordinator,
     Monitoring,
+}
+
+/// What deploy knows about the currently deployed Kafka StatefulSet.
+///
+/// The distinction between "missing" and "present without a hash" matters:
+/// a missing StatefulSet is an initial deploy, while a present StatefulSet
+/// without a hash was deployed by an older Dimster and therefore has unknown
+/// compatibility with the newly rendered Kafka spec.
+#[derive(Debug, PartialEq, Eq)]
+enum LiveKafkaSpecHash {
+    Missing,
+    Present(Option<String>),
+}
+
+/// Recreate decision for the Kafka part of a deploy.
+///
+/// This enum keeps the policy separate from the kubectl mechanics so the
+/// behavior is easy to test: only known, matching hashes preserve PVCs.
+#[derive(Debug, PartialEq, Eq)]
+enum KafkaRecreateDecision {
+    ApplyOnly,
+    Recreate(&'static str),
 }
 
 impl Component {
@@ -82,11 +111,17 @@ pub fn run(
 
     // External mode never deploys Kafka
     if external && components.contains(&Component::Kafka) && !only.is_empty() {
-        eprintln!("Warning: ignoring 'kafka' component — environment '{}' uses external Kafka", env);
+        eprintln!(
+            "Warning: ignoring 'kafka' component — environment '{}' uses external Kafka",
+            env
+        );
     }
 
     if external {
-        println!("==> Deploying Dimster ({}) to namespace {} (external Kafka)...", env, ns);
+        println!(
+            "==> Deploying Dimster ({}) to namespace {} (external Kafka)...",
+            env, ns
+        );
     } else {
         println!("==> Deploying Dimster ({}) to namespace {}...", env, ns);
     }
@@ -98,8 +133,15 @@ pub fn run(
 
     run_cpu_manager_preflight(kubectl, env_config, external, &components)?;
 
-    deploy(kubectl, config, env, env_config, k8s_dir,
-           log_config_override, &components)?;
+    deploy(
+        kubectl,
+        config,
+        env,
+        env_config,
+        k8s_dir,
+        log_config_override,
+        &components,
+    )?;
 
     // Restart deployments to ensure pods pick up the latest image.
     // Only restart components that were deployed.
@@ -131,7 +173,11 @@ pub fn run(
 
     if components.contains(&Component::Coordinator) {
         println!("==> Waiting for coordinator to be ready...");
-        wait_for_deployment(kubectl, "benchmark-coordinator", "app=benchmark-coordinator")?;
+        wait_for_deployment(
+            kubectl,
+            "benchmark-coordinator",
+            "app=benchmark-coordinator",
+        )?;
     }
 
     println!("==> Deployment complete.");
@@ -325,7 +371,8 @@ struct NodeSpec {
 }
 
 fn parse_nodes(json: &str) -> Result<Vec<NodeInfo>> {
-    let list: NodeList = serde_json::from_str(json).context("Cannot parse kubectl get nodes JSON")?;
+    let list: NodeList =
+        serde_json::from_str(json).context("Cannot parse kubectl get nodes JSON")?;
     Ok(list.items)
 }
 
@@ -354,7 +401,10 @@ fn select_required_cpu_manager_nodes(
     Ok(selected)
 }
 
-fn nodes_matching_target(nodes: &[NodeInfo], target: &BenchmarkCpuTarget<'_>) -> Result<Vec<String>> {
+fn nodes_matching_target(
+    nodes: &[NodeInfo],
+    target: &BenchmarkCpuTarget<'_>,
+) -> Result<Vec<String>> {
     let required_label = match target.node_label {
         Some(label) => Some(parse_node_label(label)?),
         None => None,
@@ -446,7 +496,10 @@ fn wait_for_deployment(kubectl: &Kubectl, name: &str, label: &str) -> Result<()>
             if err_msg.contains("exceeded its progress deadline") {
                 // Deployment was stuck from a previous failed attempt.
                 // Delete pods so the deployment controller creates fresh ones.
-                eprintln!("    Deployment {} has a stale progress deadline, deleting pods to retry...", name);
+                eprintln!(
+                    "    Deployment {} has a stale progress deadline, deleting pods to retry...",
+                    name
+                );
                 let _ = kubectl.run(&["delete", "pods", "-l", label]);
                 // Wait again with fresh pods
                 match kubectl.run(&["rollout", "status", &deployment, "--timeout=300s"]) {
@@ -470,15 +523,23 @@ fn show_deploy_diagnostics(kubectl: &Kubectl, label: &str) {
     let _ = kubectl.run_inherit(&["get", "pods", "-l", label, "-o", "wide"]);
     eprintln!("\n--- Pod events ---");
     let _ = kubectl.run_inherit(&[
-        "get", "events",
-        "--field-selector", &format!("involvedObject.kind=Pod"),
-        "--sort-by", ".lastTimestamp",
+        "get",
+        "events",
+        "--field-selector",
+        &format!("involvedObject.kind=Pod"),
+        "--sort-by",
+        ".lastTimestamp",
     ]);
     eprintln!("\n--- Pending pod details ---");
     if let Ok(output) = kubectl.run(&[
-        "get", "pods", "-l", label,
-        "--field-selector", "status.phase=Pending",
-        "-o", "jsonpath={.items[*].metadata.name}",
+        "get",
+        "pods",
+        "-l",
+        label,
+        "--field-selector",
+        "status.phase=Pending",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
     ]) {
         for pod in output.split_whitespace() {
             eprintln!("\nPod: {}", pod);
@@ -544,36 +605,56 @@ fn deploy(
     let workers = env_config.workers.as_ref();
     let coordinator = env_config.coordinator.as_ref();
 
-    let (def_worker_replicas, def_worker_heap, def_worker_cpu, def_worker_memory) =
-        if is_minimal {
-            (1u32, "-Xms256M -Xmx512M", "250m", "768Mi")
-        } else {
-            (2u32, "-Xms4G -Xmx8G", "2", "6Gi")
-        };
-    let (def_coord_heap, def_coord_cpu, def_coord_memory) =
-        if is_minimal {
-            ("-Xms256M -Xmx512M", "250m", "768Mi")
-        } else {
-            ("-Xms512M -Xmx1G", "500m", "2Gi")
-        };
+    let (def_worker_replicas, def_worker_heap, def_worker_cpu, def_worker_memory) = if is_minimal {
+        (1u32, "-Xms256M -Xmx512M", "250m", "768Mi")
+    } else {
+        (2u32, "-Xms4G -Xmx8G", "2", "6Gi")
+    };
+    let (def_coord_heap, def_coord_cpu, def_coord_memory) = if is_minimal {
+        ("-Xms256M -Xmx512M", "250m", "768Mi")
+    } else {
+        ("-Xms512M -Xmx1G", "500m", "2Gi")
+    };
 
-    let worker_replicas = workers.and_then(|w| w.replicas).unwrap_or(def_worker_replicas);
-    let worker_heap = workers.and_then(|w| w.heap.as_deref()).unwrap_or(def_worker_heap);
-    let worker_cpu = workers.and_then(|w| w.requests.as_ref()).and_then(|r| r.cpu.as_deref()).unwrap_or(def_worker_cpu);
-    let worker_memory = workers.and_then(|w| w.requests.as_ref()).and_then(|r| r.memory.as_deref()).unwrap_or(def_worker_memory);
+    let worker_replicas = workers
+        .and_then(|w| w.replicas)
+        .unwrap_or(def_worker_replicas);
+    let worker_heap = workers
+        .and_then(|w| w.heap.as_deref())
+        .unwrap_or(def_worker_heap);
+    let worker_cpu = workers
+        .and_then(|w| w.requests.as_ref())
+        .and_then(|r| r.cpu.as_deref())
+        .unwrap_or(def_worker_cpu);
+    let worker_memory = workers
+        .and_then(|w| w.requests.as_ref())
+        .and_then(|r| r.memory.as_deref())
+        .unwrap_or(def_worker_memory);
     let worker_node_label = workers.and_then(|w| w.node_label.as_deref());
     let worker_log_config_path = workers.and_then(|w| w.log_config.as_deref());
 
-    let coord_heap = coordinator.and_then(|c| c.heap.as_deref()).unwrap_or(def_coord_heap);
-    let coord_cpu = coordinator.and_then(|c| c.requests.as_ref()).and_then(|r| r.cpu.as_deref()).unwrap_or(def_coord_cpu);
-    let coord_memory = coordinator.and_then(|c| c.requests.as_ref()).and_then(|r| r.memory.as_deref()).unwrap_or(def_coord_memory);
+    let coord_heap = coordinator
+        .and_then(|c| c.heap.as_deref())
+        .unwrap_or(def_coord_heap);
+    let coord_cpu = coordinator
+        .and_then(|c| c.requests.as_ref())
+        .and_then(|r| r.cpu.as_deref())
+        .unwrap_or(def_coord_cpu);
+    let coord_memory = coordinator
+        .and_then(|c| c.requests.as_ref())
+        .and_then(|r| r.memory.as_deref())
+        .unwrap_or(def_coord_memory);
 
     let monitoring = env_config.monitoring.as_ref();
     let monitoring_node_label = monitoring.and_then(|m| m.node_label.as_deref());
 
     // Determine imagePullPolicy based on image name
     let env_image = env_config.image.as_deref().unwrap_or("dimster");
-    let pull_policy = if is_registry_image(env_image) { "Always" } else { "IfNotPresent" };
+    let pull_policy = if is_registry_image(env_image) {
+        "Always"
+    } else {
+        "IfNotPresent"
+    };
 
     // Build temporary kustomization overlay
     let tmp_dir = tempfile::tempdir()?;
@@ -646,27 +727,44 @@ fn deploy(
     // --- Kafka patches (full deployment only) ---
     if !external && components.contains(&Component::Kafka) {
         let kafka = env_config.kafka.as_ref();
-        let (def_kafka_replicas, def_kafka_storage, def_kafka_heap, def_kafka_cpu, def_kafka_memory) =
-            if is_minimal {
-                (1u32, "1Gi", "-Xms128M -Xmx256M", "250m", "512Mi")
-            } else {
-                (3u32, "500Gi", "-Xms8G -Xmx8G", "2", "12Gi")
-            };
+        let (
+            def_kafka_replicas,
+            def_kafka_storage,
+            def_kafka_heap,
+            def_kafka_cpu,
+            def_kafka_memory,
+        ) = if is_minimal {
+            (1u32, "1Gi", "-Xms128M -Xmx256M", "250m", "512Mi")
+        } else {
+            (3u32, "500Gi", "-Xms8G -Xmx8G", "2", "12Gi")
+        };
 
         let kafka_replicas = kafka.and_then(|k| k.replicas).unwrap_or(def_kafka_replicas);
-        let kafka_storage = kafka.and_then(|k| k.pvc_size.as_deref()).unwrap_or(def_kafka_storage);
-        let kafka_heap = kafka.and_then(|k| k.heap.as_deref()).unwrap_or(def_kafka_heap);
-        let kafka_cpu = kafka.and_then(|k| k.requests.as_ref()).and_then(|r| r.cpu.as_deref()).unwrap_or(def_kafka_cpu);
-        let kafka_memory = kafka.and_then(|k| k.requests.as_ref()).and_then(|r| r.memory.as_deref()).unwrap_or(def_kafka_memory);
-        let kafka_image = kafka.and_then(|k| k.image.as_deref()).unwrap_or("apache/kafka");
+        let kafka_storage = kafka
+            .and_then(|k| k.pvc_size.as_deref())
+            .unwrap_or(def_kafka_storage);
+        let kafka_heap = kafka
+            .and_then(|k| k.heap.as_deref())
+            .unwrap_or(def_kafka_heap);
+        let kafka_cpu = kafka
+            .and_then(|k| k.requests.as_ref())
+            .and_then(|r| r.cpu.as_deref())
+            .unwrap_or(def_kafka_cpu);
+        let kafka_memory = kafka
+            .and_then(|k| k.requests.as_ref())
+            .and_then(|r| r.memory.as_deref())
+            .unwrap_or(def_kafka_memory);
+        let kafka_image = kafka
+            .and_then(|k| k.image.as_deref())
+            .unwrap_or("apache/kafka");
         let kafka_version = kafka.and_then(|k| k.version.as_deref());
         let storage_class = kafka.and_then(|k| k.pvc_storage_class.as_deref());
         let kafka_inline_extra = kafka.and_then(|k| k.extra_config.as_deref());
         let kafka_node_label = kafka.and_then(|k| k.node_label.as_deref());
 
         // Resolve log config: CLI flag > environment config > none
-        let log_config_path = log_config_override
-            .or_else(|| kafka.and_then(|k| k.log_config.as_deref()));
+        let log_config_path =
+            log_config_override.or_else(|| kafka.and_then(|k| k.log_config.as_deref()));
 
         // Log rotation overrides (applied on top of log config, or standalone)
         let log_max_file_size = kafka.and_then(|k| k.log_max_file_size.as_deref());
@@ -704,7 +802,8 @@ fn deploy(
         }
 
         // Effective heap value: user_env if present (handles env override), else kafka_heap default
-        let effective_kafka_heap = user_env.get("KAFKA_HEAP_OPTS")
+        let effective_kafka_heap = user_env
+            .get("KAFKA_HEAP_OPTS")
             .map(|s| s.as_str())
             .unwrap_or(kafka_heap);
 
@@ -771,7 +870,13 @@ fn deploy(
         // Patch in any additional env vars from kafka.env that aren't hardcoded above.
         // The hardcoded indices are: 0=KAFKA_REPLICAS, 1=KAFKA_CLUSTER_ID, 2=KAFKA_HEAP_OPTS,
         // 3=KAFKA_CPU, 4=KAFKA_OPTS. Skip those and add everything else starting at index 5.
-        let hardcoded = ["KAFKA_REPLICAS", "KAFKA_CLUSTER_ID", "KAFKA_HEAP_OPTS", "KAFKA_CPU", "KAFKA_OPTS"];
+        let hardcoded = [
+            "KAFKA_REPLICAS",
+            "KAFKA_CLUSTER_ID",
+            "KAFKA_HEAP_OPTS",
+            "KAFKA_CPU",
+            "KAFKA_OPTS",
+        ];
         let mut extra_env_index = 5;
         for (name, value) in user_env.iter() {
             if !hardcoded.contains(&name.as_str()) {
@@ -859,7 +964,7 @@ fn deploy(
           # Log retention
           log.retention.hours=1
           log.segment.bytes=1073741824
-"#
+"#,
             );
         }
 
@@ -933,32 +1038,66 @@ fn deploy(
                 // No log config file, but rotation overrides specified — use INFO defaults
                 // with a server file appender so the overrides have something to apply to.
                 log4j_props.insert("log4j.rootLogger".into(), "INFO, stdout, serverFile".into());
-                log4j_props.insert("log4j.appender.stdout".into(), "org.apache.log4j.ConsoleAppender".into());
-                log4j_props.insert("log4j.appender.stdout.layout".into(), "org.apache.log4j.PatternLayout".into());
-                log4j_props.insert("log4j.appender.stdout.layout.ConversionPattern".into(), "[%d] %p %m (%c)%n".into());
-                log4j_props.insert("log4j.appender.serverFile".into(), "org.apache.log4j.RollingFileAppender".into());
-                log4j_props.insert("log4j.appender.serverFile.File".into(), "/opt/kafka/logs/server.log".into());
-                log4j_props.insert("log4j.appender.serverFile.MaxFileSize".into(), "100MB".into());
-                log4j_props.insert("log4j.appender.serverFile.MaxBackupIndex".into(), "5".into());
-                log4j_props.insert("log4j.appender.serverFile.layout".into(), "org.apache.log4j.PatternLayout".into());
-                log4j_props.insert("log4j.appender.serverFile.layout.ConversionPattern".into(), "[%d] %p %m (%c)%n".into());
+                log4j_props.insert(
+                    "log4j.appender.stdout".into(),
+                    "org.apache.log4j.ConsoleAppender".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.stdout.layout".into(),
+                    "org.apache.log4j.PatternLayout".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.stdout.layout.ConversionPattern".into(),
+                    "[%d] %p %m (%c)%n".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile".into(),
+                    "org.apache.log4j.RollingFileAppender".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile.File".into(),
+                    "/opt/kafka/logs/server.log".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile.MaxFileSize".into(),
+                    "100MB".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile.MaxBackupIndex".into(),
+                    "5".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile.layout".into(),
+                    "org.apache.log4j.PatternLayout".into(),
+                );
+                log4j_props.insert(
+                    "log4j.appender.serverFile.layout.ConversionPattern".into(),
+                    "[%d] %p %m (%c)%n".into(),
+                );
                 log4j_props.insert("log4j.logger.kafka".into(), "INFO".into());
             }
 
             // Apply rotation overrides on top of the loaded/default properties
             if let Some(size) = log_max_file_size {
-                log4j_props.insert("log4j.appender.serverFile.MaxFileSize".into(), size.to_string());
+                log4j_props.insert(
+                    "log4j.appender.serverFile.MaxFileSize".into(),
+                    size.to_string(),
+                );
                 println!("    Log rotation override: MaxFileSize={}", size);
             }
             if let Some(count) = log_max_backup_index {
-                log4j_props.insert("log4j.appender.serverFile.MaxBackupIndex".into(), count.to_string());
+                log4j_props.insert(
+                    "log4j.appender.serverFile.MaxBackupIndex".into(),
+                    count.to_string(),
+                );
                 println!("    Log rotation override: MaxBackupIndex={}", count);
             }
 
             if !log4j_props.is_empty() {
                 let mut sorted_props: Vec<_> = log4j_props.iter().collect();
                 sorted_props.sort_by_key(|(k, _)| (*k).clone());
-                let log_config_value = sorted_props.iter()
+                let log_config_value = sorted_props
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join("|");
@@ -985,8 +1124,7 @@ fn deploy(
         // bit-for-bit identical to the pre-mTLS behavior.
         if let Some(tls) = tls_settings.as_ref() {
             let ssl_port = tls.resolved_ssl_port();
-            let tls_lines = kafka_tls::broker_tls_lines(ssl_port, tls.inter_broker)
-                .join("|");
+            let tls_lines = kafka_tls::broker_tls_lines(ssl_port, tls.inter_broker).join("|");
             // KAFKA_TLS_CONFIG carries pipe-separated key=value pairs that
             // the entrypoint expands into server.properties (see
             // run/deploy/kubernetes/base/kafka/configmap.yaml). Pipe — not
@@ -1046,16 +1184,6 @@ fn deploy(
                 ));
             }
         }
-
-        // Reset any Released/Failed local-storage PVs so they can be rebound.
-        if storage_class == Some("local-storage") {
-            reset_local_pvs(kubectl);
-        }
-
-        // StatefulSet volumeClaimTemplates are immutable — delete first (orphaning pods)
-        let _ = kubectl.run(&[
-            "delete", "statefulset", "kafka", "--cascade=orphan", "--ignore-not-found",
-        ]);
     }
 
     // --- Worker patches ---
@@ -1113,7 +1241,8 @@ fn deploy(
             if !log4j_props.is_empty() {
                 let mut sorted_props: Vec<_> = log4j_props.iter().collect();
                 sorted_props.sort_by_key(|(k, _)| (*k).clone());
-                let log_config_value = sorted_props.iter()
+                let log_config_value = sorted_props
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join("|");
@@ -1303,7 +1432,10 @@ fn deploy(
 
     // Monitoring resource overrides — Prometheus and Grafana
     if components.contains(&Component::Monitoring) {
-        if let Some(reqs) = monitoring.and_then(|m| m.prometheus.as_ref()).and_then(|p| p.requests.as_ref()) {
+        if let Some(reqs) = monitoring
+            .and_then(|m| m.prometheus.as_ref())
+            .and_then(|p| p.requests.as_ref())
+        {
             if let (Some(cpu), Some(memory)) = (reqs.cpu.as_deref(), reqs.memory.as_deref()) {
                 patches.push_str(&format!(
                     r#"  - target:
@@ -1324,7 +1456,10 @@ fn deploy(
             }
         }
 
-        if let Some(reqs) = monitoring.and_then(|m| m.grafana.as_ref()).and_then(|g| g.requests.as_ref()) {
+        if let Some(reqs) = monitoring
+            .and_then(|m| m.grafana.as_ref())
+            .and_then(|g| g.requests.as_ref())
+        {
             if let (Some(cpu), Some(memory)) = (reqs.cpu.as_deref(), reqs.memory.as_deref()) {
                 patches.push_str(&format!(
                     r#"  - target:
@@ -1366,8 +1501,8 @@ fn deploy(
     // the actual image produced by `dimster build` (which always emits
     // <name>:<tag>-kafka<kafka-clients-version>; there is no version-less image any more).
     // Only needed when deploying components that use the dimster image.
-    let has_image_components = components.contains(&Component::Workers)
-        || components.contains(&Component::Coordinator);
+    let has_image_components =
+        components.contains(&Component::Workers) || components.contains(&Component::Coordinator);
     if has_image_components {
         let base_image = config
             .environments
@@ -1395,7 +1530,43 @@ images:
 
     std::fs::write(tmp.join("kustomization.yaml"), &kustomization)?;
 
+    let desired_kafka_hash = if !external && components.contains(&Component::Kafka) {
+        let rendered = kubectl
+            .run_no_ns(&["kustomize", &tmp.to_string_lossy()])
+            .context("Failed to render deploy overlay for Kafka drift detection")?;
+        let desired_hash = kafka_spec_hash_from_rendered_yaml(&rendered)
+            .context("Failed to hash rendered Kafka resources")?;
+        let live_hash = live_kafka_spec_hash(kubectl)?;
+        match kafka_recreate_decision(&live_hash, &desired_hash) {
+            KafkaRecreateDecision::ApplyOnly => {
+                if live_hash == LiveKafkaSpecHash::Missing {
+                    println!("==> Kafka not deployed yet; applying Kafka resources.");
+                } else {
+                    println!("==> Kafka spec unchanged; preserving Kafka PVCs.");
+                }
+            }
+            KafkaRecreateDecision::Recreate(reason) => {
+                println!("==> Kafka spec {reason}; recreating Kafka and deleting Kafka PVCs...");
+                let reset_local_storage_pvs = env_config
+                    .kafka
+                    .as_ref()
+                    .and_then(|k| k.pvc_storage_class.as_deref())
+                    == Some("local-storage");
+                cleanup_kafka_cluster(kubectl, reset_local_storage_pvs)
+                    .context("Failed to clean up existing Kafka resources before deploy")?;
+            }
+        }
+        Some(desired_hash)
+    } else {
+        None
+    };
+
     kubectl.run_no_ns(&["apply", "-k", &tmp.to_string_lossy()])?;
+
+    if let Some(hash) = desired_kafka_hash {
+        annotate_kafka_spec_hash(kubectl, &hash)
+            .context("Failed to record deployed Kafka spec hash")?;
+    }
 
     Ok(())
 }
@@ -1430,11 +1601,283 @@ fn reset_local_pvs(kubectl: &Kubectl) {
             let pv_name = parts[0];
             println!("  Resetting {} PV: {}", parts[1], pv_name);
             let _ = kubectl.run_no_ns(&[
-                "patch", "pv", pv_name,
-                "--type", "json",
-                "-p", "[{\"op\":\"remove\",\"path\":\"/spec/claimRef\"}]",
+                "patch",
+                "pv",
+                pv_name,
+                "--type",
+                "json",
+                "-p",
+                "[{\"op\":\"remove\",\"path\":\"/spec/claimRef\"}]",
             ]);
         }
+    }
+}
+
+/// Delete the in-cluster Kafka deployment and its generated data PVCs.
+///
+/// This helper is intentionally scoped to Kafka's own state. It does not touch
+/// workers, coordinator, results PVCs, or monitoring resources, which lets both
+/// `deploy` and `teardown` reuse the same reliable Kafka-state cleanup without
+/// duplicating the storage-sensitive parts.
+pub(crate) fn cleanup_kafka_cluster(
+    kubectl: &Kubectl,
+    reset_local_storage_pvs: bool,
+) -> Result<()> {
+    kubectl.run(&[
+        "delete",
+        "statefulset",
+        "kafka",
+        "--cascade=foreground",
+        "--ignore-not-found",
+    ])?;
+
+    // Delete by label as well as deleting the StatefulSet. Older Dimster
+    // deploys used --cascade=orphan for Kafka, so a cluster can legitimately
+    // contain kafka pods with no StatefulSet owner left to garbage collect.
+    kubectl.run(&["delete", "pods", "-l", "app=kafka", "--ignore-not-found"])?;
+    wait_for_kafka_pods_deleted(kubectl)?;
+
+    let pvcs = kafka_data_pvc_names(kubectl)?;
+    for pvc in pvcs {
+        kubectl.run(&["delete", "pvc", &pvc, "--ignore-not-found"])?;
+        wait_for_resource_deleted(kubectl, &format!("pvc/{pvc}"))?;
+    }
+
+    if reset_local_storage_pvs {
+        reset_local_pvs(kubectl);
+    }
+
+    Ok(())
+}
+
+fn wait_for_kafka_pods_deleted(kubectl: &Kubectl) -> Result<()> {
+    let pods = kubectl.run(&[
+        "get",
+        "pods",
+        "-l",
+        "app=kafka",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
+    ])?;
+    if pods.split_whitespace().next().is_none() {
+        return Ok(());
+    }
+    match kubectl.run(&[
+        "wait",
+        "--for=delete",
+        "pod",
+        "-l",
+        "app=kafka",
+        "--timeout=300s",
+    ]) {
+        Ok(_) => Ok(()),
+        Err(e) if is_kubectl_no_matching_resources(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn wait_for_resource_deleted(kubectl: &Kubectl, resource: &str) -> Result<()> {
+    match kubectl.run(&["wait", "--for=delete", resource, "--timeout=300s"]) {
+        Ok(_) => Ok(()),
+        Err(e) if is_kubectl_no_matching_resources(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn is_kubectl_no_matching_resources(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    msg.contains("no matching resources found") || msg.contains("NotFound")
+}
+
+fn kafka_data_pvc_names(kubectl: &Kubectl) -> Result<Vec<String>> {
+    let json = kubectl.run(&["get", "pvc", "-o", "json"])?;
+    kafka_data_pvc_names_from_json(&json)
+}
+
+fn kafka_data_pvc_names_from_json(json: &str) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct PvcList {
+        #[serde(default)]
+        items: Vec<PvcItem>,
+    }
+
+    #[derive(Deserialize)]
+    struct PvcItem {
+        metadata: PvcMetadata,
+    }
+
+    #[derive(Deserialize)]
+    struct PvcMetadata {
+        name: String,
+    }
+
+    let list: PvcList = serde_json::from_str(json).context("Cannot parse kubectl get pvc JSON")?;
+    let mut names: Vec<String> = list
+        .items
+        .into_iter()
+        .map(|item| item.metadata.name)
+        .filter(|name| name.starts_with(KAFKA_DATA_PVC_PREFIX))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+fn live_kafka_spec_hash(kubectl: &Kubectl) -> Result<LiveKafkaSpecHash> {
+    let json = kubectl.run(&[
+        "get",
+        "statefulset",
+        "kafka",
+        "--ignore-not-found",
+        "-o",
+        "json",
+    ])?;
+    if json.trim().is_empty() {
+        return Ok(LiveKafkaSpecHash::Missing);
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(&json).context("Cannot parse live Kafka StatefulSet JSON")?;
+    let name = value.pointer("/metadata/name").and_then(|v| v.as_str());
+    if name != Some("kafka") {
+        return Ok(LiveKafkaSpecHash::Missing);
+    }
+
+    let hash = value
+        .pointer(&format!(
+            "/metadata/annotations/{}",
+            json_pointer_escape(KAFKA_SPEC_HASH_ANNOTATION)
+        ))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(LiveKafkaSpecHash::Present(hash))
+}
+
+fn json_pointer_escape(s: &str) -> String {
+    s.replace('~', "~0").replace('/', "~1")
+}
+
+fn kafka_recreate_decision(live: &LiveKafkaSpecHash, desired_hash: &str) -> KafkaRecreateDecision {
+    match live {
+        LiveKafkaSpecHash::Missing => KafkaRecreateDecision::ApplyOnly,
+        LiveKafkaSpecHash::Present(Some(live_hash)) if live_hash == desired_hash => {
+            KafkaRecreateDecision::ApplyOnly
+        }
+        LiveKafkaSpecHash::Present(Some(_)) => KafkaRecreateDecision::Recreate("changed"),
+        LiveKafkaSpecHash::Present(None) => {
+            KafkaRecreateDecision::Recreate("has no recorded spec hash")
+        }
+    }
+}
+
+fn annotate_kafka_spec_hash(kubectl: &Kubectl, hash: &str) -> Result<()> {
+    let annotation = format!("{KAFKA_SPEC_HASH_ANNOTATION}={hash}");
+    kubectl.run(&[
+        "annotate",
+        "statefulset",
+        "kafka",
+        &annotation,
+        "--overwrite",
+    ])?;
+    Ok(())
+}
+
+fn kafka_spec_hash_from_rendered_yaml(rendered: &str) -> Result<String> {
+    let mut resources = extract_kafka_resources(rendered)?;
+    if resources.is_empty() {
+        bail!("rendered overlay did not contain any Kafka resources");
+    }
+    resources.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let mut hash = Fnv1a64::new();
+    for resource in resources {
+        hash.update(resource.key.as_bytes());
+        hash.update(b"\n");
+        let serialized = serde_json::to_string(&resource.value)
+            .context("Cannot serialize Kafka resource for hashing")?;
+        hash.update(serialized.as_bytes());
+        hash.update(b"\n---\n");
+    }
+    Ok(format!("{:016x}", hash.finish()))
+}
+
+#[derive(Debug)]
+struct KafkaResourceForHash {
+    key: String,
+    value: serde_yaml::Value,
+}
+
+fn extract_kafka_resources(rendered: &str) -> Result<Vec<KafkaResourceForHash>> {
+    let mut resources = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(rendered) {
+        let value = serde_yaml::Value::deserialize(document)
+            .context("Cannot parse rendered Kubernetes YAML document")?;
+        if value.is_null() {
+            continue;
+        }
+        let Some(kind) = yaml_field_as_str(&value, "kind") else {
+            continue;
+        };
+        let Some(name) = yaml_metadata_name(&value) else {
+            continue;
+        };
+        if is_kafka_owned_resource(kind, name) {
+            resources.push(KafkaResourceForHash {
+                key: format!("{kind}/{name}"),
+                value,
+            });
+        }
+    }
+    Ok(resources)
+}
+
+fn is_kafka_owned_resource(kind: &str, name: &str) -> bool {
+    matches!(
+        (kind, name),
+        ("StatefulSet", "kafka")
+            | ("ConfigMap", "kafka-config")
+            | ("ConfigMap", "kafka-jmx-config")
+            | ("Service", "kafka-headless")
+            | ("Service", "kafka-bootstrap")
+    )
+}
+
+fn yaml_metadata_name(value: &serde_yaml::Value) -> Option<&str> {
+    yaml_mapping_get(value, "metadata").and_then(|metadata| yaml_field_as_str(metadata, "name"))
+}
+
+fn yaml_field_as_str<'a>(value: &'a serde_yaml::Value, key: &str) -> Option<&'a str> {
+    yaml_mapping_get(value, key).and_then(|v| v.as_str())
+}
+
+fn yaml_mapping_get<'a>(value: &'a serde_yaml::Value, key: &str) -> Option<&'a serde_yaml::Value> {
+    let serde_yaml::Value::Mapping(map) = value else {
+        return None;
+    };
+    map.get(serde_yaml::Value::String(key.to_string()))
+}
+
+/// Tiny deterministic hash implementation to avoid pulling a new dependency
+/// into the CLI just to store a deploy drift token. It is not used for
+/// security, only for stable equality across Dimster runs.
+struct Fnv1a64(u64);
+
+impl Fnv1a64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+
+    fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
     }
 }
 
@@ -1510,7 +1953,8 @@ pub(crate) fn rewrite_dns_namespace(tmp: &Path, ns: &str) -> Result<()> {
 /// the dns_sd_configs entries (which look up worker / node-exporter
 /// services by FQDN) line up with the rest of the deployment.
 fn write_external_prometheus_config(dir: &Path, ns: &str) -> Result<()> {
-    let content = format!(r#"apiVersion: v1
+    let content = format!(
+        r#"apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -1535,15 +1979,16 @@ data:
               - 'node-exporter.{ns}.svc.cluster.local'
             type: A
             port: 9100
-"#);
+"#
+    );
     std::fs::write(dir.join("prometheus-config.yaml"), content)?;
     Ok(())
 }
 
 fn parse_node_label(label: &str) -> Result<(&str, &str)> {
-    label
-        .split_once('=')
-        .ok_or_else(|| anyhow::anyhow!("Invalid nodeLabel '{}': expected format 'key=value'", label))
+    label.split_once('=').ok_or_else(|| {
+        anyhow::anyhow!("Invalid nodeLabel '{}': expected format 'key=value'", label)
+    })
 }
 
 #[cfg(test)]
@@ -1600,17 +2045,20 @@ mod tests {
             base.join("kafka/configmap.yaml"),
             "VOTERS=kafka-0.kafka-headless.dimster.svc.cluster.local:9093\n\
              ADVERTISED=kafka-${NODE_ID}.kafka-headless.dimster.svc.cluster.local\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             base.join("monitoring/prometheus-config.yaml"),
             "- 'benchmark-worker.dimster.svc.cluster.local'\n\
              - 'kafka-headless.dimster.svc.cluster.local'\n\
              - 'node-exporter.dimster.svc.cluster.local'\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             base.join("monitoring/grafana-config.yaml"),
             "url: http://prometheus.dimster.svc.cluster.local:9090\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         rewrite_dns_namespace(tmp.path(), "dimster2").unwrap();
 
@@ -1622,11 +2070,15 @@ mod tests {
             let content = std::fs::read_to_string(tmp.path().join(rel)).unwrap();
             assert!(
                 !content.contains("dimster.svc.cluster.local"),
-                "{} still has the old DNS string:\n{}", rel, content
+                "{} still has the old DNS string:\n{}",
+                rel,
+                content
             );
             assert!(
                 content.contains("dimster2.svc.cluster.local"),
-                "{} missing the rewritten DNS string:\n{}", rel, content
+                "{} missing the rewritten DNS string:\n{}",
+                rel,
+                content
             );
         }
     }
@@ -1641,6 +2093,139 @@ mod tests {
         // No files exist; if the function tried to walk them this would
         // error. The early-return for ns == "dimster" prevents that.
         rewrite_dns_namespace(tmp.path(), "dimster").unwrap();
+    }
+
+    #[test]
+    fn kafka_resource_hash_uses_only_kafka_owned_resources() {
+        let base = r#"
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  replicas: 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+data:
+  server.properties: "log.dirs=/var/kafka-data/kafka-logs"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benchmark-worker
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: worker
+          image: dimster:old
+"#;
+        let worker_changed = base.replace("dimster:old", "dimster:new");
+        let kafka_changed = base.replace(
+            "log.dirs=/var/kafka-data/kafka-logs",
+            "log.retention.hours=2",
+        );
+
+        let base_hash = kafka_spec_hash_from_rendered_yaml(base).unwrap();
+        assert_eq!(
+            base_hash,
+            kafka_spec_hash_from_rendered_yaml(&worker_changed).unwrap(),
+            "worker-only changes must not trigger a Kafka PVC recreate"
+        );
+        assert_ne!(
+            base_hash,
+            kafka_spec_hash_from_rendered_yaml(&kafka_changed).unwrap(),
+            "Kafka config changes must trigger a Kafka PVC recreate"
+        );
+    }
+
+    #[test]
+    fn kafka_resource_hash_is_stable_across_document_order() {
+        let first = r#"
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-bootstrap
+spec:
+  ports:
+    - name: broker
+      port: 9092
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  replicas: 3
+"#;
+        let reversed = r#"
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  replicas: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-bootstrap
+spec:
+  ports:
+    - name: broker
+      port: 9092
+"#;
+
+        assert_eq!(
+            kafka_spec_hash_from_rendered_yaml(first).unwrap(),
+            kafka_spec_hash_from_rendered_yaml(reversed).unwrap()
+        );
+    }
+
+    #[test]
+    fn kafka_recreate_decision_preserves_only_known_matching_hash() {
+        assert_eq!(
+            kafka_recreate_decision(&LiveKafkaSpecHash::Missing, "abc"),
+            KafkaRecreateDecision::ApplyOnly
+        );
+        assert_eq!(
+            kafka_recreate_decision(&LiveKafkaSpecHash::Present(Some("abc".into())), "abc"),
+            KafkaRecreateDecision::ApplyOnly
+        );
+        assert_eq!(
+            kafka_recreate_decision(&LiveKafkaSpecHash::Present(Some("old".into())), "abc"),
+            KafkaRecreateDecision::Recreate("changed")
+        );
+        assert_eq!(
+            kafka_recreate_decision(&LiveKafkaSpecHash::Present(None), "abc"),
+            KafkaRecreateDecision::Recreate("has no recorded spec hash")
+        );
+    }
+
+    #[test]
+    fn kafka_data_pvc_discovery_uses_statefulset_name_prefix() {
+        let json = r#"{
+          "items": [
+            {"metadata": {"name": "kafka-data-kafka-0"}},
+            {"metadata": {"name": "benchmark-results"}},
+            {"metadata": {"name": "kafka-data-kafka-2"}},
+            {"metadata": {"name": "not-kafka-data-kafka-0"}},
+            {"metadata": {"name": "kafka-data-kafka-1"}}
+          ]
+        }"#;
+
+        assert_eq!(
+            kafka_data_pvc_names_from_json(json).unwrap(),
+            vec![
+                "kafka-data-kafka-0".to_string(),
+                "kafka-data-kafka-1".to_string(),
+                "kafka-data-kafka-2".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -1675,7 +2260,8 @@ mod tests {
                 }
               }
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(bool_config.policy.as_deref(), Some("static"));
         assert!(bool_config.full_pcpus_only);
 
@@ -1688,7 +2274,8 @@ mod tests {
                 }
               }
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(string_config.policy.as_deref(), Some("static"));
         assert!(string_config.full_pcpus_only);
     }
@@ -1709,8 +2296,8 @@ mod tests {
             policy: Some("none".into()),
             full_pcpus_only: true,
         };
-        let err = validate_kubelet_cpu_manager_config("node-a", &expected, &missing_static)
-            .unwrap_err();
+        let err =
+            validate_kubelet_cpu_manager_config("node-a", &expected, &missing_static).unwrap_err();
         assert!(err.to_string().contains("cpuManagerPolicy=static"));
 
         let missing_full_cores = KubeletCpuManagerConfig {
@@ -1741,7 +2328,8 @@ mod tests {
                 }
               ]
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
         let target = BenchmarkCpuTarget {
             component: "workers",
             cpu_request: "2",
@@ -1761,7 +2349,8 @@ mod tests {
                 {"metadata": {"name": "node-c", "labels": {}}, "spec": {}}
               ]
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
         let target = BenchmarkCpuTarget {
             component: "workers",
             cpu_request: "2",
