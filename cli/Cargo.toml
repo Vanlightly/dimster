@@ -19,7 +19,7 @@ rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto
 # Already pulled in transitively by rcgen — declared explicitly so we can
 # set not_before/not_after on certificate params (rcgen's default validity
 # is 4 weeks, way too short for benchmarking sessions).
-time = { version = "0.3", default-features = false, features = ["std"] }
+time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
 [profile.release]
 strip = true

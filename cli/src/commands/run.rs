@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::process::Child;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -13,6 +16,15 @@ use crate::commands::results;
 use crate::commands::run_configs;
 use crate::config::{ConnectionConfig, KafkaTlsConfig};
 use crate::kubectl::Kubectl;
+
+const COORDINATOR_LOG_FILE: &str = "/benchmark/results/.dimster-logs/coordinator.log";
+const STREAM_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const STREAM_FILE_SIZE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const STREAM_STALL_GRACE: Duration = Duration::from_secs(60);
+const STREAM_RECONNECT_OVERLAP: Duration = Duration::from_secs(10);
+const STREAM_TERMINAL_FLUSH: Duration = Duration::from_secs(3);
+const STREAM_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
+const STREAM_EVENT_WAIT: Duration = Duration::from_millis(250);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -795,73 +807,224 @@ fn find_config_path() -> Result<std::path::PathBuf> {
 /// Stream coordinator logs and poll for completion.
 /// Returns Ok(true) if detached via Ctrl+C, Ok(false) if completed normally.
 pub fn stream_and_wait(kubectl: &Kubectl, coord_pod: &str, stop: Arc<AtomicBool>) -> Result<bool> {
-    let log_since = chrono_now_utc();
-
-    // Spawn kubectl logs -f as a child process
-    let since_arg = format!("--since-time={}", log_since);
-    let mut log_child = kubectl.spawn(&["logs", "-f", coord_pod, &since_arg])?;
-
-    // Share the log child's PID with the poller so it can kill it to unblock the reader
-    let log_pid = log_child.id();
-    let stop_clone = stop.clone();
-
-    // We need coordinator pod name and kubectl args for the poller thread
-    let coord_pod_clone = coord_pod.to_string();
+    // The cursor starts at attach time, matching the historical behavior that
+    // `dimster run` follows new coordinator output rather than replaying the
+    // whole accumulated pod log. Later reconnects move the cursor back by a
+    // small overlap so a dead `kubectl logs -f` cannot drop the last few lines.
+    let mut log_since = SystemTime::now();
+    let mut monitor = LogTailMonitor::new(Instant::now(), STREAM_STALL_GRACE);
     let ns = kubectl.namespace().to_string();
     let ctx = std::env::var("DIMSTER_K8S_CONTEXT").ok();
 
-    // Background poller: polls /status and kills kubectl logs when coordinator goes IDLE.
-    // The stop flag is checked frequently (every 250ms) so that Ctrl+C tears the
-    // stream down promptly — otherwise the caller's "Detached from benchmark / To
-    // reattach: ..." guidance can be delayed up to 5s, which combined with the
-    // "Press Ctrl+C again to force exit" prompt tempts users into a second press
-    // that force-exits before the guidance can print.
-    let poller = std::thread::spawn(move || -> bool {
-        let chunk = std::time::Duration::from_millis(250);
-        let chunks_per_status_poll = 20; // 20 * 250ms = 5s between status polls
+    loop {
+        let since_arg = format!("--since-time={}", format_system_time_utc(log_since));
+        let mut log_child = kubectl.spawn(&["logs", "-f", coord_pod, &since_arg])?;
+        let log_pid = log_child.id();
+        let (log_rx, reader_handle) = spawn_log_reader(&mut log_child)?;
+
+        let mut last_status_poll = Instant::now() - STREAM_STATUS_POLL_INTERVAL;
+        let mut last_file_size_poll = Instant::now() - STREAM_FILE_SIZE_POLL_INTERVAL;
+        let mut terminal_deadline: Option<Instant> = None;
+
         loop {
-            for _ in 0..chunks_per_status_poll {
-                std::thread::sleep(chunk);
-                if stop_clone.load(Ordering::Relaxed) {
-                    // Ctrl+C: detach — just kill log streaming, do NOT stop the coordinator
-                    kill_process(log_pid);
-                    return true; // detached
+            let wait = terminal_deadline
+                .map(|deadline| {
+                    std::cmp::min(
+                        STREAM_EVENT_WAIT,
+                        deadline.saturating_duration_since(Instant::now()),
+                    )
+                })
+                .unwrap_or(STREAM_EVENT_WAIT);
+
+            match log_rx.recv_timeout(wait) {
+                Ok(LogEvent::Line(text)) => {
+                    println!("{}", text);
+                    monitor.record_live_line(Instant::now());
+                    log_since = reconnect_since_time(SystemTime::now(), STREAM_RECONNECT_OVERLAP);
+                }
+                Ok(LogEvent::Ended) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let state = poll_coordinator_state(ctx.as_deref(), &ns, coord_pod);
+                    if state.is_terminal() {
+                        return finish_log_child(log_child, reader_handle, log_pid, false);
+                    }
+                    eprintln!("==> Coordinator log stream ended unexpectedly; reattaching...");
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+
+            if terminal_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return finish_log_child(log_child, reader_handle, log_pid, false);
+            }
+
+            if stop.load(Ordering::Relaxed) {
+                // Ctrl+C means detach from the stream only. The coordinator is
+                // left running so the user can reattach or stop it explicitly.
+                return finish_log_child(log_child, reader_handle, log_pid, true);
+            }
+
+            if terminal_deadline.is_none()
+                && last_status_poll.elapsed() >= STREAM_STATUS_POLL_INTERVAL
+            {
+                last_status_poll = Instant::now();
+                if poll_coordinator_state(ctx.as_deref(), &ns, coord_pod).is_terminal() {
+                    // Keep draining the reader during the flush window so the
+                    // final coordinator lines are still printed before we stop
+                    // the `kubectl logs` child.
+                    terminal_deadline = Some(Instant::now() + STREAM_TERMINAL_FLUSH);
                 }
             }
-            let status = exec_curl_standalone(
-                ctx.as_deref(),
-                &ns,
-                &coord_pod_clone,
-                "GET",
-                "http://localhost:8080/status",
-            );
-            if status.contains("\"IDLE\"") || status.contains("\"FAILED\"") {
-                // Benchmark done (or failed): wait briefly for log stream to flush, then kill
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                kill_process(log_pid);
-                return false; // completed normally
+
+            if terminal_deadline.is_none()
+                && last_file_size_poll.elapsed() >= STREAM_FILE_SIZE_POLL_INTERVAL
+            {
+                last_file_size_poll = Instant::now();
+                if let Some(size) = coordinator_log_size_standalone(ctx.as_deref(), &ns, coord_pod)
+                {
+                    if monitor.observe_file_size(size, Instant::now()) {
+                        eprintln!("==> Coordinator log tail stalled; reattaching...");
+                        break;
+                    }
+                }
             }
         }
-    });
 
-    // Read stdout line by line. When the poller kills kubectl, read() returns EOF.
-    if let Some(stdout) = log_child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(text) => println!("{}", text),
-                Err(_) => break,
-            }
+        finish_log_child(log_child, reader_handle, log_pid, false)?;
+        std::thread::sleep(STREAM_RECONNECT_BACKOFF);
+    }
+}
+
+enum LogEvent {
+    Line(String),
+    Ended,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CoordinatorState {
+    Running,
+    Stopping,
+    Idle,
+    Failed,
+    Unknown,
+}
+
+impl CoordinatorState {
+    fn is_terminal(self) -> bool {
+        matches!(self, CoordinatorState::Idle | CoordinatorState::Failed)
+    }
+}
+
+/// Decides whether the live `kubectl logs -f` stream has fallen behind the
+/// persisted coordinator log. Quiet periods alone are not treated as stalls:
+/// long benchmarks can legitimately emit no lines for a while, so file growth
+/// is the evidence that the tail stream is the part that is stuck.
+#[derive(Debug)]
+struct LogTailMonitor {
+    last_live_line_at: Instant,
+    last_observed_file_size: Option<u64>,
+    unstreamed_growth_seen_at: Option<Instant>,
+    stall_grace: Duration,
+}
+
+impl LogTailMonitor {
+    fn new(now: Instant, stall_grace: Duration) -> Self {
+        Self {
+            last_live_line_at: now,
+            last_observed_file_size: None,
+            unstreamed_growth_seen_at: None,
+            stall_grace,
         }
     }
 
-    // Wait for child to exit after being killed
+    fn record_live_line(&mut self, now: Instant) {
+        self.last_live_line_at = now;
+        self.unstreamed_growth_seen_at = None;
+    }
+
+    fn observe_file_size(&mut self, size: u64, now: Instant) -> bool {
+        if let Some(previous) = self.last_observed_file_size {
+            if size > previous && now > self.last_live_line_at {
+                self.unstreamed_growth_seen_at.get_or_insert(now);
+            }
+        }
+        self.last_observed_file_size = Some(size);
+
+        self.unstreamed_growth_seen_at.is_some()
+            && now.duration_since(self.last_live_line_at) >= self.stall_grace
+    }
+}
+
+fn spawn_log_reader(
+    log_child: &mut Child,
+) -> Result<(mpsc::Receiver<LogEvent>, std::thread::JoinHandle<()>)> {
+    let stdout = log_child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("kubectl logs stdout was not piped"))?;
+    let (tx, rx) = mpsc::channel();
+
+    let handle = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    if tx.send(LogEvent::Line(text)).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = tx.send(LogEvent::Ended);
+    });
+
+    Ok((rx, handle))
+}
+
+fn finish_log_child(
+    mut log_child: Child,
+    reader_handle: std::thread::JoinHandle<()>,
+    log_pid: u32,
+    detached: bool,
+) -> Result<bool> {
+    kill_process(log_pid);
     let _ = log_child.wait();
-
-    // Wait for poller to finish and get detach status
-    let detached = poller.join().unwrap_or(false);
-
+    let _ = reader_handle.join();
     Ok(detached)
+}
+
+fn poll_coordinator_state(context: Option<&str>, namespace: &str, pod: &str) -> CoordinatorState {
+    let status = exec_curl_standalone(
+        context,
+        namespace,
+        pod,
+        "GET",
+        "http://localhost:8080/status",
+    );
+    parse_coordinator_state(&status)
+}
+
+fn parse_coordinator_state(status: &str) -> CoordinatorState {
+    if status.contains("\"RUNNING\"") {
+        CoordinatorState::Running
+    } else if status.contains("\"STOPPING\"") {
+        CoordinatorState::Stopping
+    } else if status.contains("\"IDLE\"") {
+        CoordinatorState::Idle
+    } else if status.contains("\"FAILED\"") {
+        CoordinatorState::Failed
+    } else {
+        CoordinatorState::Unknown
+    }
+}
+
+fn reconnect_since_time(received_at: SystemTime, overlap: Duration) -> SystemTime {
+    match received_at.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(since_epoch) if since_epoch > overlap => {
+            SystemTime::UNIX_EPOCH + (since_epoch - overlap)
+        }
+        _ => SystemTime::UNIX_EPOCH,
+    }
 }
 
 /// Inject connection properties into a YAML config string's `commonConfig` block.
@@ -1072,19 +1235,13 @@ fn inject_workload_tls(content: &str, ssl_bootstrap: &str) -> Result<Option<Stri
     Ok(Some(serialized))
 }
 
-/// Get current UTC time in ISO 8601 format for --since-time.
-pub(crate) fn chrono_now_utc() -> String {
-    // Use date command to avoid adding chrono dependency
-    let output = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output();
-    match output {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        Err(_) => "2000-01-01T00:00:00Z".to_string(),
-    }
+fn format_system_time_utc(system_time: SystemTime) -> String {
+    let utc: time::OffsetDateTime = system_time.into();
+    utc.format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "2000-01-01T00:00:00Z".to_string())
 }
 
-/// Send SIGTERM to a process by PID (used to kill kubectl logs from the poller thread).
+/// Send SIGTERM to a process by PID (used to stop a stuck `kubectl logs` tail).
 pub(crate) fn kill_process(pid: u32) {
     let _ = std::process::Command::new("kill")
         .arg(pid.to_string())
@@ -1105,8 +1262,20 @@ pub(crate) fn exec_curl_standalone(
     if let Some(ctx) = context {
         cmd.args(["--context", ctx]);
     }
+    cmd.arg("--request-timeout=10s");
     cmd.args([
-        "-n", namespace, "exec", pod, "--", "curl", "-sf", "-X", method, url,
+        "-n",
+        namespace,
+        "exec",
+        pod,
+        "--",
+        "curl",
+        "-sf",
+        "--max-time",
+        "5",
+        "-X",
+        method,
+        url,
     ]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
@@ -1117,9 +1286,106 @@ pub(crate) fn exec_curl_standalone(
     }
 }
 
+fn coordinator_log_size_standalone(
+    context: Option<&str>,
+    namespace: &str,
+    pod: &str,
+) -> Option<u64> {
+    let mut cmd = std::process::Command::new("kubectl");
+    if let Some(ctx) = context {
+        cmd.args(["--context", ctx]);
+    }
+    cmd.arg("--request-timeout=10s");
+
+    // `kubectl logs -f` can stop delivering lines even while the coordinator's
+    // RollingFile appender keeps writing to the PVC. Reading the byte count is
+    // a cheap health signal for the tail stream without replaying the file.
+    let script = format!(
+        "if [ -f {0} ]; then wc -c < {0}; else echo 0; fi",
+        COORDINATOR_LOG_FILE
+    );
+    cmd.args(["-n", namespace, "exec", pod, "--", "sh", "-c", &script]);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+
+    match cmd.output() {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u64>()
+            .ok(),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_tail_monitor_does_not_reconnect_for_quiet_stream_without_file_growth() {
+        let start = Instant::now();
+        let mut monitor = LogTailMonitor::new(start, Duration::from_secs(60));
+
+        assert!(!monitor.observe_file_size(100, start + Duration::from_secs(5)));
+        assert!(!monitor.observe_file_size(100, start + Duration::from_secs(65)));
+    }
+
+    #[test]
+    fn log_tail_monitor_reconnects_when_file_grows_but_stream_stays_quiet() {
+        let start = Instant::now();
+        let mut monitor = LogTailMonitor::new(start, Duration::from_secs(60));
+
+        assert!(!monitor.observe_file_size(100, start + Duration::from_secs(5)));
+        assert!(!monitor.observe_file_size(120, start + Duration::from_secs(10)));
+        assert!(monitor.observe_file_size(120, start + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn log_tail_monitor_live_line_clears_unstreamed_growth() {
+        let start = Instant::now();
+        let mut monitor = LogTailMonitor::new(start, Duration::from_secs(60));
+
+        assert!(!monitor.observe_file_size(100, start + Duration::from_secs(5)));
+        assert!(!monitor.observe_file_size(120, start + Duration::from_secs(10)));
+        monitor.record_live_line(start + Duration::from_secs(20));
+
+        assert!(!monitor.observe_file_size(120, start + Duration::from_secs(85)));
+    }
+
+    #[test]
+    fn reconnect_since_time_applies_overlap_and_saturates_at_epoch() {
+        let received = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+
+        assert_eq!(
+            reconnect_since_time(received, Duration::from_secs(10)),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(90)
+        );
+        assert_eq!(
+            reconnect_since_time(received, Duration::from_secs(101)),
+            SystemTime::UNIX_EPOCH
+        );
+    }
+
+    #[test]
+    fn parse_coordinator_state_handles_known_states() {
+        assert_eq!(
+            parse_coordinator_state("{\"state\":\"RUNNING\"}"),
+            CoordinatorState::Running
+        );
+        assert_eq!(
+            parse_coordinator_state("{\"state\":\"STOPPING\"}"),
+            CoordinatorState::Stopping
+        );
+        assert_eq!(
+            parse_coordinator_state("{\"state\":\"IDLE\"}"),
+            CoordinatorState::Idle
+        );
+        assert_eq!(
+            parse_coordinator_state("{\"state\":\"FAILED\"}"),
+            CoordinatorState::Failed
+        );
+        assert_eq!(parse_coordinator_state("{}"), CoordinatorState::Unknown);
+    }
 
     // Sample workload that opts in to TLS via the documented surface.
     // Mirrors a real workload's nesting: scenarios array, scalar config maps,
