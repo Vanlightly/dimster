@@ -58,3 +58,9 @@ Initial public release.
 ### Changed
 
 - Improvements to simulated processing time
+
+## [0.4.0]
+
+### Added
+
+- Infrastructure dimension support via extra metadata arguments and overridable Dimster envs.

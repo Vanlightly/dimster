@@ -4,7 +4,7 @@
 
 	<groupId>dev.dimster</groupId>
 	<artifactId>dimster</artifactId>
-	<version>0.3.2</version>
+	<version>0.4.0</version>
 	<name>Dimster</name>
 	<packaging>pom</packaging>
 
