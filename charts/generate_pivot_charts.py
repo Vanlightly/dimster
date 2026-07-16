@@ -31,6 +31,7 @@ from generate_run_charts import (
     avg,
     bar_options,
     line_options,
+    metadata_annotation_html,
     percentile_options,
     percentile_points,
     strip_heavy_data,
@@ -454,6 +455,7 @@ def build_pivot_header(data):
     m = data.get("metadata", {})
     rc = data.get("runConfig", {})
     kc = data.get("baseKafkaConfig", {})
+    annotation_meta = metadata_annotation_html(m)
     return f"""
     <div class="pivot-header">
         <div class="meta-item"><span class="label">System:</span> <span class="value">{m.get("system", "")}</span></div>
@@ -463,6 +465,7 @@ def build_pivot_header(data):
         <div class="meta-item"><span class="label">Replication Factor:</span> <span class="value">{kc.get("replicationFactor", "")}</span></div>
         <div class="meta-item"><span class="label">Test Duration:</span> <span class="value">{rc.get("testDurationMinutes", "")} min</span></div>
         <div class="meta-item"><span class="label">Warmup:</span> <span class="value">{rc.get("warmupDurationMinutes", "")} min</span></div>
+        {annotation_meta}
         <div class="meta-item"><span class="label">Start:</span> <span class="value">{m.get("beginTime", "")}</span></div>
         <div class="meta-item"><span class="label">End:</span> <span class="value">{m.get("endTime", "")}</span></div>
     </div>

@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
  *
  * <pre>{@code
  * {
+ *   "fileType": "dimster-topology",
  *   "workloadName": "...",
  *   "writtenAt": "2026-05-07T11:00:00Z",
  *   "testPoints": [
@@ -57,11 +58,11 @@ public final class JsonFileTopologyRecorder implements TopologyRecorder {
     }
 
     private Snapshot snapshot() {
-        return new Snapshot(workloadName, Instant.now().toString(), List.copyOf(entries));
+        return new Snapshot("dimster-topology", workloadName, Instant.now().toString(), List.copyOf(entries));
     }
 
     /** Serialized payload — one record per workload-run output file. */
-    public record Snapshot(String workloadName, String writtenAt, List<Entry> testPoints) {}
+    public record Snapshot(String fileType, String workloadName, String writtenAt, List<Entry> testPoints) {}
 
     public record Entry(String label, VirtualTopology topology) {}
 }

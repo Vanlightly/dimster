@@ -12,8 +12,9 @@ import dev.dimster.TestResult.WorkloadConfig;
 /**
  * Result of a drain-backlog test run.
  */
-@JsonPropertyOrder({"mode", "metadata", "config", "scenarioResults"})
+@JsonPropertyOrder({"fileType", "mode", "metadata", "config", "scenarioResults"})
 public class DrainBacklogResult {
+    public String fileType = "dimster-result";
     public String mode = "drain-backlog";
     public ResultMetadata metadata = new ResultMetadata();
     public DrainBacklogWorkload config;

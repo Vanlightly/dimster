@@ -43,6 +43,10 @@ enum Commands {
         /// Environment name (e.g. local, aws)
         env: String,
 
+        /// Temporarily override an environment field for this deploy, e.g. kafka.replicas=5
+        #[arg(long = "env-override")]
+        env_overrides: Vec<String>,
+
         /// Path to log4j config YAML (overrides environment's logConfig)
         #[arg(short = 'l', long = "log-config")]
         log_config: Option<String>,
@@ -76,6 +80,14 @@ enum Commands {
         /// Path to workload YAML (can be specified multiple times).
         #[arg(short = 'w', long = "workload")]
         workloads: Vec<String>,
+
+        /// Extra result metadata as key=value, e.g. series=broker-count
+        #[arg(short = 'm', long = "metadata")]
+        metadata: Vec<String>,
+
+        /// Extra infrastructure dimension as key=value, e.g. brokers=5
+        #[arg(short = 'd', long = "extra-dimension")]
+        extra_dimensions: Vec<String>,
     },
 
     /// Explore performance limits of the Kafka cluster
@@ -90,6 +102,14 @@ enum Commands {
         /// Path to explore workload YAML
         #[arg(short = 'w', long = "workload")]
         workload: String,
+
+        /// Extra result metadata as key=value, e.g. series=broker-count
+        #[arg(short = 'm', long = "metadata")]
+        metadata: Vec<String>,
+
+        /// Extra infrastructure dimension as key=value, e.g. brokers=5
+        #[arg(short = 'd', long = "extra-dimension")]
+        extra_dimensions: Vec<String>,
     },
 
     /// Run a correctness check
@@ -104,6 +124,14 @@ enum Commands {
         /// Path to correctness workload YAML
         #[arg(short = 'w', long = "workload")]
         workload: String,
+
+        /// Extra result metadata as key=value, e.g. series=broker-count
+        #[arg(short = 'm', long = "metadata")]
+        metadata: Vec<String>,
+
+        /// Extra infrastructure dimension as key=value, e.g. brokers=5
+        #[arg(short = 'd', long = "extra-dimension")]
+        extra_dimensions: Vec<String>,
     },
 
     /// Measure backlog drain time
@@ -118,6 +146,14 @@ enum Commands {
         /// Path to drain-backlog workload YAML
         #[arg(short = 'w', long = "workload")]
         workload: String,
+
+        /// Extra result metadata as key=value, e.g. series=broker-count
+        #[arg(short = 'm', long = "metadata")]
+        metadata: Vec<String>,
+
+        /// Extra infrastructure dimension as key=value, e.g. brokers=5
+        #[arg(short = 'd', long = "extra-dimension")]
+        extra_dimensions: Vec<String>,
     },
 
     /// Resume a benchmark from the last checkpoint
@@ -216,8 +252,12 @@ enum Commands {
     /// Compare run result files side-by-side (2-4 files)
     Compare {
         /// Labeled result files: LABEL=FILE (2-4 required)
-        #[arg(num_args = 2..=4, value_name = "LABEL=FILE")]
+        #[arg(num_args = 0..=4, value_name = "LABEL=FILE")]
         files: Vec<String>,
+
+        /// Directory containing per-run subdirectories; labels are read from metadata.label
+        #[arg(short = 'd', long = "directory")]
+        directory: Option<String>,
 
         /// Output directory (default: directory of first file)
         #[arg(short, long)]
@@ -408,17 +448,26 @@ fn run_command(cli: Cli) -> Result<()> {
 
         Commands::Deploy {
             env,
+            env_overrides,
             log_config,
             only,
         } => {
-            let kubectl = require_kubectl(&config, &env)?;
+            let deploy_config =
+                DimsterConfig::load_with_env_overrides(&config_path, &env, &env_overrides)?;
+            let kubectl = require_kubectl(&deploy_config, &env)?;
             commands::deploy::run(
                 &kubectl,
-                &config,
+                &deploy_config,
                 &env,
                 &k8s_dir,
                 log_config.as_deref(),
                 &only,
+            )?;
+            commands::run_configs::write_deploy_env_capture(
+                &deploy_config.results.dir,
+                &config_path,
+                &env,
+                &env_overrides,
             )?;
         }
 
@@ -426,6 +475,8 @@ fn run_command(cli: Cli) -> Result<()> {
             env,
             kafka_config,
             workloads,
+            metadata,
+            extra_dimensions,
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             // The --modify branch is intercepted BEFORE clap runs (see
@@ -466,6 +517,8 @@ fn run_command(cli: Cli) -> Result<()> {
                     .as_ref()
                     .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
+                metadata,
+                extra_dimensions,
             };
             let output_dir = config.results.dir.clone();
             commands::run::run(
@@ -482,6 +535,8 @@ fn run_command(cli: Cli) -> Result<()> {
             env,
             kafka_config,
             workload,
+            metadata,
+            extra_dimensions,
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
@@ -510,6 +565,8 @@ fn run_command(cli: Cli) -> Result<()> {
                     .as_ref()
                     .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
+                metadata,
+                extra_dimensions,
             };
             let output_dir = config.results.dir.clone();
             commands::run::run(
@@ -526,6 +583,8 @@ fn run_command(cli: Cli) -> Result<()> {
             env,
             kafka_config,
             workload,
+            metadata,
+            extra_dimensions,
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
@@ -554,6 +613,8 @@ fn run_command(cli: Cli) -> Result<()> {
                     .as_ref()
                     .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
+                metadata,
+                extra_dimensions,
             };
             let output_dir = config.results.dir.clone();
             commands::run::run(
@@ -570,6 +631,8 @@ fn run_command(cli: Cli) -> Result<()> {
             env,
             kafka_config,
             workload,
+            metadata,
+            extra_dimensions,
         } => {
             let kubectl = require_kubectl(&config, &env)?;
             if !std::path::Path::new(&workload).exists() {
@@ -598,6 +661,8 @@ fn run_command(cli: Cli) -> Result<()> {
                     .as_ref()
                     .and_then(|k| k.extra_config.clone()),
                 tls_config: env_config.tls_config().cloned(),
+                metadata,
+                extra_dimensions,
             };
             let output_dir = config.results.dir.clone();
             commands::run::run(
@@ -686,8 +751,12 @@ fn run_command(cli: Cli) -> Result<()> {
             commands::chart::run(&dir, &script_dir)?;
         }
 
-        Commands::Compare { files, output } => {
-            commands::compare::run(&files, output.as_deref(), &script_dir)?;
+        Commands::Compare {
+            files,
+            directory,
+            output,
+        } => {
+            commands::compare::run(&files, directory.as_deref(), output.as_deref(), &script_dir)?;
         }
 
         Commands::Pivot {
@@ -871,6 +940,64 @@ mod tests {
                 );
             }
             _ => panic!("expected teardown command"),
+        }
+    }
+
+    #[test]
+    fn deploy_accepts_repeatable_env_overrides() {
+        let cli = Cli::try_parse_from([
+            "dimster",
+            "deploy",
+            "local",
+            "--env-override",
+            "kafka.replicas=5",
+            "--env-override",
+            "kafka.tls.enabled=true",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Deploy {
+                env, env_overrides, ..
+            } => {
+                assert_eq!(env, "local");
+                assert_eq!(
+                    env_overrides,
+                    vec![
+                        "kafka.replicas=5".to_string(),
+                        "kafka.tls.enabled=true".to_string(),
+                    ]
+                );
+            }
+            _ => panic!("expected deploy command"),
+        }
+    }
+
+    #[test]
+    fn run_accepts_metadata_and_extra_dimensions() {
+        let cli = Cli::try_parse_from([
+            "dimster",
+            "run",
+            "local",
+            "-w",
+            "workload.yaml",
+            "-m",
+            "series=broker-count",
+            "-d",
+            "brokers=5",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Run {
+                metadata,
+                extra_dimensions,
+                ..
+            } => {
+                assert_eq!(metadata, vec!["series=broker-count".to_string()]);
+                assert_eq!(extra_dimensions, vec!["brokers=5".to_string()]);
+            }
+            _ => panic!("expected run command"),
         }
     }
 }

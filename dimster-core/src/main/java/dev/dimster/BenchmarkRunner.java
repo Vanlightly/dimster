@@ -65,6 +65,8 @@ public class BenchmarkRunner {
     private final String system;
     private final String environment;
     private final String hardware;
+    private final Map<String, Object> userMetadata;
+    private final Map<String, Object> extraDimensions;
     private final Checkpoint checkpoint;
 
     // Optional callback to publish/clear the currently-running WorkloadEngine
@@ -89,7 +91,7 @@ public class BenchmarkRunner {
                            AtomicBoolean stopRequested, String system, String environment,
                            String hardware) throws Exception {
         this(mode, worker, topologyPlanner, kafkaConfigFile, workloadYamls, resultsDir, stopRequested,
-                system, environment, hardware, null, null);
+                system, environment, hardware, null, null, null, null);
     }
 
     public BenchmarkRunner(String mode, Worker worker, TopologyPlanner topologyPlanner,
@@ -98,14 +100,15 @@ public class BenchmarkRunner {
                            AtomicBoolean stopRequested, String system, String environment,
                            String hardware, Checkpoint checkpoint) throws Exception {
         this(mode, worker, topologyPlanner, kafkaConfigFile, workloadYamls, resultsDir, stopRequested,
-                system, environment, hardware, checkpoint, null);
+                system, environment, hardware, null, null, checkpoint, null);
     }
 
     public BenchmarkRunner(String mode, Worker worker, TopologyPlanner topologyPlanner,
                            File kafkaConfigFile,
                            Map<String, String> workloadYamls, File resultsDir,
                            AtomicBoolean stopRequested, String system, String environment,
-                           String hardware, Checkpoint checkpoint,
+                           String hardware, Map<String, Object> userMetadata,
+                           Map<String, Object> extraDimensions, Checkpoint checkpoint,
                            Consumer<WorkloadEngine> activeEngineSink) throws Exception {
         this.mode = mode;
         this.worker = worker;
@@ -120,6 +123,8 @@ public class BenchmarkRunner {
         this.system = system;
         this.environment = environment;
         this.hardware = hardware;
+        this.userMetadata = userMetadata;
+        this.extraDimensions = extraDimensions;
         this.checkpoint = checkpoint;
         this.activeEngineSink = activeEngineSink;
     }
@@ -215,6 +220,21 @@ public class BenchmarkRunner {
         return TestResult.KafkaConfigSummary.fromKafkaConfig(merged);
     }
 
+    /**
+     * Stamp provenance that is common to every top-level result format.
+     * Keeping this in one helper prevents future result modes from recording
+     * built-in metadata but silently dropping campaign-series annotations.
+     */
+    private void stampMetadata(ResultMetadata metadata, String beginTime, String endTime) {
+        metadata.beginTime = beginTime;
+        metadata.endTime = endTime;
+        metadata.environment = environment;
+        metadata.system = system;
+        metadata.hardware = hardware;
+        metadata.putUserMetadata(userMetadata);
+        metadata.putExtraDimensions(extraDimensions);
+    }
+
     // ─── Standard "run" mode ───────────────────────────────────────────
 
     private void runStandardWorkload(String workloadName, String yaml,
@@ -243,11 +263,7 @@ public class BenchmarkRunner {
                 // timestamps for downstream tooling (the final write below also
                 // sets these, but is skipped on StopRequestedException).
                 if (partial instanceof RunResult rr) {
-                    rr.metadata.beginTime = beginTime;
-                    rr.metadata.endTime = dateFormat.format(new Date());
-                    rr.metadata.environment = environment;
-                    rr.metadata.system = system;
-                    rr.metadata.hardware = hardware;
+                    stampMetadata(rr.metadata, beginTime, dateFormat.format(new Date()));
                 }
                 savePartialResult(partialFileName, partial);
                 cp.currentWorkload = new Checkpoint.CurrentWorkload(
@@ -266,11 +282,7 @@ public class BenchmarkRunner {
             log.info("=============== WORKLOAD : {} ===============", workload.name);
 
             RunResult result = engine.run(startTestPoint, partialResult, callback);
-            result.metadata.beginTime = beginTime;
-            result.metadata.endTime = dateFormat.format(new Date());
-            result.metadata.environment = environment;
-            result.metadata.system = system;
-            result.metadata.hardware = hardware;
+            stampMetadata(result.metadata, beginTime, dateFormat.format(new Date()));
 
             var baseKafkaSummary = resolveBaseKafkaConfigSummary(workload.baseWorkload);
             if (baseKafkaSummary != null) {
@@ -318,11 +330,7 @@ public class BenchmarkRunner {
 
             CheckpointCallback callback = (completedIndex, partial) -> {
                 if (partial instanceof ExploreResult er) {
-                    er.metadata.beginTime = beginTime;
-                    er.metadata.endTime = dateFormat.format(new Date());
-                    er.metadata.environment = environment;
-                    er.metadata.system = system;
-                    er.metadata.hardware = hardware;
+                    stampMetadata(er.metadata, beginTime, dateFormat.format(new Date()));
                 }
                 savePartialResult(partialFileName, partial);
                 cp.currentWorkload = new Checkpoint.CurrentWorkload(
@@ -335,11 +343,7 @@ public class BenchmarkRunner {
             log.info("=============== EXPLORE LIMITS : {} ===============", exploreWorkload.name);
 
             ExploreResult result = engine.run(startTestPoint, partialResult, callback);
-            result.metadata.beginTime = beginTime;
-            result.metadata.endTime = dateFormat.format(new Date());
-            result.metadata.environment = environment;
-            result.metadata.system = system;
-            result.metadata.hardware = hardware;
+            stampMetadata(result.metadata, beginTime, dateFormat.format(new Date()));
 
             var baseKafkaSummary = resolveBaseKafkaConfigSummary(exploreWorkload.baseWorkload);
             if (baseKafkaSummary != null) {
@@ -384,11 +388,7 @@ public class BenchmarkRunner {
 
             CheckpointCallback callback = (completedIndex, partial) -> {
                 if (partial instanceof CorrectnessResult cr) {
-                    cr.metadata.beginTime = beginTime;
-                    cr.metadata.endTime = dateFormat.format(new Date());
-                    cr.metadata.environment = environment;
-                    cr.metadata.system = system;
-                    cr.metadata.hardware = hardware;
+                    stampMetadata(cr.metadata, beginTime, dateFormat.format(new Date()));
                 }
                 savePartialResult(partialFileName, partial);
                 cp.currentWorkload = new Checkpoint.CurrentWorkload(
@@ -401,11 +401,7 @@ public class BenchmarkRunner {
             log.info("=============== CORRECTNESS : {} ===============", correctnessWorkload.name);
 
             CorrectnessResult result = engine.run(startTestPoint, partialResult, callback);
-            result.metadata.beginTime = beginTime;
-            result.metadata.endTime = dateFormat.format(new Date());
-            result.metadata.environment = environment;
-            result.metadata.system = system;
-            result.metadata.hardware = hardware;
+            stampMetadata(result.metadata, beginTime, dateFormat.format(new Date()));
 
             var baseKafkaSummary = resolveBaseKafkaConfigSummary(correctnessWorkload.baseWorkload);
             if (baseKafkaSummary != null) {
@@ -450,11 +446,7 @@ public class BenchmarkRunner {
 
             CheckpointCallback callback = (completedIndex, partial) -> {
                 if (partial instanceof DrainBacklogResult dr) {
-                    dr.metadata.beginTime = beginTime;
-                    dr.metadata.endTime = dateFormat.format(new Date());
-                    dr.metadata.environment = environment;
-                    dr.metadata.system = system;
-                    dr.metadata.hardware = hardware;
+                    stampMetadata(dr.metadata, beginTime, dateFormat.format(new Date()));
                 }
                 savePartialResult(partialFileName, partial);
                 cp.currentWorkload = new Checkpoint.CurrentWorkload(
@@ -467,11 +459,7 @@ public class BenchmarkRunner {
             log.info("=============== DRAIN-BACKLOG : {} ===============", drainWorkload.name);
 
             DrainBacklogResult result = engine.run(startTestPoint, partialResult, callback);
-            result.metadata.beginTime = beginTime;
-            result.metadata.endTime = dateFormat.format(new Date());
-            result.metadata.environment = environment;
-            result.metadata.system = system;
-            result.metadata.hardware = hardware;
+            stampMetadata(result.metadata, beginTime, dateFormat.format(new Date()));
 
             var baseKafkaSummary = resolveBaseKafkaConfigSummary(drainWorkload.baseWorkload);
             if (baseKafkaSummary != null) {

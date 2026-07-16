@@ -18,12 +18,161 @@
 // cluster. If the run fails before the coordinator is reached, the user still
 // has evidence of what was attempted in `configs/`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow, bail};
 
 use crate::commands::broker_config;
+use crate::config::DimsterConfig;
+
+const RESERVED_METADATA_KEYS: &[&str] = &[
+    "dimsterVersion",
+    "name",
+    "kafkaConfigName",
+    "environment",
+    "system",
+    "hardware",
+    "beginTime",
+    "endTime",
+    "extraDimensions",
+];
+
+#[derive(Debug, Clone, Default)]
+pub struct ResultAnnotations {
+    pub metadata: BTreeMap<String, serde_json::Value>,
+    pub extra_dimensions: BTreeMap<String, serde_json::Value>,
+}
+
+/// Parse user-supplied result annotations for one run request.
+///
+/// `series` controls local campaign-series placement, so when it is present
+/// without `instance` we materialize a stable instance id before the request
+/// is sent to the coordinator. That keeps detached `dimster results` able to
+/// reconstruct the same local path from the saved run-request.json.
+pub fn parse_result_annotations(
+    metadata_args: &[String],
+    extra_dimension_args: &[String],
+    timestamp: &str,
+) -> Result<ResultAnnotations> {
+    let mut annotations = ResultAnnotations::default();
+    for raw in metadata_args {
+        let (key, value) = parse_key_value(raw)?;
+        if RESERVED_METADATA_KEYS.contains(&key.as_str()) {
+            bail!(
+                "--metadata key '{}' collides with built-in result metadata",
+                key
+            );
+        }
+        annotations.metadata.insert(key, value);
+    }
+    for raw in extra_dimension_args {
+        let (key, value) = parse_key_value(raw)?;
+        annotations.extra_dimensions.insert(key, value);
+    }
+
+    if annotations.metadata.contains_key("series") {
+        ensure_string_metadata(&annotations.metadata, "series")?;
+        if annotations.metadata.contains_key("instance") {
+            ensure_string_metadata(&annotations.metadata, "instance")?;
+        } else {
+            annotations.metadata.insert(
+                "instance".to_string(),
+                serde_json::Value::String(format!("inst-{}", timestamp)),
+            );
+        }
+        if annotations.metadata.contains_key("label") {
+            ensure_string_metadata(&annotations.metadata, "label")?;
+        }
+    }
+    Ok(annotations)
+}
+
+pub fn local_result_subdir(
+    timestamp: &str,
+    metadata: &BTreeMap<String, serde_json::Value>,
+) -> Result<PathBuf> {
+    let Some(series) = metadata.get("series").and_then(|v| v.as_str()) else {
+        return Ok(PathBuf::from(timestamp));
+    };
+    let instance = metadata
+        .get("instance")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("metadata.series requires metadata.instance"))?;
+    validate_path_segment("series", series)?;
+    validate_path_segment("instance", instance)?;
+    Ok(PathBuf::from(series).join(instance).join(timestamp))
+}
+
+pub fn local_result_subdir_from_request_json(timestamp: &str, request_json: &str) -> PathBuf {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(request_json) else {
+        return PathBuf::from(timestamp);
+    };
+    let Some(metadata) = root.get("metadata").and_then(|v| v.as_object()) else {
+        return PathBuf::from(timestamp);
+    };
+    let map: BTreeMap<String, serde_json::Value> = metadata
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    local_result_subdir(timestamp, &map).unwrap_or_else(|_| PathBuf::from(timestamp))
+}
+
+fn parse_key_value(raw: &str) -> Result<(String, serde_json::Value)> {
+    let (key, value_raw) = raw
+        .split_once('=')
+        .ok_or_else(|| anyhow!("expected key=value, got '{}'", raw))?;
+    if key.trim().is_empty() {
+        bail!("annotation key cannot be empty");
+    }
+    Ok((key.to_string(), coerce_json_value(value_raw)))
+}
+
+fn coerce_json_value(raw: &str) -> serde_json::Value {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed == "null" {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            return v;
+        }
+    }
+    if let Ok(n) = trimmed.parse::<i64>() {
+        return serde_json::Value::Number(n.into());
+    }
+    if let Ok(n) = trimmed.parse::<f64>() {
+        if let Some(num) = serde_json::Number::from_f64(n) {
+            return serde_json::Value::Number(num);
+        }
+    }
+    if trimmed.eq_ignore_ascii_case("true") {
+        return serde_json::Value::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("false") {
+        return serde_json::Value::Bool(false);
+    }
+    serde_json::Value::String(raw.to_string())
+}
+
+fn ensure_string_metadata(metadata: &BTreeMap<String, serde_json::Value>, key: &str) -> Result<()> {
+    if !metadata.get(key).is_some_and(|v| v.is_string()) {
+        bail!("metadata.{} must be a string", key);
+    }
+    Ok(())
+}
+
+fn validate_path_segment(name: &str, value: &str) -> Result<()> {
+    let valid = !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    if !valid {
+        bail!(
+            "metadata.{} '{}' is not a safe path segment; use letters, digits, '.', '-' or '_'",
+            name,
+            value
+        );
+    }
+    Ok(())
+}
 
 /// Returns a local-time timestamp formatted as `yyyy-MM-dd-HH-mm-ss`.
 ///
@@ -60,9 +209,9 @@ pub fn now_timestamp() -> String {
 ///   - the configs directory already existing (vanishingly rare two-runs-in-
 ///     the-same-second collision; merging would corrupt the captured inputs)
 ///   - any source file being unreadable
-pub fn prepare_run_dir(
+pub fn prepare_run_dir<P: AsRef<Path>>(
     output_dir: &str,
-    timestamp: &str,
+    run_subdir: P,
     workloads: &[String],
     kafka_config: Option<&str>,
     broker_config: Option<&str>,
@@ -70,7 +219,7 @@ pub fn prepare_run_dir(
     config_path: &Path,
     env_name: &str,
 ) -> Result<PathBuf> {
-    let run_dir = Path::new(output_dir).join(timestamp);
+    let run_dir = Path::new(output_dir).join(run_subdir.as_ref());
     let configs_dir = run_dir.join("configs");
 
     if configs_dir.exists() {
@@ -159,14 +308,80 @@ pub fn prepare_run_dir(
         })?;
     }
 
-    // Capture the env subtree from dimster-config.yaml (with deployment- and
-    // connection-specific fields stripped). See `write_env_capture` for the
-    // rationale on which fields are removed.
-    write_env_capture(config_path, env_name, &configs_dir.join("environment.yaml"))?;
+    // Capture the env subtree that was actually deployed. Deploy-only
+    // --env-override values are intentionally not written back to
+    // dimster-config.yaml, so deploy persists the effective env capture under
+    // the results directory. If no deploy capture exists, fall back to the
+    // source config so older workflows keep their current behavior.
+    let env_capture_dest = configs_dir.join("environment.yaml");
+    let deployed_capture = deploy_env_capture_path(output_dir, env_name);
+    if deployed_capture.exists() {
+        std::fs::copy(&deployed_capture, &env_capture_dest).map_err(|e| {
+            anyhow!(
+                "Failed to copy deployed environment capture '{}' to '{}': {}",
+                deployed_capture.display(),
+                env_capture_dest.display(),
+                e
+            )
+        })?;
+    } else {
+        write_env_capture(config_path, env_name, &env_capture_dest)?;
+    }
 
     println!("==> Captured run configs to {}/", configs_dir.display());
 
     Ok(run_dir)
+}
+
+pub fn write_deploy_env_capture(
+    output_dir: &str,
+    config_path: &Path,
+    env_name: &str,
+    env_overrides: &[String],
+) -> Result<PathBuf> {
+    let root = DimsterConfig::yaml_root_with_env_overrides(config_path, env_name, env_overrides)?;
+    let dest = deploy_env_capture_path(output_dir, env_name);
+    let parent = dest.parent().ok_or_else(|| {
+        anyhow!(
+            "Cannot resolve deploy environment capture parent for '{}'",
+            dest.display()
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(|e| {
+        anyhow!(
+            "Failed to create deploy environment capture directory '{}': {}",
+            parent.display(),
+            e
+        )
+    })?;
+    write_env_capture_from_root(&root, config_path, env_name, &dest)?;
+    Ok(dest)
+}
+
+fn deploy_env_capture_path(output_dir: &str, env_name: &str) -> PathBuf {
+    Path::new(output_dir)
+        .join(".dimster")
+        .join("deployments")
+        .join(safe_env_segment(env_name))
+        .join("environment.yaml")
+}
+
+fn safe_env_segment(env_name: &str) -> String {
+    let segment: String = env_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if segment.is_empty() {
+        "_".to_string()
+    } else {
+        segment
+    }
 }
 
 /// Reads `config_path` (the dimster-config.yaml in effect for this run),
@@ -205,6 +420,15 @@ fn write_env_capture(config_path: &Path, env_name: &str, dest: &Path) -> Result<
         )
     })?;
 
+    write_env_capture_from_root(&root, config_path, env_name, dest)
+}
+
+fn write_env_capture_from_root(
+    root: &serde_yaml::Value,
+    config_path: &Path,
+    env_name: &str,
+    dest: &Path,
+) -> Result<()> {
     // Pull out environments.<env_name> as a Mapping. Anything else (missing
     // section, env not present, env not a mapping) is a bug in the caller —
     // we shouldn't have gotten here without a validated env.
@@ -606,6 +830,66 @@ mod tests {
     }
 
     #[test]
+    fn captures_last_deployed_environment_with_env_overrides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir(&src).unwrap();
+        let out = tmp.path().join("out").to_string_lossy().into_owned();
+
+        let wl = write_file(&src, "smoke.yaml", "x");
+        let cfg = write_config(
+            &src,
+            "kafka:\n  version: \"4.2.0\"\n  tls:\n    enabled: true\n    interBroker: true",
+        );
+
+        write_deploy_env_capture(
+            &out,
+            &cfg,
+            "local",
+            &[
+                "kafka.tls.enabled=false".into(),
+                "kafka.tls.interBroker=false".into(),
+            ],
+        )
+        .unwrap();
+
+        let run_dir = prepare_run_dir(
+            &out,
+            "2026-04-22-10-00-00",
+            &[wl],
+            None,
+            None,
+            None,
+            &cfg,
+            "local",
+        )
+        .unwrap();
+
+        let captured: serde_yaml::Value = serde_yaml::from_str(
+            &fs::read_to_string(run_dir.join("configs/environment.yaml")).unwrap(),
+        )
+        .unwrap();
+        let tls = captured
+            .get("kafka")
+            .and_then(|v| v.get("tls"))
+            .and_then(|v| v.as_mapping())
+            .unwrap();
+
+        assert_eq!(
+            tls.get(serde_yaml::Value::String("enabled".into()))
+                .unwrap()
+                .as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            tls.get(serde_yaml::Value::String("interBroker".into()))
+                .unwrap()
+                .as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn captures_environment_when_optional_stripped_fields_absent() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
@@ -688,6 +972,63 @@ mod tests {
             err.to_string().contains("Failed to read dimster config"),
             "actual error: {}",
             err
+        );
+    }
+
+    #[test]
+    fn result_annotations_default_instance_and_series_path() {
+        let annotations = parse_result_annotations(
+            &["series=broker-count".into(), "label=5 brokers".into()],
+            &["brokers=5".into()],
+            "2026-07-08-10-11-12",
+        )
+        .unwrap();
+
+        assert_eq!(
+            annotations.metadata.get("instance").unwrap().as_str(),
+            Some("inst-2026-07-08-10-11-12")
+        );
+        assert_eq!(
+            annotations
+                .extra_dimensions
+                .get("brokers")
+                .unwrap()
+                .as_i64(),
+            Some(5)
+        );
+        assert_eq!(
+            local_result_subdir("2026-07-08-10-11-12", &annotations.metadata).unwrap(),
+            PathBuf::from("broker-count/inst-2026-07-08-10-11-12/2026-07-08-10-11-12")
+        );
+    }
+
+    #[test]
+    fn result_annotations_reject_builtin_metadata_collision() {
+        let err =
+            parse_result_annotations(&["environment=prod".into()], &[], "2026-07-08-10-11-12")
+                .unwrap_err();
+        assert!(err.to_string().contains("collides"));
+    }
+
+    #[test]
+    fn result_annotations_reject_unsafe_series_path_segment() {
+        let err = parse_result_annotations(&["series=../bad".into()], &[], "2026-07-08-10-11-12")
+            .and_then(|a| local_result_subdir("2026-07-08-10-11-12", &a.metadata))
+            .unwrap_err();
+        assert!(err.to_string().contains("safe path segment"));
+    }
+
+    #[test]
+    fn local_result_subdir_can_be_read_from_run_request_json() {
+        let request = r#"{
+          "metadata": {
+            "series": "broker-count",
+            "instance": "inst-1"
+          }
+        }"#;
+        assert_eq!(
+            local_result_subdir_from_request_json("2026-07-08-10-11-12", request),
+            PathBuf::from("broker-count/inst-1/2026-07-08-10-11-12")
         );
     }
 }

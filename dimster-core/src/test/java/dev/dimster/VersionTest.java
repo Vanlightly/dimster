@@ -6,6 +6,19 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
+import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import dev.dimster.coordinator.RunRequest;
+import dev.dimster.engines.correctness.CorrectnessResult;
+import dev.dimster.engines.drainbacklog.DrainBacklogResult;
+import dev.dimster.engines.explore.ExploreResult;
+import dev.dimster.engines.run.RunResult;
+import dev.dimster.worker.topology.JsonFileTopologyRecorder;
+
 import org.junit.Test;
 
 /**
@@ -57,5 +70,50 @@ public class VersionTest {
         ResultMetadata m = new ResultMetadata();
         assertEquals("ResultMetadata constructor must mirror Version.get()",
                 Version.get(), m.dimsterVersion);
+    }
+
+    @Test
+    public void result_metadata_serializes_user_metadata_and_extra_dimensions() throws Exception {
+        ResultMetadata m = new ResultMetadata();
+        m.putUserMetadata(Map.of("series", "broker-count", "instance", "inst-1"));
+        m.putExtraDimensions(Map.of("brokers", 5, "tls", true));
+
+        JsonNode json = new ObjectMapper().readTree(new ObjectMapper().writeValueAsString(m));
+
+        assertEquals("broker-count", json.get("series").asText());
+        assertEquals("inst-1", json.get("instance").asText());
+        assertEquals(5, json.get("extraDimensions").get("brokers").asInt());
+        assertTrue(json.get("extraDimensions").get("tls").asBoolean());
+    }
+
+    @Test
+    public void result_files_serialize_explicit_file_type() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+
+        assertEquals("dimster-result",
+                mapper.readTree(mapper.writeValueAsString(new RunResult())).get("fileType").asText());
+        assertEquals("dimster-result",
+                mapper.readTree(mapper.writeValueAsString(new ExploreResult())).get("fileType").asText());
+        assertEquals("dimster-result",
+                mapper.readTree(mapper.writeValueAsString(new CorrectnessResult())).get("fileType").asText());
+        assertEquals("dimster-result",
+                mapper.readTree(mapper.writeValueAsString(new DrainBacklogResult())).get("fileType").asText());
+    }
+
+    @Test
+    public void helper_files_serialize_explicit_file_type() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+
+        RunRequest request = new RunRequest(
+                null, "run", null, Map.of(), List.of(), null, null,
+                null, null, null, null, null, null, Map.<String, Object>of(), Map.<String, Object>of(), null);
+        JsonNode requestJson = mapper.readTree(mapper.writeValueAsString(request));
+        assertEquals("dimster-run-request", requestJson.get("fileType").asText());
+
+        JsonFileTopologyRecorder.Snapshot snapshot =
+                new JsonFileTopologyRecorder.Snapshot("dimster-topology", "workload",
+                        "2026-07-08T00:00:00Z", List.of());
+        JsonNode topologyJson = mapper.readTree(mapper.writeValueAsString(snapshot));
+        assertEquals("dimster-topology", topologyJson.get("fileType").asText());
     }
 }

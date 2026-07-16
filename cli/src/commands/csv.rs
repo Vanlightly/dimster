@@ -3,6 +3,12 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use serde::Deserialize;
 
+#[derive(Debug)]
+pub struct CsvDocument {
+    pub header: String,
+    pub rows: Vec<String>,
+}
+
 // --- Explore result types ---
 
 #[derive(Deserialize)]
@@ -415,38 +421,13 @@ pub fn run(path: &str, output: Option<&str>) -> Result<()> {
     let mut converted = 0;
 
     for file in &files {
-        let content = std::fs::read_to_string(file)?;
-        let raw: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Cannot parse {}: {}", file.display(), e))?;
-
-        let mode = raw.get("mode").and_then(|v| v.as_str()).unwrap_or("");
-
-        let (header, rows) = match mode {
-            "explore" => {
-                let result: ExploreResult = serde_json::from_value(raw)
-                    .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
-                let mut rows = Vec::new();
-                convert_explore(&result, &mut rows);
-                (EXPLORE_HEADER, rows)
-            }
-            "run" => {
-                let result: RunResult = serde_json::from_value(raw)
-                    .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
-                let mut rows = Vec::new();
-                convert_run(&result, &mut rows);
-                (RUN_HEADER, rows)
-            }
-            "drain-backlog" => {
-                let result: DrainBacklogResult = serde_json::from_value(raw)
-                    .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
-                let mut rows = Vec::new();
-                convert_drain_backlog(&result, &mut rows);
-                (DRAIN_BACKLOG_HEADER, rows)
-            }
-            _ => {
-                eprintln!("Skipping {} (unknown mode={:?})", file.display(), mode);
-                continue;
-            }
+        let Some(doc) = convert_file(file)? else {
+            let content = std::fs::read_to_string(file)?;
+            let raw: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Cannot parse {}: {}", file.display(), e))?;
+            let mode = raw.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            eprintln!("Skipping {} (unknown mode={:?})", file.display(), mode);
+            continue;
         };
 
         let out_path = match output {
@@ -454,9 +435,9 @@ pub fn run(path: &str, output: Option<&str>) -> Result<()> {
             None => file.with_extension("csv").to_string_lossy().to_string(),
         };
 
-        let csv = format!("{}\n{}\n", header, rows.join("\n"));
+        let csv = doc.to_csv();
         std::fs::write(&out_path, &csv)?;
-        println!("Wrote {} rows to {}", rows.len(), out_path);
+        println!("Wrote {} rows to {}", doc.rows.len(), out_path);
         converted += 1;
     }
 
@@ -465,6 +446,127 @@ pub fn run(path: &str, output: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+impl CsvDocument {
+    pub fn to_csv(&self) -> String {
+        format!("{}\n{}\n", self.header, self.rows.join("\n"))
+    }
+}
+
+pub fn convert_file(file: &Path) -> Result<Option<CsvDocument>> {
+    let content = std::fs::read_to_string(file)?;
+    let raw: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("Cannot parse {}: {}", file.display(), e))?;
+    convert_value(&raw, file)
+}
+
+fn convert_value(raw: &serde_json::Value, file: &Path) -> Result<Option<CsvDocument>> {
+    let annotation_columns = annotation_columns(raw);
+    let mode = raw.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+
+    let (header, rows) = match mode {
+        "explore" => {
+            let result: ExploreResult = serde_json::from_value(raw.clone())
+                .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
+            let mut rows = Vec::new();
+            convert_explore(&result, &mut rows);
+            (EXPLORE_HEADER, rows)
+        }
+        "run" => {
+            let result: RunResult = serde_json::from_value(raw.clone())
+                .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
+            let mut rows = Vec::new();
+            convert_run(&result, &mut rows);
+            (RUN_HEADER, rows)
+        }
+        "drain-backlog" => {
+            let result: DrainBacklogResult = serde_json::from_value(raw.clone())
+                .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
+            let mut rows = Vec::new();
+            convert_drain_backlog(&result, &mut rows);
+            (DRAIN_BACKLOG_HEADER, rows)
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(CsvDocument {
+        header: append_annotation_header(header, &annotation_columns),
+        rows: append_annotation_values(rows, &annotation_columns),
+    }))
+}
+
+fn annotation_columns(raw: &serde_json::Value) -> Vec<(String, String)> {
+    let mut columns = Vec::new();
+    let Some(metadata) = raw.get("metadata").and_then(|v| v.as_object()) else {
+        return columns;
+    };
+    for (key, value) in metadata {
+        if is_builtin_metadata_key(key) || key == "extraDimensions" {
+            continue;
+        }
+        columns.push((format!("metadata_{}", key), json_value_to_cell(value)));
+    }
+    if let Some(dimensions) = metadata.get("extraDimensions").and_then(|v| v.as_object()) {
+        for (key, value) in dimensions {
+            columns.push((
+                format!("extra_dimension_{}", key),
+                json_value_to_cell(value),
+            ));
+        }
+    }
+    columns.sort_by(|a, b| a.0.cmp(&b.0));
+    columns
+}
+
+fn append_annotation_header(base: &str, columns: &[(String, String)]) -> String {
+    if columns.is_empty() {
+        return base.to_string();
+    }
+    let suffix = columns
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{},{}", base, suffix)
+}
+
+fn append_annotation_values(rows: Vec<String>, columns: &[(String, String)]) -> Vec<String> {
+    if columns.is_empty() {
+        return rows;
+    }
+    let suffix = columns
+        .iter()
+        .map(|(_, value)| csv_escape(value))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows.into_iter()
+        .map(|row| format!("{},{}", row, suffix))
+        .collect()
+}
+
+fn is_builtin_metadata_key(key: &str) -> bool {
+    matches!(
+        key,
+        "dimsterVersion"
+            | "name"
+            | "kafkaConfigName"
+            | "environment"
+            | "system"
+            | "hardware"
+            | "beginTime"
+            | "endTime"
+    )
+}
+
+fn json_value_to_cell(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Bool(v) => v.to_string(),
+        serde_json::Value::Number(v) => v.to_string(),
+        serde_json::Value::String(v) => v.clone(),
+        _ => serde_json::to_string(value).unwrap_or_default(),
+    }
 }
 
 // --- Explore conversion ---

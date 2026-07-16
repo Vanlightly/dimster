@@ -18,6 +18,8 @@ class GenerateRunChartsTest(unittest.TestCase):
                 "system": "Kafka",
                 "beginTime": "2026-07-02-16-09-41",
                 "endTime": "2026-07-02-16-15-00",
+                "series": "broker-count",
+                "extraDimensions": {"brokers": 5},
             },
             "baseKafkaConfig": None,
             "runConfig": {
@@ -52,6 +54,9 @@ class GenerateRunChartsTest(unittest.TestCase):
 
         self.assertIn("stopped run", html)
         self.assertIn("localBeefy", html)
+        self.assertIn("Metadata series", html)
+        self.assertIn("broker-count", html)
+        self.assertIn("Dimension brokers", html)
         self.assertNotIn(">None<", html)
 
 

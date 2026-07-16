@@ -1,23 +1,38 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
-pub fn run(files: &[String], output: Option<&str>, script_dir: &Path) -> Result<()> {
-    if files.len() < 2 || files.len() > 4 {
-        bail!("2-4 labeled files required: LABEL=FILE LABEL=FILE [LABEL=FILE] [LABEL=FILE]");
-    }
+use crate::commands::csv;
 
-    let entries: Vec<(&str, &str)> = files
-        .iter()
-        .map(|f| parse_labeled_file(f))
-        .collect::<Result<Vec<_>>>()?;
+#[derive(Debug)]
+struct CompareEntry {
+    label: String,
+    file: PathBuf,
+}
+
+pub fn run(
+    files: &[String],
+    directory: Option<&str>,
+    output: Option<&str>,
+    script_dir: &Path,
+) -> Result<()> {
+    let entries = compare_entries(files, directory)?;
+    validate_entry_count(&entries)?;
 
     let output_dir = match output {
         Some(d) => d.to_string(),
         None => {
-            let parent = Path::new(entries[0].1).parent().unwrap_or(Path::new("."));
-            parent.to_string_lossy().to_string()
+            if let Some(directory) = directory {
+                directory.to_string()
+            } else {
+                entries[0]
+                    .file
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_string_lossy()
+                    .to_string()
+            }
         }
     };
 
@@ -28,14 +43,17 @@ pub fn run(files: &[String], output: Option<&str>, script_dir: &Path) -> Result<
         .to_string_lossy()
         .to_string();
 
-    let labels: Vec<&str> = entries.iter().map(|(l, _)| *l).collect();
+    let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
     println!("==> Comparing {}...", labels.join(" vs "));
 
     let mut cmd = Command::new("python3");
     cmd.arg(&script);
 
-    for (label, file) in &entries {
-        cmd.args(["--entry", &format!("{}={}", label, file)]);
+    for entry in &entries {
+        cmd.args([
+            "--entry",
+            &format!("{}={}", entry.label, entry.file.to_string_lossy()),
+        ]);
     }
     cmd.args(["--output", &output_dir]);
 
@@ -45,11 +63,65 @@ pub fn run(files: &[String], output: Option<&str>, script_dir: &Path) -> Result<
         bail!("Comparison chart generation failed");
     }
 
+    let csv_path = write_combined_csv(&entries, &output_dir)?;
+
     println!("==> Comparison charts saved to {}/", output_dir);
+    println!("==> Comparison CSV saved to {}", csv_path.display());
     Ok(())
 }
 
-fn parse_labeled_file(arg: &str) -> Result<(&str, &str)> {
+fn write_combined_csv(entries: &[CompareEntry], output_dir: &str) -> Result<PathBuf> {
+    let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
+    let out_path = Path::new(output_dir).join(format!("compare-{}.csv", labels.join("-vs-")));
+
+    let mut header: Option<String> = None;
+    let mut rows = Vec::new();
+    for entry in entries {
+        let doc = csv::convert_file(&entry.file)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot convert compare file to CSV: {}",
+                entry.file.display()
+            )
+        })?;
+        match header.as_ref() {
+            Some(existing) if existing != &doc.header => bail!(
+                "Cannot concatenate compare CSV rows because '{}' produced a different header",
+                entry.file.display()
+            ),
+            None => header = Some(doc.header),
+            _ => {}
+        }
+        rows.extend(doc.rows);
+    }
+
+    let Some(header) = header else {
+        bail!("No compare CSV rows generated");
+    };
+    let csv = csv::CsvDocument { header, rows }.to_csv();
+    std::fs::write(&out_path, csv)
+        .with_context(|| format!("Failed to write comparison CSV: {}", out_path.display()))?;
+    Ok(out_path)
+}
+
+fn compare_entries(files: &[String], directory: Option<&str>) -> Result<Vec<CompareEntry>> {
+    match (directory, files.is_empty()) {
+        (Some(_), false) => bail!("Use either --directory or LABEL=FILE arguments, not both"),
+        (Some(directory), true) => entries_from_directory(Path::new(directory)),
+        (None, false) => files.iter().map(|f| parse_labeled_file(f)).collect(),
+        (None, true) => {
+            bail!("2-4 labeled files required, or use --directory DIR")
+        }
+    }
+}
+
+fn validate_entry_count(entries: &[CompareEntry]) -> Result<()> {
+    if entries.len() < 2 || entries.len() > 4 {
+        bail!("2-4 compare entries required, found {}", entries.len());
+    }
+    Ok(())
+}
+
+fn parse_labeled_file(arg: &str) -> Result<CompareEntry> {
     let Some((label, file)) = arg.split_once('=') else {
         bail!(
             "Invalid format '{}': expected LABEL=FILE (e.g. t1=results.json)",
@@ -62,5 +134,334 @@ fn parse_labeled_file(arg: &str) -> Result<(&str, &str)> {
     if !Path::new(file).is_file() {
         bail!("File not found: {}", file);
     }
-    Ok((label, file))
+    Ok(CompareEntry {
+        label: label.to_string(),
+        file: PathBuf::from(file),
+    })
+}
+
+fn entries_from_directory(directory: &Path) -> Result<Vec<CompareEntry>> {
+    if !directory.is_dir() {
+        bail!("Compare directory not found: {}", directory.display());
+    }
+
+    let mut entries = Vec::new();
+    let mut untyped_json_dirs = Vec::new();
+    let mut typed_json_dirs = Vec::new();
+    collect_entries_from_tree(
+        directory,
+        &mut entries,
+        &mut untyped_json_dirs,
+        &mut typed_json_dirs,
+    )?;
+
+    if entries.is_empty() {
+        if let Some(dir) = untyped_json_dirs.first() {
+            bail!(
+                "No JSON files in {} contain a fileType field. Re-run the workload with a newer Dimster build, or compare explicit LABEL=FILE arguments.",
+                dir.display()
+            );
+        }
+        if let Some(dir) = typed_json_dirs.first() {
+            bail!(
+                "No typed run result JSON with fileType='dimster-result', mode='run', and metadata.label found in {}",
+                dir.display()
+            );
+        }
+        bail!(
+            "No JSON files found under compare directory: {}",
+            directory.display()
+        );
+    }
+    Ok(entries)
+}
+
+fn collect_entries_from_tree(
+    directory: &Path,
+    entries: &mut Vec<CompareEntry>,
+    untyped_json_dirs: &mut Vec<PathBuf>,
+    typed_json_dirs: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let json_files = direct_json_files(directory)?;
+    if !json_files.is_empty() {
+        match entry_from_json_files(directory, json_files)? {
+            RunDirScan::Entry(entry) => entries.push(entry),
+            RunDirScan::UntypedJson => untyped_json_dirs.push(directory.to_path_buf()),
+            RunDirScan::TypedButNoRunResult => typed_json_dirs.push(directory.to_path_buf()),
+        }
+    }
+
+    for subdir in direct_subdirs(directory)? {
+        collect_entries_from_tree(&subdir, entries, untyped_json_dirs, typed_json_dirs)?;
+    }
+    Ok(())
+}
+
+fn direct_subdirs(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut subdirs = Vec::new();
+    for entry in std::fs::read_dir(directory)
+        .with_context(|| format!("Failed to read compare directory: {}", directory.display()))?
+    {
+        let path = entry?.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        }
+    }
+    subdirs.sort();
+    Ok(subdirs)
+}
+
+enum RunDirScan {
+    Entry(CompareEntry),
+    UntypedJson,
+    TypedButNoRunResult,
+}
+
+fn entry_from_json_files(directory: &Path, files: Vec<PathBuf>) -> Result<RunDirScan> {
+    let mut candidates = Vec::new();
+    let mut typed_file_count = 0;
+    for file in files {
+        if json_file_has_type(&file)? {
+            typed_file_count += 1;
+        }
+        if let Some(label) = run_result_label(&file)? {
+            candidates.push(CompareEntry { label, file });
+        }
+    }
+
+    match candidates.len() {
+        1 => Ok(RunDirScan::Entry(candidates.remove(0))),
+        0 => {
+            if typed_file_count == 0 {
+                Ok(RunDirScan::UntypedJson)
+            } else {
+                Ok(RunDirScan::TypedButNoRunResult)
+            }
+        }
+        _ => {
+            let files: Vec<String> = candidates
+                .iter()
+                .map(|e| e.file.display().to_string())
+                .collect();
+            bail!(
+                "Expected exactly one run result JSON in {}, found {}: {}",
+                directory.display(),
+                files.len(),
+                files.join(", ")
+            );
+        }
+    }
+}
+
+fn direct_json_files(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory).with_context(|| {
+        format!(
+            "Failed to read result subdirectory: {}",
+            directory.display()
+        )
+    })? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn run_result_label(file: &Path) -> Result<Option<String>> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("Failed to read result JSON: {}", file.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse result JSON: {}", file.display()))?;
+
+    if value.get("fileType").and_then(|v| v.as_str()) != Some("dimster-result")
+        || value.get("mode").and_then(|v| v.as_str()) != Some("run")
+        || !value.get("scenarioResults").is_some_and(|v| v.is_array())
+    {
+        return Ok(None);
+    }
+
+    let label = value
+        .get("metadata")
+        .and_then(|v| v.get("label"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Run result JSON is missing string metadata.label: {}",
+                file.display()
+            )
+        })?;
+    if label.is_empty() {
+        bail!(
+            "Run result JSON has empty metadata.label: {}",
+            file.display()
+        );
+    }
+    Ok(Some(label.to_string()))
+}
+
+fn json_file_has_type(file: &Path) -> Result<bool> {
+    let content = std::fs::read_to_string(file)
+        .with_context(|| format!("Failed to read JSON file: {}", file.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse JSON file: {}", file.display()))?;
+    Ok(value.get("fileType").is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, content: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn run_result(label: &str) -> String {
+        format!(
+            r#"{{
+  "fileType": "dimster-result",
+  "mode": "run",
+  "metadata": {{
+    "label": "{label}"
+  }},
+  "scenarioResults": [
+    {{
+      "name": "default",
+      "tests": [
+        {{
+          "label": "default",
+          "workloadConfig": {{}},
+          "results": {{}}
+        }}
+      ]
+    }}
+  ]
+}}"#
+        )
+    }
+
+    #[test]
+    fn entries_from_directory_uses_metadata_label_and_ignores_helper_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let first = root.join("2026-07-08-13-46-21");
+        let second = root.join("2026-07-08-13-54-32");
+        write(
+            &first.join("run-request.json"),
+            r#"{"fileType":"dimster-run-request","mode":"run","metadata":{"label":"nope"}}"#,
+        );
+        write(
+            &first.join("topologies.json"),
+            r#"{"fileType":"dimster-topology","workloadName":"topology"}"#,
+        );
+        write(&first.join("result.json"), &run_result("tls-none"));
+        write(&second.join("result.json"), &run_result("tls-client"));
+
+        let entries = entries_from_directory(root).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label, "tls-none");
+        assert_eq!(entries[0].file, first.join("result.json"));
+        assert_eq!(entries[1].label, "tls-client");
+        assert_eq!(entries[1].file, second.join("result.json"));
+    }
+
+    #[test]
+    fn entries_from_directory_walks_series_instance_timestamp_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let first = root
+            .join("tls-permutations")
+            .join("tls-1783511127")
+            .join("2026-07-08-13-46-21");
+        let second = root
+            .join("tls-permutations")
+            .join("tls-1783511127")
+            .join("2026-07-08-13-54-32");
+        write(&first.join("result.json"), &run_result("tls-none"));
+        write(&second.join("result.json"), &run_result("tls-client"));
+
+        let entries = entries_from_directory(&root.join("tls-permutations")).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label, "tls-none");
+        assert_eq!(entries[1].label, "tls-client");
+    }
+
+    #[test]
+    fn entries_from_directory_rejects_missing_metadata_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let subdir = tmp.path().join("2026-07-08-13-46-21");
+        write(
+            &subdir.join("result.json"),
+            r#"{"fileType":"dimster-result","mode":"run","metadata":{},"scenarioResults":[]}"#,
+        );
+
+        let err = entries_from_directory(tmp.path()).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Run result JSON is missing string metadata.label")
+        );
+    }
+
+    #[test]
+    fn entries_from_directory_rejects_json_files_without_file_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let subdir = tmp.path().join("2026-07-08-13-46-21");
+        write(
+            &subdir.join("result.json"),
+            r#"{"mode":"run","metadata":{"label":"legacy"},"scenarioResults":[]}"#,
+        );
+        write(
+            &subdir.join("run-request.json"),
+            r#"{"mode":"run","metadata":{"label":"request"}}"#,
+        );
+
+        let err = entries_from_directory(tmp.path()).unwrap_err();
+
+        assert!(err.to_string().contains("contain a fileType field"));
+    }
+
+    #[test]
+    fn write_combined_csv_concatenates_compare_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first.json");
+        let second = tmp.path().join("second.json");
+        write(&first, &run_result("tls-none"));
+        write(&second, &run_result("tls-all"));
+
+        let output_dir = tmp.path().join("out");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let entries = vec![
+            CompareEntry {
+                label: "tls-none".to_string(),
+                file: first,
+            },
+            CompareEntry {
+                label: "tls-all".to_string(),
+                file: second,
+            },
+        ];
+
+        let csv_path = write_combined_csv(&entries, &output_dir.to_string_lossy()).unwrap();
+        let csv = std::fs::read_to_string(csv_path).unwrap();
+
+        assert!(csv.contains("metadata_label"));
+        assert_eq!(csv.lines().count(), 3);
+        assert!(csv.contains("tls-none"));
+        assert!(csv.contains("tls-all"));
+    }
+
+    #[test]
+    fn compare_entries_rejects_directory_and_positional_files_together() {
+        let err = compare_entries(&["a=b.json".to_string()], Some("results")).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Use either --directory or LABEL=FILE arguments")
+        );
+    }
 }

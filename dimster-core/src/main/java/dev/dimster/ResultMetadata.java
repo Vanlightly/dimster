@@ -1,5 +1,11 @@
 package dev.dimster;
 
+import java.util.Map;
+import java.util.TreeMap;
+
+import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /**
@@ -31,6 +37,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
         "hardware",
         "beginTime",
         "endTime",
+        "extraDimensions",
 })
 public class ResultMetadata {
 
@@ -50,7 +57,40 @@ public class ResultMetadata {
     public String beginTime;
     public String endTime;
 
+    /**
+     * User-defined infrastructure dimensions, such as broker count or TLS
+     * mode, that are not part of Dimster's workload schema. Kept separate
+     * from free-form metadata so analysis tools can treat these fields as
+     * comparison dimensions.
+     */
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    public Map<String, Object> extraDimensions = new TreeMap<>();
+
+    private final Map<String, Object> userMetadata = new TreeMap<>();
+
     public ResultMetadata() {
         this.dimsterVersion = Version.get();
+    }
+
+    @JsonAnyGetter
+    public Map<String, Object> userMetadata() {
+        return userMetadata;
+    }
+
+    @JsonAnySetter
+    public void putUserMetadata(String key, Object value) {
+        userMetadata.put(key, value);
+    }
+
+    public void putUserMetadata(Map<String, Object> metadata) {
+        if (metadata != null) {
+            userMetadata.putAll(metadata);
+        }
+    }
+
+    public void putExtraDimensions(Map<String, Object> dimensions) {
+        if (dimensions != null) {
+            extraDimensions.putAll(dimensions);
+        }
     }
 }

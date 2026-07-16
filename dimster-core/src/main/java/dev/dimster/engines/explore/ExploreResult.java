@@ -11,8 +11,9 @@ import dev.dimster.ResultMetadata;
  * Result of an explore-limits run. Contains the configuration and
  * the outcome of each test in each scenario.
  */
-@JsonPropertyOrder({"mode", "metadata", "config", "scenarioResults"})
+@JsonPropertyOrder({"fileType", "mode", "metadata", "config", "scenarioResults"})
 public class ExploreResult {
+    public String fileType = "dimster-result";
     public String mode = "explore";
     public ResultMetadata metadata = new ResultMetadata();
 

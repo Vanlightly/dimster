@@ -230,6 +230,8 @@ Scenarios allow running multiple test variations from a single workload file. Ea
 - Fields not specified in a scenario inherit from `baseWorkload` (or the workload-level `drainBacklogConfig` / `exploreConfig` / `runConfig` for those nested overrides).
 - If `scenarios` is absent or empty, a single test runs using the `baseWorkload` values directly.
 
+When `repeat` is greater than `1`, Dimster keeps each repeated scenario result and also adds a synthetic `<scenario name> (merged)` result. The merged result is an average of the repeated runs' summary fields. Latency percentiles in the merged result are therefore averages of the per-run percentile values, not percentiles recalculated from a single pooled latency distribution. Use the individual repeated runs when run-to-run variance or strict pooled percentile semantics matter.
+
 ### Scenario Example
 
 ```yaml

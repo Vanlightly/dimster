@@ -12,6 +12,7 @@ in the same HTML file alongside performance charts.
 """
 
 import argparse
+import html
 import json
 import math
 import os
@@ -178,6 +179,44 @@ def text_or_empty(value):
     Python string "None".
     """
     return "" if value is None else value
+
+
+def metadata_annotation_html(metadata):
+    """Render user metadata and extraDimensions for overview panels."""
+    builtin = {
+        "dimsterVersion",
+        "name",
+        "kafkaConfigName",
+        "environment",
+        "system",
+        "hardware",
+        "beginTime",
+        "endTime",
+        "extraDimensions",
+    }
+    items = []
+    for key in sorted(k for k in metadata.keys() if k not in builtin):
+        items.append(meta_item(f"Metadata {key}", metadata.get(key)))
+    dimensions = metadata.get("extraDimensions")
+    if isinstance(dimensions, dict):
+        for key in sorted(dimensions.keys()):
+            items.append(meta_item(f"Dimension {key}", dimensions.get(key)))
+    return "\n".join(items)
+
+
+def meta_item(label, value):
+    return (
+        f'<div class="meta-item"><span class="label">{html.escape(label)}:</span> '
+        f'<span class="value">{html.escape(format_meta_value(value))}</span></div>'
+    )
+
+
+def format_meta_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True)
+    return str(value)
 
 
 def time_labels(arr_len, sample_rate_ms):
@@ -1444,6 +1483,7 @@ def build_html(data, chart_configs, chart_sections, mode="main", sibling_link=No
     test_duration = run_config.get("testDurationMinutes", "")
     warmup_duration = run_config.get("warmupDurationMinutes", "")
     replication_factor = kafka_config.get("replicationFactor", "")
+    annotation_meta = metadata_annotation_html(metadata)
 
     # Extra metadata when availability is enabled — only relevant on the main page
     avail_meta = ""
@@ -1776,6 +1816,7 @@ body {{
             <div class="meta-item"><span class="label">Test Duration:</span> <span class="value">{test_duration} min</span></div>
             <div class="meta-item"><span class="label">Warmup:</span> <span class="value">{warmup_duration} min</span></div>
             {avail_meta}
+            {annotation_meta}
             <div class="meta-item"><span class="label">Start:</span> <span class="value">{begin_time}</span></div>
             <div class="meta-item"><span class="label">End:</span> <span class="value">{end_time}</span></div>
         </div>

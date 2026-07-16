@@ -14,6 +14,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from generate_run_charts import metadata_annotation_html
+
 
 COLORS = [
     "#4e79a7",  # steel blue
@@ -384,6 +387,7 @@ def build_html(data, chart_configs, chart_counts):
     backlog_size_gb = drain_config.get("backlogSizeGB", "")
     backlog_producer_rate = drain_config.get("backlogProducerRate", -1)
     producer_rate_display = "paused" if backlog_producer_rate == -1 else f"{backlog_producer_rate} msg/s"
+    annotation_meta = metadata_annotation_html(metadata)
 
     sidebar_html = build_sidebar_html(scenarios)
     config_section_html = build_config_section(data)
@@ -577,6 +581,7 @@ body {{
             <div class="meta-item"><span class="label">Kafka Config:</span> <span class="value">{kafka_config_name}</span></div>
             <div class="meta-item"><span class="label">Backlog Size:</span> <span class="value">{backlog_size_gb} GB</span></div>
             <div class="meta-item"><span class="label">Producer Rate (drain):</span> <span class="value">{producer_rate_display}</span></div>
+            {annotation_meta}
             <div class="meta-item"><span class="label">Start:</span> <span class="value">{begin_time}</span></div>
             <div class="meta-item"><span class="label">End:</span> <span class="value">{end_time}</span></div>
         </div>

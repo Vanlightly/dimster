@@ -486,6 +486,49 @@ impl DimsterConfig {
         Ok(config)
     }
 
+    /// Load the config file and apply repeatable `dimster deploy
+    /// --env-override path=value` entries to one named environment before
+    /// deserializing into the normal typed config model.
+    ///
+    /// The override layer intentionally lives here instead of in deploy.rs:
+    /// deploy should not have a second configuration interpretation path. It
+    /// should receive an `Environment` exactly as if the user had edited
+    /// `dimster-config.yaml` for this one command invocation.
+    pub fn load_with_env_overrides(
+        path: &Path,
+        env_name: &str,
+        overrides: &[String],
+    ) -> Result<Self> {
+        if overrides.is_empty() {
+            return Self::load(path);
+        }
+        let root = Self::yaml_root_with_env_overrides(path, env_name, overrides)?;
+        let config = config_from_yaml_root(path, root)?;
+        config.get_env(env_name)?;
+        Ok(config)
+    }
+
+    pub(crate) fn yaml_root_with_env_overrides(
+        path: &Path,
+        env_name: &str,
+        overrides: &[String],
+    ) -> Result<serde_yaml::Value> {
+        if !path.exists() {
+            bail!(
+                "Cannot apply --env-override because config file does not exist: {}",
+                path.display()
+            );
+        }
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+        let mut root: serde_yaml::Value = serde_yaml::from_str(&content)
+            .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+        if !overrides.is_empty() {
+            apply_env_overrides(&mut root, env_name, overrides)?;
+        }
+        Ok(root)
+    }
+
     pub fn get_env(&self, name: &str) -> Result<&Environment> {
         let env = self.environments.get(name).with_context(|| {
             let available: Vec<&String> = self.environments.keys().collect();
@@ -513,6 +556,102 @@ impl DimsterConfig {
             .and_then(|e| e.namespace.clone())
             .unwrap_or_else(|| self.kubernetes.namespace.clone())
     }
+}
+
+fn config_from_yaml_root(path: &Path, root: serde_yaml::Value) -> Result<DimsterConfig> {
+    // Deserialize through YAML text, matching `load`. `serde_yaml::from_str`
+    // accepts common config conveniences such as `cpu: 4` for string-backed
+    // resource fields, while `from_value` is stricter and would make
+    // deploy-only overrides reject config files that otherwise load fine.
+    let overridden = serde_yaml::to_string(&root).with_context(|| {
+        format!(
+            "Failed to serialize overridden config file: {}",
+            path.display()
+        )
+    })?;
+    let config: DimsterConfig = serde_yaml::from_str(&overridden)
+        .with_context(|| format!("Failed to parse overridden config file: {}", path.display()))?;
+    Ok(config)
+}
+
+fn apply_env_overrides(
+    root: &mut serde_yaml::Value,
+    env_name: &str,
+    overrides: &[String],
+) -> Result<()> {
+    let environments = root
+        .get_mut("environments")
+        .and_then(|v| v.as_mapping_mut())
+        .ok_or_else(|| anyhow::anyhow!("Config has no environments mapping"))?;
+    let env_key = serde_yaml::Value::String(env_name.to_string());
+    let env = environments
+        .get_mut(&env_key)
+        .ok_or_else(|| anyhow::anyhow!("Environment '{}' not found", env_name))?;
+
+    for assignment in overrides {
+        let (path, value) = parse_override_assignment(assignment)?;
+        set_nested_yaml_value(env, &path, value)
+            .with_context(|| format!("Invalid --env-override '{}'", assignment))?;
+    }
+    Ok(())
+}
+
+fn parse_override_assignment(raw: &str) -> Result<(Vec<String>, serde_yaml::Value)> {
+    let (path, value_raw) = raw
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("expected key=value"))?;
+    let path: Vec<String> = path.split('.').map(|s| s.to_string()).collect();
+    if path.is_empty() || path.iter().any(|s| s.is_empty()) {
+        bail!("override path must contain non-empty dot-separated segments");
+    }
+    Ok((path, coerce_yaml_value(value_raw)))
+}
+
+fn coerce_yaml_value(raw: &str) -> serde_yaml::Value {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("true") {
+        return serde_yaml::Value::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("false") {
+        return serde_yaml::Value::Bool(false);
+    }
+    if trimmed.eq_ignore_ascii_case("null") {
+        return serde_yaml::Value::Null;
+    }
+    if let Ok(n) = trimmed.parse::<i64>() {
+        return serde_yaml::Value::Number(n.into());
+    }
+    if let Ok(n) = trimmed.parse::<f64>() {
+        return serde_yaml::Value::Number(n.into());
+    }
+    serde_yaml::Value::String(raw.to_string())
+}
+
+fn set_nested_yaml_value(
+    root: &mut serde_yaml::Value,
+    path: &[String],
+    value: serde_yaml::Value,
+) -> Result<()> {
+    let mut current = root;
+    for segment in &path[..path.len() - 1] {
+        let map = current
+            .as_mapping_mut()
+            .ok_or_else(|| anyhow::anyhow!("'{}' is not a mapping", segment))?;
+        let key = serde_yaml::Value::String(segment.clone());
+        if !map.contains_key(&key) {
+            map.insert(key.clone(), serde_yaml::Value::Mapping(Default::default()));
+        }
+        current = map.get_mut(&key).unwrap();
+    }
+
+    let map = current
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("target parent is not a mapping"))?;
+    map.insert(
+        serde_yaml::Value::String(path.last().unwrap().clone()),
+        value,
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -790,5 +929,89 @@ environments:
             ..Default::default()
         };
         assert!(env.is_minimal());
+    }
+
+    #[test]
+    fn env_overrides_apply_to_selected_environment_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("dimster-config.yaml");
+        std::fs::write(
+            &cfg_path,
+            r#"
+environments:
+  local:
+    namespace: dimster
+    kafka:
+      replicas: 1
+      tls:
+        enabled: false
+  other:
+    kafka:
+      replicas: 2
+"#,
+        )
+        .unwrap();
+
+        let cfg = DimsterConfig::load_with_env_overrides(
+            &cfg_path,
+            "local",
+            &["kafka.replicas=5".into(), "kafka.tls.enabled=true".into()],
+        )
+        .unwrap();
+
+        let local = cfg.environments.get("local").unwrap();
+        assert_eq!(local.kafka.as_ref().unwrap().replicas, Some(5));
+        assert!(local.tls_config().is_some());
+        let other = cfg.environments.get("other").unwrap();
+        assert_eq!(other.kafka.as_ref().unwrap().replicas, Some(2));
+    }
+
+    #[test]
+    fn env_overrides_keep_normal_yaml_string_coercions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("dimster-config.yaml");
+        std::fs::write(
+            &cfg_path,
+            r#"
+environments:
+  local:
+    kafka:
+      replicas: 3
+      requests:
+        cpu: 4
+        memory: "16Gi"
+      tls:
+        enabled: true
+        interBroker: true
+"#,
+        )
+        .unwrap();
+
+        let cfg = DimsterConfig::load_with_env_overrides(
+            &cfg_path,
+            "local",
+            &[
+                "kafka.tls.enabled=false".into(),
+                "kafka.tls.interBroker=false".into(),
+            ],
+        )
+        .unwrap();
+
+        let kafka = cfg
+            .environments
+            .get("local")
+            .unwrap()
+            .kafka
+            .as_ref()
+            .unwrap();
+        assert_eq!(kafka.requests.as_ref().unwrap().cpu.as_deref(), Some("4"));
+        assert_eq!(kafka.tls.as_ref().unwrap().enabled, false);
+        assert_eq!(kafka.tls.as_ref().unwrap().inter_broker, false);
+    }
+
+    #[test]
+    fn env_override_errors_on_missing_assignment_separator() {
+        let err = parse_override_assignment("kafka.replicas").unwrap_err();
+        assert!(err.to_string().contains("expected key=value"));
     }
 }

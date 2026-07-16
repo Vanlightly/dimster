@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::Child;
@@ -29,6 +29,7 @@ const STREAM_EVENT_WAIT: Duration = Duration::from_millis(250);
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunRequest {
+    file_type: &'static str,
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     kafka_config_yaml: Option<String>,
@@ -49,6 +50,10 @@ struct RunRequest {
     environment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hardware: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    metadata: BTreeMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    extra_dimensions: BTreeMap<String, serde_json::Value>,
     // CLI-chosen results subdirectory name (yyyy-MM-dd-HH-mm-ss). When set,
     // the coordinator writes results into {outputDir}/{resultsSubdir} instead
     // of generating its own timestamp. This lets the CLI create the local
@@ -88,6 +93,8 @@ pub struct RunArgs {
     // and the mounted client keystore/truststore. Workloads without the opt-in
     // line use PLAINTEXT, so a single campaign can mix both.
     pub tls_config: Option<KafkaTlsConfig>,
+    pub metadata: Vec<String>,
+    pub extra_dimensions: Vec<String>,
 }
 
 pub fn run(
@@ -367,14 +374,17 @@ pub fn run(
         );
     }
 
-    // Choose the results subdirectory name now (before we send anything to
-    // the cluster) and stage the workload/kafka/broker config files into it.
-    // The same name is then handed to the coordinator via results_subdir so
-    // both sides write into the same directory. See run_configs module for why.
+    // Choose the remote timestamp now (before we send anything to the
+    // cluster). The coordinator still writes to /benchmark/results/<timestamp>;
+    // metadata.series only changes where the CLI stages/copies the local
+    // archive, e.g. results/<series>/<instance>/<timestamp>.
     let timestamp = run_configs::now_timestamp();
+    let annotations =
+        run_configs::parse_result_annotations(&args.metadata, &args.extra_dimensions, &timestamp)?;
+    let local_subdir = run_configs::local_result_subdir(&timestamp, &annotations.metadata)?;
     run_configs::prepare_run_dir(
         output_dir,
-        &timestamp,
+        &local_subdir,
         &args.workloads,
         args.kafka_config.as_deref(),
         args.broker_config.as_deref(),
@@ -388,6 +398,7 @@ pub fn run(
 
     // Build the run request
     let request = RunRequest {
+        file_type: "dimster-run-request",
         mode: args.mode,
         kafka_config_yaml,
         workloads: workloads_map,
@@ -400,6 +411,8 @@ pub fn run(
         system: args.system,
         environment: Some(args.environment),
         hardware: args.hardware,
+        metadata: annotations.metadata,
+        extra_dimensions: annotations.extra_dimensions,
         results_subdir: Some(timestamp),
     };
 

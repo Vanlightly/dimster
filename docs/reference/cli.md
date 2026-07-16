@@ -69,7 +69,20 @@ dimster deploy <env>
 
 Generates a dynamic Kustomize overlay from the environment configuration, applies it to the Kubernetes cluster, and waits for all pods to become ready. In `external` deploy mode, Kafka pods are not deployed.
 
+Use the `--env-override` argument to override specific environment field values. For example:
+
+```bash
+./dimster deploy myEnv --env-override kafka.replicas=5
+```
+
 ---
+
+### All engine commands (run, explore, drain-backlog, correctness)
+
+| Argument / Flag | Required | Description                                                                                                            |
+|-----------------|----------|------------------------------------------------------------------------------------------------------------------------|
+| `-m`, `--metadata` | Optional | Pass arbitrary metadata to pass through to the result JSON. Additionally `-m series=val -m instance=val` are special values for infrastructure dimensions |
+| `-d`, `--extra-dimension` | Optional | Pass infrastructure dimensions, as pass-through metadata that lands in the result JSON file |
 
 ### run
 
@@ -230,22 +243,25 @@ Runs `charts/generate_charts.py` against the results directory. Requires Python 
 
 ### compare
 
-Generate side-by-side comparison charts from 2-4 `run` result JSON files. Each input is given a short label that appears in the chart legend.
+Generate side-by-side comparison charts from 2-4 `run` result JSON files.
+
+You can specify a directory (it will recursively search for result JSON files), or pass label=result-file-path.
 
 ```
 dimster compare <LABEL=FILE> <LABEL=FILE> [LABEL=FILE] [LABEL=FILE] [-o <output>]
 ```
 
-| Argument / Flag | Required | Description |
+| Argument / Flag | Description |
 |-----------------|----------|-------------|
-| `LABEL=FILE` | Yes (2-4) | A short label and the path to a result JSON file (e.g. `baseline=results/2026-04-20/run.json`). |
-| `-o`, `--output <dir>` | No | Output directory for the generated charts. Defaults to the directory of the first input file. |
+| `LABEL=FILE` | A short label and the path to a result JSON file (e.g. `baseline=results/2026-04-20/run.json`). |
+| `--directory` | The parent directory of a set of result directories to recursively search |
+| `-o`, `--output <dir>` | Output directory for the generated charts. Defaults to the directory of the first input file. |
 
 Runs `charts/generate_compare_charts.py`. Requires Python with dependencies from `charts/requirements.txt`. Each input file must exist; missing files fail before the script runs.
 
 Example:
 
-```
+```bash
 dimster compare baseline=results/2026-04-15/run.json tuned=results/2026-04-20/run.json -o results/compare/
 ```
 

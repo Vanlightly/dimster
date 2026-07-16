@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record RunRequest(
+    String fileType,
     String mode,
     String kafkaConfigYaml,
     Map<String, String> workloads,
@@ -19,6 +20,8 @@ public record RunRequest(
     String system,
     String environment,
     String hardware,
+    Map<String, Object> metadata,
+    Map<String, Object> extraDimensions,
     // CLI-chosen results subdirectory name (yyyy-MM-dd-HH-mm-ss). When set,
     // CoordinatorServer writes results into {outputDir}/{resultsSubdir}
     // instead of generating its own timestamp. Lets the CLI stage workload/
@@ -27,4 +30,10 @@ public record RunRequest(
     // older clients that don't send this field still get the original
     // server-generated timestamp behavior.
     String resultsSubdir
-) {}
+) {
+    public RunRequest {
+        if (fileType == null || fileType.isBlank()) {
+            fileType = "dimster-run-request";
+        }
+    }
+}

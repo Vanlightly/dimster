@@ -231,6 +231,7 @@ public class CoordinatorServer {
         // original directory (via the checkpoint), but the in-memory request
         // should still reflect what was originally requested.
         RunRequest request = new RunRequest(
+                savedRequest.fileType(),
                 savedRequest.mode(),
                 savedRequest.kafkaConfigYaml(),
                 savedRequest.workloads(),
@@ -243,6 +244,8 @@ public class CoordinatorServer {
                 savedRequest.system(),
                 savedRequest.environment(),
                 savedRequest.hardware(),
+                savedRequest.metadata(),
+                savedRequest.extraDimensions(),
                 savedRequest.resultsSubdir()
         );
 
@@ -401,6 +404,7 @@ public class CoordinatorServer {
             BenchmarkRunner runner = new BenchmarkRunner(
                     benchmarkMode, worker, topologyPlanner, kafkaConfigFile, workloads, resultsSubDir,
                     stopRequested, request.system(), request.environment(), request.hardware(),
+                    request.metadata(), request.extraDimensions(),
                     checkpoint, this::setActiveEngine);
             boolean success = runner.run();
 

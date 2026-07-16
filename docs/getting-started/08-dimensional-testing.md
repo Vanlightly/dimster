@@ -1,4 +1,4 @@
-# 08 — Dimensional testing in 5 minutes
+# 08 — Dimensional testing
 
 Page 06 ran a single fixed workload. Real benchmarking work is rarely a single point — you usually want to compare many configurations: different partition counts, batch sizes, consumer counts, message sizes, and so on.
 
@@ -97,7 +97,7 @@ Same shape as example 1, but the swept field is buried two levels deep inside `k
 
 ---
 
-## Why this matters
+## Reference
 
 Once you've got the hang of array overrides, most "I want to compare X across Y" benchmarks become a handful of YAML lines instead of a shell-script loop. Two scenarios with three array elements each gives you 6 test points; one scenario varying two fields together (e.g. `consumersPerGroup` and `partitionsPerTopic`) gives you a true multi-dimensional sweep — same array length, each index defining one point.
 
@@ -105,6 +105,14 @@ The full reference covers multi-scenario campaigns, scalar vs. array overrides, 
 
 - [Dimensional Testing](../concepts/dimensional-testing.md) — the concept doc with a worked CONSUMER_GROUP vs SHARE_GROUP example.
 - [Workload Reference](../reference/workloads.md) — every field you can put under `baseWorkload` or override in a scenario.
+
+---
+
+## Infrastructure as dimensions
+
+You can also turn aspects of the infrastructure into dimensions. Such as the broker-count, TLS on/off, etc.
+
+See the `run/series/README.md` to learn how to include infrastructure as dimensions.
 
 ---
 

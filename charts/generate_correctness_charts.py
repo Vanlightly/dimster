@@ -15,6 +15,9 @@ import math
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from generate_run_charts import metadata_annotation_html
+
 
 COLORS = [
     "#4e79a7",  # steel blue
@@ -728,6 +731,7 @@ def build_html(data, chart_configs, chart_counts):
     test_mode = correctness_config.get("testMode", "CONCURRENT")
     test_duration = correctness_config.get("testDurationMinutes", "")
     grace_period = correctness_config.get("gracePeriodSeconds", "")
+    annotation_meta = metadata_annotation_html(metadata)
 
     sidebar_html = build_sidebar_html(scenarios)
     correctness_summary_html = build_correctness_summary(data)
@@ -1017,6 +1021,7 @@ body {{
             <div class="meta-item"><span class="label">Test Mode:</span> <span class="value">{test_mode}</span></div>
             <div class="meta-item"><span class="label">Test Duration:</span> <span class="value">{test_duration} min</span></div>
             <div class="meta-item"><span class="label">Grace Period:</span> <span class="value">{grace_period}s</span></div>
+            {annotation_meta}
             <div class="meta-item"><span class="label">Start:</span> <span class="value">{begin_time}</span></div>
             <div class="meta-item"><span class="label">End:</span> <span class="value">{end_time}</span></div>
         </div>

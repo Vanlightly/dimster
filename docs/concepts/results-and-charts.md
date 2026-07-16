@@ -27,6 +27,10 @@ After a benchmark run completes, the CLI downloads results (stored as JSON files
 - **Dashboards**: Grafana dashboards are translated into HTML files and written to `dashboards` sub-directory.
 - **Charts**: A set of charts are generated based on the JSON result file.
 
+## Repeated Scenario Results
+
+When a scenario uses `repeat` greater than `1`, Dimster writes each repeated run and adds a synthetic `<scenario name> (merged)` result for convenience. That merged result averages the repeated runs' summary fields. For latency metrics, this means a merged p99 is the average of each repeated run's p99, not the p99 recalculated from all latency samples pooled together. This is useful as a compact run-level summary, but the individual repeated runs remain the source of truth for run-to-run variance and strict pooled-percentile analysis.
+
 ## Grafana Dashboards
 
 During a benchmark run, live Grafana dashboards are available via:

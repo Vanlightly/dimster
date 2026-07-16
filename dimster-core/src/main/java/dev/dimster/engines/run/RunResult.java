@@ -11,8 +11,9 @@ import dev.dimster.TestResult;
 import dev.dimster.availability.AvailabilityConfig;
 import dev.dimster.availability.AvailabilityResult;
 
-@JsonPropertyOrder({"mode", "metadata", "baseKafkaConfig", "runConfig", "availabilityConfig", "scenarioResults"})
+@JsonPropertyOrder({"fileType", "mode", "metadata", "baseKafkaConfig", "runConfig", "availabilityConfig", "scenarioResults"})
 public class RunResult {
+    public String fileType = "dimster-result";
     public String mode = "run";
     public ResultMetadata metadata = new ResultMetadata();
     public TestResult.KafkaConfigSummary baseKafkaConfig;

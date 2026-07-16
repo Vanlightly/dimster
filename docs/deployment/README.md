@@ -15,6 +15,7 @@ The pages split into two halves: **concepts** (01–03) build the mental model o
 | [05 — AWS EKS](05-aws-eks.md) | End-to-end: provision an EKS cluster with the `eks-setup` wizard, build, deploy, run, plus EC2 instance selection guidance |
 | [06 — External Kafka](06-external-kafka.md) | Connecting to Confluent Cloud, MSK, self-managed Kafka, or local Docker Compose |
 | [07 — In-cluster mTLS](07-mtls-full-mode.md) | Enable mTLS for `deploy: full` — auto-generated certs, per-workload opt-in, side-by-side TLS vs PLAINTEXT runs |
+| [08 — Infrastructure dimensions](08-infra-dimensions.md) | Learn how to include infrastructure in dimensional testing |
 
 Read pages 01–03 once. After that, pick the one target page that matches what you're shipping to.
 

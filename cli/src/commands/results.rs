@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 
 use crate::commands::chart;
 use crate::commands::csv;
+use crate::commands::run_configs;
 use crate::kubectl::Kubectl;
 
 // Shell snippet that prints the basename of the most-recently-modified
@@ -354,7 +355,12 @@ spec:
             );
             None
         } else {
-            let local_dir = format!("{}/{}", output_dir, latest_subdir);
+            let local_subdir =
+                local_result_subdir_from_pvc_request(kubectl, &helper_name, &latest_subdir);
+            let local_dir = Path::new(output_dir)
+                .join(local_subdir)
+                .to_string_lossy()
+                .to_string();
             std::fs::create_dir_all(&local_dir)?;
 
             // List individual files and copy each one via kubectl cp
@@ -395,6 +401,24 @@ spec:
     // Cleanup helper pod
     let _ = kubectl.run(&["delete", "pod", &helper_name, "--ignore-not-found"]);
     Ok(result_dir)
+}
+
+fn local_result_subdir_from_pvc_request(
+    kubectl: &Kubectl,
+    helper_name: &str,
+    pvc_subdir: &str,
+) -> std::path::PathBuf {
+    let request_json = kubectl
+        .run(&[
+            "exec",
+            helper_name,
+            "--",
+            "sh",
+            "-c",
+            &format!("cat /results/{}/run-request.json 2>/dev/null", pvc_subdir),
+        ])
+        .unwrap_or_default();
+    run_configs::local_result_subdir_from_request_json(pvc_subdir, &request_json)
 }
 
 /// Save coordinator and worker logs to a logs/ subdirectory within the result directory.

@@ -12,8 +12,9 @@ import dev.dimster.TestResult.WorkloadConfig;
 /**
  * Result of a correctness test run.
  */
-@JsonPropertyOrder({"mode", "metadata", "config", "scenarioResults"})
+@JsonPropertyOrder({"fileType", "mode", "metadata", "config", "scenarioResults"})
 public class CorrectnessResult {
+    public String fileType = "dimster-result";
     public String mode = "correctness";
     public ResultMetadata metadata = new ResultMetadata();
     public CorrectnessWorkload config;
