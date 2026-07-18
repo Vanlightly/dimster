@@ -109,14 +109,17 @@ fn compare_entries(files: &[String], directory: Option<&str>) -> Result<Vec<Comp
         (Some(directory), true) => entries_from_directory(Path::new(directory)),
         (None, false) => files.iter().map(|f| parse_labeled_file(f)).collect(),
         (None, true) => {
-            bail!("2-4 labeled files required, or use --directory DIR")
+            bail!("At least 2 labeled files required, or use --directory DIR")
         }
     }
 }
 
 fn validate_entry_count(entries: &[CompareEntry]) -> Result<()> {
-    if entries.len() < 2 || entries.len() > 4 {
-        bail!("2-4 compare entries required, found {}", entries.len());
+    if entries.len() < 2 {
+        bail!(
+            "At least 2 compare entries required, found {}",
+            entries.len()
+        );
     }
     Ok(())
 }
@@ -454,6 +457,33 @@ mod tests {
         assert_eq!(csv.lines().count(), 3);
         assert!(csv.contains("tls-none"));
         assert!(csv.contains("tls-all"));
+    }
+
+    #[test]
+    fn validate_entry_count_allows_more_than_four_entries() {
+        let entries: Vec<CompareEntry> = (0..5)
+            .map(|i| CompareEntry {
+                label: format!("run-{i}"),
+                file: PathBuf::from(format!("run-{i}.json")),
+            })
+            .collect();
+
+        validate_entry_count(&entries).unwrap();
+    }
+
+    #[test]
+    fn validate_entry_count_still_requires_at_least_two_entries() {
+        let entries = vec![CompareEntry {
+            label: "baseline".to_string(),
+            file: PathBuf::from("baseline.json"),
+        }];
+
+        let err = validate_entry_count(&entries).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("At least 2 compare entries required")
+        );
     }
 
     #[test]

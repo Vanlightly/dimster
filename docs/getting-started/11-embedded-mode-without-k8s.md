@@ -26,7 +26,7 @@ The post-processing commands of the CLI work on local JSON files and don't need 
 # Generate HTML charts under <dir>/charts/
 ./dimster chart path/to/results/<timestamped-result-dir>
 
-# Compare 2-4 named result files side-by-side
+# Compare named result files side-by-side
 ./dimster compare \
     baseline=path/to/results/<timestamped-result-dir1>/quick-run-test.json \
     candidate=path/to/results/<timestamped-result-dir2>/quick-run-test.json

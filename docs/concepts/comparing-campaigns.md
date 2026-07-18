@@ -1,6 +1,6 @@
 # Compare command vs dimensions
 
-[Dimensional testing](dimensional-testing.md) handles every comparison where the only thing changing is the workload itself. But some comparisons need the *cluster* to differ — the Kafka version, the broker config, the hardware, the broker count. Those can't be dimensions, because the cluster is built once at deploy time and shared by every test point in a campaign. For those, you run two (or up to four) test campaigns on different environments and stitch the results together with the `dimster compare` command. This command takes the results of each test campaign and generates a chart overlaying the results for easy comparison.
+[Dimensional testing](dimensional-testing.md) handles every comparison where the only thing changing is the workload itself. But some comparisons need the *cluster* to differ — the Kafka version, the broker config, the hardware, the broker count. Those can't be dimensions, because the cluster is built once at deploy time and shared by every test point in a campaign. For those, you run two or more test campaigns on different environments and stitch the results together with the `dimster compare` command. This command takes the results of each test campaign and generates a chart overlaying the results for easy comparison.
 
 ## What can't be a dimension
 
@@ -21,9 +21,9 @@ Anything else — partition count, consumer count, message size, batch settings,
 
 When the thing you want to compare lives outside the workload, the workflow is as follows:
 
-1. Define **two (or three or four)** env blocks in `dimster-config.yaml` that differ only in the thing you want to compare.
+1. Define **two or more** env blocks in `dimster-config.yaml` that differ only in the thing you want to compare.
 2. Deploy each env separately and run **the same workload** against each. Each run produces its own timestamped results folder with a JSON result file. The timing of the benchmarks does not matter. One could be from today and the other from last year (though running the same version of Dimster is advisable in case there are breaking changes).
-3. Run `dimster compare LABEL=path/to/result.json LABEL=path/to/result.json [...]` to generate side-by-side charts. Up to four labelled inputs are supported.
+3. Run `dimster compare LABEL=path/to/result.json LABEL=path/to/result.json [...]` to generate side-by-side charts.
 
 The compare command is a **chart overlay only** command so it doesn't re-run anything. It also doesn't validate that the workloads match (sometimes you also want to compare different workloads using the compare command).
 

@@ -1,6 +1,6 @@
 // `dimster pivot` — generate a pivot HTML view from a single run result file.
 //
-// Where the existing `compare` command overlays 2-4 separate result files,
+// Where the existing `compare` command overlays two or more separate result files,
 // `pivot` slices a single file along the *scenario* axis: each array index
 // (test label) becomes its own HTML section, and scenarios within that index
 // are the comparison series. This is useful when one workload sweeps a

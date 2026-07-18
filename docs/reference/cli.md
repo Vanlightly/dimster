@@ -243,12 +243,12 @@ Runs `charts/generate_charts.py` against the results directory. Requires Python 
 
 ### compare
 
-Generate side-by-side comparison charts from 2-4 `run` result JSON files.
+Generate side-by-side comparison charts from two or more `run` result JSON files.
 
 You can specify a directory (it will recursively search for result JSON files), or pass label=result-file-path.
 
 ```
-dimster compare <LABEL=FILE> <LABEL=FILE> [LABEL=FILE] [LABEL=FILE] [-o <output>]
+dimster compare <LABEL=FILE> <LABEL=FILE> [LABEL=FILE ...] [-o <output>]
 ```
 
 | Argument / Flag | Description |

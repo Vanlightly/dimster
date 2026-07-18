@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Generate HTML comparison charts from 2-4 Dimster run result JSON files.
+Generate HTML comparison charts from two or more Dimster run result JSON files.
 
 Usage:
     python3 generate_compare_charts.py \
-        --entry LABEL1=FILE1 --entry LABEL2=FILE2 [--entry LABEL3=FILE3] [--entry LABEL4=FILE4] \
+        --entry LABEL1=FILE1 --entry LABEL2=FILE2 [--entry LABEL3=FILE3 ...] \
         --output <dir>
 
 Validates that all files have matching scenario names and test labels,
@@ -12,6 +12,7 @@ then generates a single HTML page with overlaid data series from all runs.
 """
 
 import argparse
+import colorsys
 import json
 import os
 import sys
@@ -72,6 +73,66 @@ FILE_DASHES = [
 ]
 
 FILE_DASH_NAMES = ["solid", "dashed", "dotted", "dash-dot"]
+
+
+def _hls_to_rgb_ints(hue, lightness, saturation):
+    """Convert HLS color components into 0-255 RGB integers."""
+    red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
+    return tuple(round(channel * 255) for channel in (red, green, blue))
+
+
+def _hls_to_hex(hue, lightness, saturation):
+    """Return a CSS hex color from HLS components."""
+    red, green, blue = _hls_to_rgb_ints(hue, lightness, saturation)
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def _hls_to_rgba(hue, lightness, saturation, alpha):
+    """Return a CSS rgba color from HLS components."""
+    red, green, blue = _hls_to_rgb_ints(hue, lightness, saturation)
+    return f"rgba({red},{green},{blue},{alpha})"
+
+
+def _generated_file_palette(file_index):
+    """Generate a deterministic six-shade palette for result indexes beyond
+    the original four hand-picked families.
+    """
+    hue = (file_index * 0.618033988749895) % 1.0
+    saturation = 0.62
+    lightness_values = [0.43, 0.54, 0.65, 0.32, 0.47, 0.73]
+    return [_hls_to_hex(hue, lightness, saturation) for lightness in lightness_values]
+
+
+def _generated_file_palette_alpha(file_index):
+    """Generate translucent companions for generated file palettes."""
+    hue = (file_index * 0.618033988749895) % 1.0
+    saturation = 0.62
+    lightness_values = [0.43, 0.54, 0.65, 0.32, 0.47, 0.73]
+    return [_hls_to_rgba(hue, lightness, saturation, 0.15) for lightness in lightness_values]
+
+
+def file_palette(file_index):
+    """Return a color family for an arbitrary compare input index."""
+    if file_index < len(FILE_PALETTES):
+        return FILE_PALETTES[file_index]
+    return _generated_file_palette(file_index)
+
+
+def file_palette_alpha(file_index):
+    """Return a translucent color family for an arbitrary compare input index."""
+    if file_index < len(FILE_PALETTES_ALPHA):
+        return FILE_PALETTES_ALPHA[file_index]
+    return _generated_file_palette_alpha(file_index)
+
+
+def file_dash(file_index):
+    """Return a line dash pattern, cycling once the finite set is exhausted."""
+    return FILE_DASHES[file_index % len(FILE_DASHES)]
+
+
+def file_dash_name(file_index):
+    """Return the user-facing dash pattern name for a compare input."""
+    return FILE_DASH_NAMES[file_index % len(FILE_DASH_NAMES)]
 
 
 def parse_entries(entry_args):
@@ -228,12 +289,13 @@ def build_compare_chart_configs(entries):
         # --- 1. Throughput (msg/s) ---
         datasets_tp = []
         for f_idx in range(n_files):
+            palette = file_palette(f_idx)
             avg_pub = [round(avg(t["results"].get("publishRate", [])), 1) for t in scenario_tests[f_idx]]
             avg_con = [round(avg(t["results"].get("consumeRate", [])), 1) for t in scenario_tests[f_idx]]
             datasets_tp.append({"label": f"{labels[f_idx]} Publish", "data": avg_pub,
-                                "backgroundColor": FILE_PALETTES[f_idx][0]})
+                                "backgroundColor": palette[0]})
             datasets_tp.append({"label": f"{labels[f_idx]} Consume", "data": avg_con,
-                                "backgroundColor": FILE_PALETTES[f_idx][1]})
+                                "backgroundColor": palette[1]})
         opts_tp = bar_options("Throughput (msg/s)", "msg/s")
         opts_tp["maintainAspectRatio"] = False
         chart_configs.append({
@@ -254,6 +316,7 @@ def build_compare_chart_configs(entries):
 
         datasets_mbs = []
         for f_idx in range(n_files):
+            palette = file_palette(f_idx)
             avg_pub_mb = []
             avg_con_mb = []
             for t in scenario_tests[f_idx]:
@@ -261,9 +324,9 @@ def build_compare_chart_configs(entries):
                 avg_pub_mb.append(to_mbs(t["results"].get("publishRate", []), msg_size))
                 avg_con_mb.append(to_mbs(t["results"].get("consumeRate", []), msg_size))
             datasets_mbs.append({"label": f"{labels[f_idx]} Publish", "data": avg_pub_mb,
-                                 "backgroundColor": FILE_PALETTES[f_idx][0]})
+                                 "backgroundColor": palette[0]})
             datasets_mbs.append({"label": f"{labels[f_idx]} Consume", "data": avg_con_mb,
-                                 "backgroundColor": FILE_PALETTES[f_idx][1]})
+                                 "backgroundColor": palette[1]})
         opts_mbs = bar_options("Throughput (MB/s)", "MB/s")
         opts_mbs["maintainAspectRatio"] = False
         chart_configs.append({
@@ -290,12 +353,13 @@ def build_compare_chart_configs(entries):
         ]
         datasets_pub_lat = []
         for f_idx in range(n_files):
+            palette = file_palette(f_idx)
             for pi, (pname, pkey) in enumerate(zip(pctile_names, pctile_keys)):
                 data = [scenario_tests[f_idx][ti]["results"].get(pkey, 0) for ti in range(n_dims)]
                 datasets_pub_lat.append({
                     "label": f"{labels[f_idx]} {pname}",
                     "data": data,
-                    "backgroundColor": FILE_PALETTES[f_idx][pi % len(FILE_PALETTES[f_idx])],
+                    "backgroundColor": palette[pi % len(palette)],
                 })
         opts_pub_lat = bar_options("Aggregated Latency - Publish", "ms")
         opts_pub_lat["maintainAspectRatio"] = False
@@ -321,12 +385,13 @@ def build_compare_chart_configs(entries):
         ]
         datasets_e2e_lat = []
         for f_idx in range(n_files):
+            palette = file_palette(f_idx)
             for pi, (pname, ekey) in enumerate(zip(pctile_names, e2e_keys)):
                 data = [scenario_tests[f_idx][ti]["results"].get(ekey, 0) for ti in range(n_dims)]
                 datasets_e2e_lat.append({
                     "label": f"{labels[f_idx]} {pname}",
                     "data": data,
-                    "backgroundColor": FILE_PALETTES[f_idx][pi % len(FILE_PALETTES[f_idx])],
+                    "backgroundColor": palette[pi % len(palette)],
                 })
         opts_e2e_lat = bar_options("Aggregated Latency - E2E", "ms")
         opts_e2e_lat["maintainAspectRatio"] = False
@@ -361,12 +426,14 @@ def build_compare_chart_configs(entries):
                 x_labels = time_labels(max_len, sample_rate_ms)
                 datasets = []
                 for f_idx in range(n_files):
+                    palette = file_palette(f_idx)
+                    alpha_palette = file_palette_alpha(f_idx)
                     datasets.append(compare_line_dataset(
                         labels[f_idx],
                         scenario_tests[f_idx][_ti]["results"].get(data_key, []),
-                        FILE_PALETTES[f_idx][0],
-                        FILE_PALETTES_ALPHA[f_idx][0],
-                        FILE_DASHES[f_idx]))
+                        palette[0],
+                        alpha_palette[0],
+                        file_dash(f_idx)))
                 chart_configs.append({
                     "id": f"chart-{s_idx}-{chart_idx}",
                     "zoomGroup": f"time-{s_idx}-{_ti}",
@@ -387,13 +454,14 @@ def build_compare_chart_configs(entries):
             # Publish Latency Percentile Distribution
             pub_q_datasets = []
             for f_idx in range(n_files):
+                palette = file_palette(f_idx)
                 q = scenario_tests[f_idx][ti]["results"].get("aggregatedPublishLatencyQuantiles", {})
                 if q:
                     pub_q_datasets.append(compare_percentile_dataset(
                         labels[f_idx],
                         percentile_points(q),
-                        FILE_PALETTES[f_idx][0],
-                        FILE_DASHES[f_idx]))
+                        palette[0],
+                        file_dash(f_idx)))
             if pub_q_datasets:
                 chart_configs.append({
                     "id": f"chart-{s_idx}-{chart_idx}",
@@ -409,13 +477,14 @@ def build_compare_chart_configs(entries):
             # E2E Latency Percentile Distribution
             e2e_q_datasets = []
             for f_idx in range(n_files):
+                palette = file_palette(f_idx)
                 q = scenario_tests[f_idx][ti]["results"].get("aggregatedEndToEndLatencyQuantiles", {})
                 if q:
                     e2e_q_datasets.append(compare_percentile_dataset(
                         labels[f_idx],
                         percentile_points(q),
-                        FILE_PALETTES[f_idx][0],
-                        FILE_DASHES[f_idx]))
+                        palette[0],
+                        file_dash(f_idx)))
             if e2e_q_datasets:
                 chart_configs.append({
                     "id": f"chart-{s_idx}-{chart_idx}",
@@ -608,18 +677,31 @@ def build_legend_hint(entries):
     n = len(entries)
     labels = [e[0] for e in entries]
 
-    # CSS patterns for each dash style
-    dash_css = [
-        f"background: {FILE_PALETTES[0][0]};",  # solid
-        f"background: repeating-linear-gradient(90deg, {FILE_PALETTES[1][0]} 0, {FILE_PALETTES[1][0]} 6px, transparent 6px, transparent 9px);",  # dashed
-        f"background: repeating-linear-gradient(90deg, {FILE_PALETTES[2][0]} 0, {FILE_PALETTES[2][0]} 2px, transparent 2px, transparent 5px);",  # dotted
-        f"background: repeating-linear-gradient(90deg, {FILE_PALETTES[3][0]} 0, {FILE_PALETTES[3][0]} 6px, transparent 6px, transparent 9px, {FILE_PALETTES[3][0]} 9px, {FILE_PALETTES[3][0]} 11px, transparent 11px, transparent 14px);",  # dash-dot
-    ]
+    def dash_css(file_index):
+        color = file_palette(file_index)[0]
+        style_index = file_index % len(FILE_DASHES)
+        if style_index == 0:
+            return f"background: {color};"
+        if style_index == 1:
+            return (
+                f"background: repeating-linear-gradient(90deg, {color} 0, "
+                f"{color} 6px, transparent 6px, transparent 9px);"
+            )
+        if style_index == 2:
+            return (
+                f"background: repeating-linear-gradient(90deg, {color} 0, "
+                f"{color} 2px, transparent 2px, transparent 5px);"
+            )
+        return (
+            f"background: repeating-linear-gradient(90deg, {color} 0, "
+            f"{color} 6px, transparent 6px, transparent 9px, {color} 9px, "
+            f"{color} 11px, transparent 11px, transparent 14px);"
+        )
 
     items = []
     for i in range(n):
         items.append(
-            f'<span class="swatch" style="{dash_css[i]}"></span> {labels[i]} ({FILE_DASH_NAMES[i]})'
+            f'<span class="swatch" style="{dash_css(i)}"></span> {labels[i]} ({file_dash_name(i)})'
         )
     return f'<div class="legend-hint">{" &nbsp;&nbsp; ".join(items)}</div>'
 
@@ -1074,10 +1156,10 @@ chartConfigs.forEach(c => {{
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate comparison charts from 2-4 Dimster run result JSON files."
+        description="Generate comparison charts from two or more Dimster run result JSON files."
     )
     parser.add_argument("--entry", action="append", required=True,
-                        help="LABEL=FILE entry (specify 2-4 times)")
+                        help="LABEL=FILE entry (specify at least twice)")
     parser.add_argument("--output", required=True, help="Output directory for HTML file")
 
     # Support legacy --t1-label/--t1-file/--t2-label/--t2-file args
@@ -1100,9 +1182,6 @@ def main():
 
     if not args.entry or len(args.entry) < 2:
         print("Error: at least 2 --entry arguments required", file=sys.stderr)
-        sys.exit(1)
-    if len(args.entry) > 4:
-        print("Error: at most 4 --entry arguments supported", file=sys.stderr)
         sys.exit(1)
 
     entries = parse_entries(args.entry)

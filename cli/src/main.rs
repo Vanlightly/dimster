@@ -249,10 +249,10 @@ enum Commands {
         results_dir: Option<String>,
     },
 
-    /// Compare run result files side-by-side (2-4 files)
+    /// Compare run result files side-by-side
     Compare {
-        /// Labeled result files: LABEL=FILE (2-4 required)
-        #[arg(num_args = 0..=4, value_name = "LABEL=FILE")]
+        /// Labeled result files: LABEL=FILE (at least 2 required unless --directory is used)
+        #[arg(num_args = 0.., value_name = "LABEL=FILE")]
         files: Vec<String>,
 
         /// Directory containing per-run subdirectories; labels are read from metadata.label

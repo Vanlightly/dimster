@@ -2,7 +2,7 @@
 """
 Generate an HTML "pivot" view from a single Dimster run result JSON file.
 
-Where generate_compare_charts.py overlays 2-4 separate result files,
+Where generate_compare_charts.py overlays two or more separate result files,
 this script slices ONE file along the scenario axis. The result file is
 expected to contain N scenarios that share the same array shape (same
 number of "tests", same per-index test labels) but differ on scalar
