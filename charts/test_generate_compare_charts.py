@@ -1,9 +1,12 @@
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
 import generate_compare_charts
+import generate_correctness_charts
 
 
 def _run_result(name):
@@ -57,7 +60,81 @@ def _run_result(name):
     }
 
 
+def _correctness_result(name, duplicate_count, violations, samples=None):
+    """Build a correctness result with enough timing data for event bins."""
+    return {
+        "mode": "correctness",
+        "metadata": {
+            "name": name,
+            "system": "Kafka",
+            "environment": "local",
+            "kafkaConfigName": "safe",
+            "beginTime": "2026-07-21-12-00-00",
+            "endTime": "2026-07-21-12-01-00",
+        },
+        "config": {
+            "correctnessConfig": {
+                "sampleRateMillis": 10000,
+                "testDurationMinutes": 1,
+                "gracePeriodSeconds": 5,
+            },
+            "baseKafkaConfig": {"replicationFactor": 3},
+        },
+        "scenarioResults": [
+            {
+                "name": "default",
+                "beginTime": "2026-07-21-12-00-00",
+                "endTime": "2026-07-21-12-01-00",
+                "tests": [
+                    {
+                        "label": "default",
+                        "workloadConfig": {
+                            "topics": 1,
+                            "partitionsPerTopic": 4,
+                            "messageSize": 1000,
+                            "producersPerTopic": 4,
+                            "producerRate": 1000,
+                            "consumerGroupsPerTopic": 1,
+                            "consumersPerGroup": 4,
+                            "messageDistributor": "PINNED_PARTITIONS",
+                            "consumerType": "CONSUMER_GROUP",
+                        },
+                        "correctness": {
+                            "passed": duplicate_count == 0,
+                            "lostMessages": 2,
+                            "duplicateCount": duplicate_count,
+                            "outOfOrderCount": 1,
+                            "crcFailureCount": 0,
+                            "violations": violations,
+                            **(samples or {}),
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
 class GenerateCompareChartsTest(unittest.TestCase):
+    def test_correctness_file_discovery_skips_typed_run_request(self):
+        result = _correctness_result("consumer", 0, [])
+        result["fileType"] = "dimster-result"
+        run_request = {
+            "fileType": "dimster-run-request",
+            "mode": "correctness",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with open(os.path.join(directory, "result.json"), "w") as fh:
+                json.dump(result, fh)
+            with open(os.path.join(directory, "run-request.json"), "w") as fh:
+                json.dump(run_request, fh)
+
+            found = generate_correctness_charts.find_correctness_json_files(directory)
+
+        self.assertEqual(1, len(found))
+        self.assertTrue(found[0][0].endswith("result.json"))
+
     def test_build_compare_charts_accepts_more_than_four_entries(self):
         entries = [
             (f"run-{i}", f"/tmp/run-{i}.json", _run_result(f"run-{i}"))
@@ -71,6 +148,125 @@ class GenerateCompareChartsTest(unittest.TestCase):
         self.assertGreater(len(chart_configs), 0)
         self.assertIn("run-4", html)
         self.assertIn("Dimster Compare", html)
+
+    def test_build_correctness_compare_charts_uses_totals_and_weighted_events(self):
+        start_ms = 1784635200000
+        first = _correctness_result(
+            "consumer",
+            5,
+            [
+                {
+                    "timestampMs": start_ms + 12000,
+                    "type": "DUPLICATE",
+                    "count": 3,
+                },
+                {
+                    "timestampMs": start_ms + 22000,
+                    "type": "OUT_OF_ORDER",
+                    "count": 1,
+                },
+            ],
+        )
+        second = _correctness_result(
+            "classic",
+            1,
+            [{"timestampMs": start_ms + 12000, "type": "DUPLICATE", "count": 1}],
+        )
+        entries = [
+            ("consumer", "/tmp/consumer.json", first),
+            ("classic", "/tmp/classic.json", second),
+        ]
+
+        generate_compare_charts.validate_compare(entries)
+        configs, sections = generate_compare_charts.build_compare_chart_configs(entries)
+        html = generate_compare_charts.build_compare_html(entries, configs, sections)
+
+        self.assertEqual(7, len(configs))
+        self.assertEqual("Message Loss", configs[0]["config"]["options"]["plugins"]["title"]["text"])
+        self.assertEqual([2, 2], configs[0]["config"]["data"]["datasets"][0]["data"])
+        self.assertEqual([5, 1], configs[1]["config"]["data"]["datasets"][0]["data"])
+        duplicate_timeline = configs[4]["config"]["data"]["datasets"][0]["data"]
+        self.assertEqual(3, duplicate_timeline[-1])
+        self.assertIn("represents 3 of 5 total violations", html)
+        self.assertIn(
+            "Message loss is intentionally shown only as a final aggregate", html
+        )
+
+    def test_correctness_compare_prefers_complete_sampled_counter_arrays(self):
+        first = _correctness_result(
+            "consumer",
+            5,
+            [],
+            {
+                "lostMessagesOverTime": [8, 2],
+                "duplicateCountOverTime": [0, 3, 5],
+                "outOfOrderCountOverTime": [0, 1, 1],
+                "crcFailureCountOverTime": [0, 0, 0],
+            },
+        )
+        second = _correctness_result(
+            "classic",
+            1,
+            [],
+            {
+                "lostMessagesOverTime": [9, 2],
+                "duplicateCountOverTime": [0, 1],
+                "outOfOrderCountOverTime": [0, 1],
+                "crcFailureCountOverTime": [0, 0],
+            },
+        )
+        entries = [
+            ("consumer", "/tmp/consumer.json", first),
+            ("classic", "/tmp/classic.json", second),
+        ]
+
+        configs, sections = generate_compare_charts.build_compare_chart_configs(entries)
+        html = generate_compare_charts.build_compare_html(entries, configs, sections)
+
+        self.assertEqual(7, len(configs))
+        self.assertEqual(
+            [0, 3, 5], configs[4]["config"]["data"]["datasets"][0]["data"]
+        )
+        self.assertNotIn("Message Loss over Time", html)
+        self.assertNotIn("may be capped", html)
+
+    def test_single_correctness_chart_includes_sampled_counter_arrays(self):
+        result = _correctness_result(
+            "consumer",
+            5,
+            [],
+            {
+                "lostMessagesOverTime": [8, 2],
+                "duplicateCountOverTime": [0, 3, 5],
+                "outOfOrderCountOverTime": [0, 1, 1],
+                "crcFailureCountOverTime": [0, 0, 0],
+            },
+        )
+
+        configs, sections = generate_correctness_charts.build_chart_configs(result)
+        charts_by_title = {
+            config["config"]["options"]["plugins"]["title"]["text"]: config
+            for config in configs
+        }
+
+        self.assertEqual(
+            [0, 3, 5],
+            charts_by_title["Duplicates over Time"]["config"]["data"]["datasets"][0]["data"],
+        )
+        self.assertNotIn("Message Loss over Time", charts_by_title)
+
+        # Correctness evidence is grouped ahead of secondary performance data
+        # both in the chart model and in the rendered page.
+        self.assertEqual((0, 3), sections[0]["violations"])
+        self.assertEqual((3, len(configs)), sections[0]["performance"])
+        html = generate_correctness_charts.build_html(result, configs, sections)
+        violations_heading = html.index('id="scenario-0-violations"')
+        first_violation_chart = html.index('<canvas id="chart-0-0"')
+        performance_heading = html.index('id="scenario-0-performance"')
+        first_performance_chart = html.index('<canvas id="chart-0-3"')
+        self.assertLess(violations_heading, first_violation_chart)
+        self.assertLess(first_violation_chart, performance_heading)
+        self.assertLess(performance_heading, first_performance_chart)
 
 
 if __name__ == "__main__":

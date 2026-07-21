@@ -5,8 +5,8 @@ Generate HTML charts from Dimster correctness result JSON files.
 Usage:
     python3 generate_correctness_charts.py --results <dir> --output <dir>
 
-Scans --results dir recursively for JSON files where mode == "correctness",
-generates one HTML file per result using Chart.js for visualization.
+Scans --results dir recursively for correctness result JSON files and generates
+one HTML file per result using Chart.js for visualization.
 """
 
 import argparse
@@ -39,7 +39,12 @@ COLORS_ALPHA = [
 
 
 def find_correctness_json_files(results_dir):
-    """Recursively find JSON files with mode == 'correctness'."""
+    """Recursively find correctness results, excluding typed helper artifacts.
+
+    Older result files predate ``fileType``, so an absent type remains valid.
+    Newer run requests also carry ``mode == correctness`` and must be excluded
+    or they produce an empty, misleading chart.
+    """
     found = []
     for root, _dirs, files in os.walk(results_dir):
         for f in files:
@@ -49,7 +54,11 @@ def find_correctness_json_files(results_dir):
             try:
                 with open(path, "r") as fh:
                     data = json.load(fh)
-                if data.get("mode") == "correctness":
+                file_type = data.get("fileType")
+                if (
+                    data.get("mode") == "correctness"
+                    and file_type in (None, "dimster-result")
+                ):
                     found.append((path, data))
             except json.JSONDecodeError as e:
                 print(f"Warning: skipping {path}: invalid JSON: {e}", file=sys.stderr)
@@ -212,7 +221,9 @@ def build_chart_configs(data):
     scenarios = data.get("scenarioResults", [])
 
     chart_configs = []
-    chart_counts = {}
+    # Each scenario records explicit chart ranges so the page renderer can
+    # place correctness evidence separately from secondary performance data.
+    chart_sections = {}
 
     for s_idx, scenario in enumerate(scenarios):
         tests = scenario.get("tests", [])
@@ -221,6 +232,42 @@ def build_chart_configs(data):
 
         labels = [t.get("label", f"test-{i}") for i, t in enumerate(tests)]
         chart_idx = 0
+
+        # --- Sampled correctness counters over time ---
+        # Correctness is the primary purpose of this report, so these charts
+        # are generated first and rendered at the top of the Violations
+        # section. The arrays remain complete when diagnostic detail is capped.
+        correctness_series = [
+            ("Duplicates over Time", "duplicateCountOverTime"),
+            ("Out-of-Order Violations over Time", "outOfOrderCountOverTime"),
+            ("CRC Failures over Time", "crcFailureCountOverTime"),
+        ]
+        for title, key in correctness_series:
+            max_len = max(
+                (len(t.get("correctness", {}).get(key, [])) for t in tests),
+                default=0,
+            )
+            if max_len == 0:
+                continue
+            x_labels = time_labels(max_len, sample_rate_ms)
+            datasets = []
+            for ti, test in enumerate(tests):
+                datasets.append(line_dataset(
+                    labels[ti], test.get("correctness", {}).get(key, []), ti
+                ))
+            chart_configs.append({
+                "id": f"chart-{s_idx}-{chart_idx}",
+                "zoomGroup": "time",
+                "config": {
+                    "type": "line",
+                    "data": {"labels": x_labels, "datasets": datasets},
+                    "options": line_options(title, "Cumulative count", "Time (s)"),
+                },
+            })
+            chart_idx += 1
+
+        violation_end = chart_idx
+        performance_start = chart_idx
 
         # --- 1. Throughput (grouped bar) ---
         avg_pub = [round(avg(t.get("performance", {}).get("publishRate", [])), 1) for t in tests]
@@ -425,9 +472,12 @@ def build_chart_configs(data):
             })
             chart_idx += 1
 
-        chart_counts[s_idx] = chart_idx
+        chart_sections[s_idx] = {
+            "violations": (0, violation_end),
+            "performance": (performance_start, chart_idx),
+        }
 
-    return chart_configs, chart_counts
+    return chart_configs, chart_sections
 
 
 def build_sidebar_html(scenarios):
@@ -458,7 +508,14 @@ def strip_heavy_data(data):
                             continue
                         if tk == "correctness":
                             stripped_corr = {k: v for k, v in tv.items()
-                                             if k not in ("violations", "lostMessageRanges")}
+                                             if k not in (
+                                                 "violations",
+                                                 "lostMessageRanges",
+                                                 "lostMessagesOverTime",
+                                                 "duplicateCountOverTime",
+                                                 "outOfOrderCountOverTime",
+                                                 "crcFailureCountOverTime",
+                                             )}
                             stripped_test[tk] = stripped_corr
                         else:
                             stripped_test[tk] = tv
@@ -596,12 +653,14 @@ def build_violations_html(tests):
     """
 
 
-def build_scenario_sections(scenarios, chart_counts):
+def build_scenario_sections(scenarios, chart_sections):
     sections = []
     for s_idx, scenario in enumerate(scenarios):
         name = scenario.get("name", f"Scenario {s_idx + 1}")
         tests = scenario.get("tests", [])
-        num_charts = chart_counts.get(s_idx, 0)
+        scenario_charts = chart_sections.get(s_idx, {})
+        violation_range = scenario_charts.get("violations", (0, 0))
+        performance_range = scenario_charts.get("performance", (0, 0))
 
         # Workload config table
         table_rows = []
@@ -688,11 +747,19 @@ def build_scenario_sections(scenarios, chart_counts):
             </div>
             """
 
-        # Charts
-        chart_cards = []
-        for c_idx in range(num_charts):
+        # Keep correctness timelines with the detailed violation evidence and
+        # keep all throughput/latency charts in the Performance section.
+        violation_chart_cards = []
+        for c_idx in range(*violation_range):
             chart_id = f"chart-{s_idx}-{c_idx}"
-            chart_cards.append(
+            violation_chart_cards.append(
+                f'<div class="chart-card"><canvas id="{chart_id}"></canvas></div>'
+            )
+
+        performance_chart_cards = []
+        for c_idx in range(*performance_range):
+            chart_id = f"chart-{s_idx}-{c_idx}"
+            performance_chart_cards.append(
                 f'<div class="chart-card"><canvas id="{chart_id}"></canvas></div>'
             )
 
@@ -703,20 +770,23 @@ def build_scenario_sections(scenarios, chart_counts):
         <section id="scenario-{s_idx}" class="scenario-section">
             <h2>Scenario: {name}</h2>
             {table_html}
-            {perf_table_html}
-            <h3 class="subsection-heading">Performance</h3>
+            <h3 id="scenario-{s_idx}-violations" class="subsection-heading">Violations</h3>
             <div class="chart-grid">
-                {"".join(chart_cards)}
+                {"".join(violation_chart_cards)}
             </div>
-            <h3 class="subsection-heading">Violations</h3>
             {violations_html}
+            <h3 id="scenario-{s_idx}-performance" class="subsection-heading">Performance</h3>
+            {perf_table_html}
+            <div class="chart-grid">
+                {"".join(performance_chart_cards)}
+            </div>
         </section>
         """)
 
     return "\n".join(sections)
 
 
-def build_html(data, chart_configs, chart_counts):
+def build_html(data, chart_configs, chart_sections):
     metadata = data.get("metadata", {})
     config = data.get("config", {})
     correctness_config = config.get("correctnessConfig", {})
@@ -736,7 +806,7 @@ def build_html(data, chart_configs, chart_counts):
     sidebar_html = build_sidebar_html(scenarios)
     correctness_summary_html = build_correctness_summary(data)
     config_section_html = build_config_section(data)
-    sections_html = build_scenario_sections(scenarios, chart_counts)
+    sections_html = build_scenario_sections(scenarios, chart_sections)
     configs_json = json.dumps(chart_configs)
     ptick_json = json.dumps({
         "values": PERCENTILE_TICK_VALUES,
@@ -1159,8 +1229,8 @@ def main():
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-        chart_configs, chart_counts = build_chart_configs(data)
-        html = build_html(data, chart_configs, chart_counts)
+        chart_configs, chart_sections = build_chart_configs(data)
+        html = build_html(data, chart_configs, chart_sections)
 
         with open(out_path, "w") as fh:
             fh.write(html)

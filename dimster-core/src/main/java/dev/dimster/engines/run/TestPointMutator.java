@@ -1,12 +1,15 @@
 package dev.dimster.engines.run;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.dimster.ConsumerProcMode;
@@ -19,6 +22,7 @@ import dev.dimster.worker.commands.ProducerWorkAssignment;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.utils.distributor.MessageDistributorType;
 import dev.dimster.worker.topology.ConsumerSet;
+import dev.dimster.worker.topology.ConsumerRestartPlanner;
 import dev.dimster.worker.topology.TopologyPlanner;
 import dev.dimster.worker.topology.VirtualConsumer;
 import dev.dimster.worker.topology.VirtualProducer;
@@ -46,6 +50,7 @@ import dev.dimster.worker.topology.VirtualTopology;
  * <h2>Scope (MVP)</h2>
  * Supported:
  * <ul>
+ *   <li>Random producer and consumer subset restarts without topology changes.</li>
  *   <li>{@code producerRate}, {@code consumerProcMsMin}/{@code Max} (hot-patch).</li>
  *   <li>{@code producersPerTopic} increase / decrease (incremental add / remove).</li>
  *   <li>{@code consumersPerGroup} increase / decrease.</li>
@@ -129,9 +134,8 @@ public class TestPointMutator {
 
     /**
      * Build a MutationPlan for the --restart-consumers N action flag.
-     * Restarts exactly N consumers (or all consumers if N >= total count)
-     * without changing the total consumer count. Consumers are selected
-     * by index order: consumers with consumerIdx in [0, N) are restarted.
+     * Restarts exactly N randomly selected consumers (or all consumers if N
+     * >= total count) without changing topology or client counts.
      *
      * @param current           the active test point
      * @param currentTopology   the active topology
@@ -142,37 +146,96 @@ public class TestPointMutator {
     public MutationPlan planConsumerRestart(TestPoint current,
                                            VirtualTopology currentTopology,
                                            int requestedCount) {
+        return planConsumerRestart(current, currentTopology, requestedCount,
+                ThreadLocalRandom.current());
+    }
+
+    /**
+     * Test seam for consumer restart selection. Production uses
+     * {@link ThreadLocalRandom}; tests pass a seeded {@link Random} so they can
+     * assert exact identities without weakening the runtime randomness.
+     */
+    MutationPlan planConsumerRestart(TestPoint current,
+                                     VirtualTopology currentTopology,
+                                     int requestedCount,
+                                     Random random) {
+        ConsumerRestartPlanner.Plan restartPlan = ConsumerRestartPlanner.plan(
+                currentTopology, requestedCount, random);
+        if (restartPlan.consumerSet().isEmpty()) {
+            return new MutationPlan(current, currentTopology, List.of());
+        }
+
+        List<DiffAction> actions = new ArrayList<>();
+        actions.add(new DiffAction.RestartConsumers(
+                restartPlan.consumerSet(),
+                String.format("--restart-consumers %d (restarting %d of %d consumers)",
+                        requestedCount, restartPlan.consumerSet().consumers().size(),
+                        currentTopology.consumers().size())));
+
+        // Return plan with unchanged test point and topology
+        return new MutationPlan(current, currentTopology, actions);
+    }
+
+    /**
+     * Producer counterpart to {@link #planConsumerRestart}. The selected
+     * VirtualProducer entries retain their worker assignment and pinning, so
+     * the existing remote worker client can route and recreate them in place.
+     */
+    public MutationPlan planProducerRestart(TestPoint current,
+                                            VirtualTopology currentTopology,
+                                            int requestedCount) {
+        return planProducerRestart(current, currentTopology, requestedCount,
+                ThreadLocalRandom.current());
+    }
+
+    /** Test seam matching the consumer overload above. */
+    MutationPlan planProducerRestart(TestPoint current,
+                                     VirtualTopology currentTopology,
+                                     int requestedCount,
+                                     Random random) {
         if (requestedCount < 0) {
-            throw new IllegalArgumentException("restartConsumersCount must be >= 0, got "
+            throw new IllegalArgumentException("restartProducersCount must be >= 0, got "
                     + requestedCount);
         }
 
-        int totalConsumers = currentTopology.consumers().size();
-        if (totalConsumers == 0) {
-            throw new IllegalArgumentException("no consumers to restart " +
-                    "(topology has 0 consumers)");
+        int totalProducers = currentTopology.producers().size();
+        if (totalProducers == 0) {
+            throw new IllegalArgumentException("no producers to restart " +
+                    "(topology has 0 producers)");
         }
 
-        // If N >= total, restart all consumers; allow N=0 as no-op
-        int actualCount = Math.min(requestedCount, totalConsumers);
+        int actualCount = Math.min(requestedCount, totalProducers);
         if (actualCount == 0) {
             return new MutationPlan(current, currentTopology, List.of());
         }
 
-        // Select consumers [0..actualCount) by consumerIdx using existing helper
-        List<VirtualConsumer> toRestart = filterConsumersByMaxIdx(currentTopology, actualCount);
-
-        // Build RestartConsumers action with current test point's consumer settings
-        List<DiffAction> actions = new ArrayList<>();
-        actions.add(new DiffAction.RestartConsumers(
-                new ConsumerSet(toRestart, current.consumerType(),
-                        current.consumerProcMsMin(), current.consumerProcMsMax(), current.consumerProcParallelism(),
-                        current.consumerProcMode(), current.consumerProcCapacity()),
-                String.format("--restart-consumers %d (restarting %d of %d consumers)",
-                        requestedCount, actualCount, totalConsumers)));
-
-        // Return plan with unchanged test point and topology
+        List<VirtualProducer> toRestart = randomSubset(
+                currentTopology.producers(), actualCount, random);
+        List<DiffAction> actions = List.of(new DiffAction.RestartProducers(
+                toRestart,
+                String.format("--restart-producers %d (restarting %d of %d producers)",
+                        requestedCount, actualCount, totalProducers)));
         return new MutationPlan(current, currentTopology, actions);
+    }
+
+    /**
+     * Return a uniform subset without replacement while leaving the immutable
+     * topology list untouched. Selecting all preserves topology order because
+     * there is no meaningful random choice in that case.
+     */
+    static <T> List<T> randomSubset(List<T> candidates, int requestedCount, Random random) {
+        Objects.requireNonNull(candidates, "candidates");
+        Objects.requireNonNull(random, "random");
+        if (requestedCount < 0) {
+            throw new IllegalArgumentException("requestedCount must be >= 0");
+        }
+        int actualCount = Math.min(requestedCount, candidates.size());
+        if (actualCount == 0) return List.of();
+        if (actualCount == candidates.size()) return List.copyOf(candidates);
+
+        List<T> shuffled = new ArrayList<>(candidates);
+        Collections.shuffle(shuffled, random);
+        return List.copyOf(shuffled.subList(0, actualCount));
     }
 
     // ─── Step 1a: workload override application ────────────────────────

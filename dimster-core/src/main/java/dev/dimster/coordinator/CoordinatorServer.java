@@ -27,7 +27,6 @@ import com.sun.net.httpserver.HttpServer;
 
 import dev.dimster.BenchmarkRunner;
 import dev.dimster.Checkpoint;
-import dev.dimster.engines.run.WorkloadEngine;
 import dev.dimster.kafka.KafkaSpi;
 import dev.dimster.worker.RemoteWorkerClient;
 import dev.dimster.worker.topology.TopologyPlanner;
@@ -67,15 +66,11 @@ public class CoordinatorServer {
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile String lastError = null;
 
-    // Reference to the currently-running WorkloadEngine, set by
-    // BenchmarkRunner when it enters the `run` mode dispatch and cleared in
-    // its finally block. Only the `run` mode populates this; other modes
-    // (explore, correctness, drain-backlog) leave it null so /modify cleanly
-    // rejects with "no active modifiable test point". The handler thread
-    // dereferences this without holding any lock — the AtomicReference
-    // gives us safe publication and the engine's own applyModification is
-    // synchronized.
-    private final AtomicReference<WorkloadEngine> activeEngine = new AtomicReference<>();
+    // Reference to the current run/correctness modification target, published
+    // by BenchmarkRunner and cleared in its finally block. Explore and
+    // drain-backlog leave it null. AtomicReference safely publishes the
+    // engine to HTTP handler threads; each engine serializes its own actions.
+    private final AtomicReference<ModificationTarget> activeEngine = new AtomicReference<>();
 
     static class Arguments {
         @Parameter(names = {"-h", "--help"}, description = "Help message", help = true)
@@ -269,11 +264,9 @@ public class CoordinatorServer {
     }
 
     /**
-     * Side-channel modification of a running `run` mode benchmark. Rejected
-     * unless the coordinator state is RUNNING and a WorkloadEngine has
-     * registered itself as the active engine (only the `run` mode does this
-     * — see BenchmarkRunner.runStandardWorkload). The actual validation /
-     * application is delegated to {@link WorkloadEngine#applyModification}.
+     * Side-channel modification of a running benchmark. Rejected unless the
+     * coordinator is RUNNING and the active mode exposes a modification
+     * target. Mode-specific validation remains inside that target.
      */
     private void handleModify(HttpExchange exchange) throws IOException {
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -285,11 +278,10 @@ public class CoordinatorServer {
                     + " (modifications are only accepted while RUNNING)\"}");
             return;
         }
-        WorkloadEngine engine = activeEngine.get();
+        ModificationTarget engine = activeEngine.get();
         if (engine == null) {
-            // Either the active mode is not `run`, or we're between test
-            // points / in setup-teardown. Either way the modify has nothing
-            // to act on.
+            // The active mode is unmodifiable or its target has already been
+            // cleared during teardown. Either way there is nothing to act on.
             respondJson(exchange, 409,
                     "{\"error\":\"no active modifiable test point\"}");
             return;
@@ -316,12 +308,10 @@ public class CoordinatorServer {
     }
 
     /**
-     * Called by BenchmarkRunner immediately after constructing a
-     * WorkloadEngine for `run` mode, and again with null in its finally
-     * block. Other engine types do not register, so /modify against e.g. an
-     * explore run will be rejected with "no active modifiable test point".
+     * Called by BenchmarkRunner when a modifiable engine starts and again
+     * with null in its finally block. Unmodifiable modes never register.
      */
-    public void setActiveEngine(WorkloadEngine engine) {
+    public void setActiveEngine(ModificationTarget engine) {
         activeEngine.set(engine);
     }
 

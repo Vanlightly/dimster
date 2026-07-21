@@ -1396,6 +1396,7 @@ public class LocalWorker implements Worker {
             String topic;
             int partition;
             long highSequence;
+            long timestampMs = violationTimestampMs(v);
 
             switch (v) {
                 case ModelChecker.DuplicateViolation d -> {
@@ -1421,12 +1422,16 @@ public class LocalWorker implements Worker {
                 var last = violations.getLast();
                 if (last.type.equals(type) && last.producerId == producerId
                         && last.topic.equals(topic) && last.partition == partition
+                        // Preserve timeline resolution: adjacent sequence
+                        // violations detected at different times must remain
+                        // separate entries rather than becoming one range.
+                        && last.timestampMs == timestampMs
                         && last.tryExtend(sequence, highSequence)) {
                     continue;
                 }
             }
             violations.add(new CorrectnessResult.ViolationEntry(
-                    System.currentTimeMillis(), type, producerId, topic, sequence, partition, highSequence));
+                    timestampMs, type, producerId, topic, sequence, partition, highSequence));
         }
 
         return outcome;
@@ -1471,6 +1476,21 @@ public class LocalWorker implements Worker {
             case ModelChecker.DuplicateViolation d -> d.sequence();
             case ModelChecker.OutOfOrderViolation o -> o.sequence();
             case ModelChecker.CrcFailureViolation c -> c.sequence();
+        };
+    }
+
+    /**
+     * Return the time at which the checker detected a violation.
+     *
+     * <p>This is package-visible for a focused contract test. Using result
+     * collection time here would collapse an entire run's timeline into the
+     * finalization instant, making correctness event charts misleading.
+     */
+    static long violationTimestampMs(ModelChecker.Violation v) {
+        return switch (v) {
+            case ModelChecker.DuplicateViolation d -> d.timestampMs();
+            case ModelChecker.OutOfOrderViolation o -> o.timestampMs();
+            case ModelChecker.CrcFailureViolation c -> c.timestampMs();
         };
     }
 

@@ -11,6 +11,9 @@ import dev.dimster.TestResult;
 import dev.dimster.kafka.KafkaCluster;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.kafka.KafkaConsumerWrapper;
+import dev.dimster.coordinator.ModificationTarget;
+import dev.dimster.coordinator.ModifyRequest;
+import dev.dimster.coordinator.ModifyResult;
 import dev.dimster.utils.StopRequestedException;
 import dev.dimster.worker.Worker;
 import dev.dimster.worker.topology.TopologyPlanner;
@@ -34,7 +37,7 @@ import java.util.stream.Collectors;
 /**
  * Orchestrates correctness tests.
  */
-public class CorrectnessEngine extends BaseEngine {
+public class CorrectnessEngine extends BaseEngine implements ModificationTarget {
 
     private static final Logger log = LoggerFactory.getLogger(CorrectnessEngine.class);
 
@@ -42,6 +45,7 @@ public class CorrectnessEngine extends BaseEngine {
     private final CorrectnessConfig config;
     private final BaseWorkload base;
     private final KafkaConfig fileKafkaConfig;
+    private final CorrectnessConsumerRestartController consumerRestartController;
 
     // Campaign progress tracking — set per test point in the run() loop
     private int currentTestIndex;
@@ -55,6 +59,7 @@ public class CorrectnessEngine extends BaseEngine {
         this.config = workload.correctnessConfig;
         this.base = workload.baseWorkload;
         this.fileKafkaConfig = fileKafkaConfig;
+        this.consumerRestartController = new CorrectnessConsumerRestartController(worker);
     }
 
     public CorrectnessResult run() throws Exception {
@@ -174,6 +179,9 @@ public class CorrectnessEngine extends BaseEngine {
                 true /* correctness on */,
                 staticConsumerPartitions);
         recordPlannedTopology(point.label(), workload.engineConfig.printTopology);
+        // Reset the seeded selection sequence for every test point. The
+        // action window remains closed until measured CONCURRENT work begins.
+        consumerRestartController.prepareTest(plannedTopology, config.consumerRestartSeed);
 
         // Create the actual Kafka topics from the planned names.
         List<String> topics = createPlannedTopics();
@@ -214,9 +222,10 @@ public class CorrectnessEngine extends BaseEngine {
 
         // Run test phases — record per-period performance data
         TestResult.PerformanceResults perf = new TestResult.PerformanceResults();
+        CorrectnessTimeSeriesRecorder correctnessSeries = new CorrectnessTimeSeriesRecorder();
         CumulativeLatencies agg = switch (config.testMode) {
-            case CONCURRENT -> runConcurrentPhases(workAssignment, point, perf);
-            case DRAIN -> runBacklogBuildDrainPhases(workAssignment, point, perf);
+            case CONCURRENT -> runConcurrentPhases(workAssignment, point, perf, correctnessSeries);
+            case DRAIN -> runBacklogBuildDrainPhases(workAssignment, point, perf, correctnessSeries);
         };
 
         // Populate aggregated performance results
@@ -230,8 +239,16 @@ public class CorrectnessEngine extends BaseEngine {
         outcome.label = point.label();
         populateWorkloadConfig(outcome.workloadConfig, point);
         outcome.performance = perf;
+        correctnessSeries.copyTo(outcome.correctness);
+        consumerRestartController.populateOutcome(outcome);
 
         return outcome;
+    }
+
+    /** Delegate live-action validation to the synchronized lifecycle controller. */
+    @Override
+    public ModifyResult applyModification(ModifyRequest request) {
+        return consumerRestartController.applyModification(request);
     }
 
 
@@ -252,7 +269,9 @@ public class CorrectnessEngine extends BaseEngine {
     private CumulativeLatencies collectStats(CorrectnessConfig.TestMode testMode,
                                              Duration duration, long targetBacklogBytes,
                                              int messageSize,
-                                             TestResult.PerformanceResults perf) throws IOException {
+                                             TestResult.PerformanceResults perf,
+                                             CorrectnessTimeSeriesRecorder correctnessSeries)
+            throws IOException {
         long startTime = System.nanoTime();
         long oldTime = System.nanoTime();
         long endTime = duration.toNanos() > 0 ? startTime + duration.toNanos() : Long.MAX_VALUE;
@@ -275,6 +294,8 @@ public class CorrectnessEngine extends BaseEngine {
             double consumeRate = stats.messagesReceived / elapsed;
 
             recordPeriodResults(perf, stats, publishRate, consumeRate);
+            CorrectnessResult.TestOutcome currentOutcome = correctnessSeries.record(
+                    worker.getCorrectnessResult());
 
             if (testMode == CorrectnessConfig.TestMode.DRAIN) {
                 // Compact build-phase logging matching DrainBacklogEngine format
@@ -317,7 +338,6 @@ public class CorrectnessEngine extends BaseEngine {
                         currentTestIndex + 1, totalTestPoints,
                         totalTestPoints > 0 ? (currentTestIndex * 100) / totalTestPoints : 0);
 
-                CorrectnessResult.TestOutcome currentOutcome = worker.getCorrectnessResult();
                 if (currentOutcome != null) {
                     long backlog = currentOutcome.correctness.totalSent
                             - currentOutcome.correctness.totalReceived;
@@ -350,7 +370,9 @@ public class CorrectnessEngine extends BaseEngine {
      */
     private CumulativeLatencies runConcurrentPhases(ProducerWorkAssignment workAssignment,
                                                     TestPoint point,
-                                                    TestResult.PerformanceResults perf) throws IOException {
+                                                    TestResult.PerformanceResults perf,
+                                                    CorrectnessTimeSeriesRecorder correctnessSeries)
+            throws IOException {
         // Allow consumer group assignment to stabilize before starting the workload
         // to avoid false duplicates from rebalancing
         log.info("Waiting 10s for consumer group assignment to stabilize...");
@@ -359,13 +381,22 @@ public class CorrectnessEngine extends BaseEngine {
         worker.startLoad(workAssignment);
         log.info("----- Correctness test [CONCURRENT] ({}m) -----", config.testDurationMinutes);
         worker.resetStats();
-        CumulativeLatencies agg = collectStats(CorrectnessConfig.TestMode.CONCURRENT,
-                Duration.ofMinutes(config.testDurationMinutes), 0, 0, perf);
+        CumulativeLatencies agg;
+        consumerRestartController.openWindow();
+        try {
+            agg = collectStats(CorrectnessConfig.TestMode.CONCURRENT,
+                    Duration.ofMinutes(config.testDurationMinutes), 0, 0, perf,
+                    correctnessSeries);
+        } finally {
+            // Closing on the same monitor as applyModification waits for an
+            // accepted restart before producers pause and grace handling starts.
+            consumerRestartController.closeWindow();
+        }
 
         worker.pauseProducers();
         log.info("----- Grace period ({}s) — waiting for in-flight messages -----",
                 config.gracePeriodSeconds);
-        waitForDrain(config.gracePeriodSeconds, point.messageSize());
+        waitForDrain(config.gracePeriodSeconds, point.messageSize(), correctnessSeries);
 
         return agg;
     }
@@ -377,7 +408,9 @@ public class CorrectnessEngine extends BaseEngine {
      */
     private CumulativeLatencies runBacklogBuildDrainPhases(ProducerWorkAssignment workAssignment,
                                                            TestPoint point,
-                                                           TestResult.PerformanceResults perf) throws IOException {
+                                                           TestResult.PerformanceResults perf,
+                                                           CorrectnessTimeSeriesRecorder correctnessSeries)
+            throws IOException {
         // Enable per-partition/per-consumer metrics before producers start sending,
         // so build-phase sends populate the per-partition counters for Prometheus.
         if (workload.engineConfig.perPartitionMetrics) {
@@ -404,7 +437,8 @@ public class CorrectnessEngine extends BaseEngine {
         long buildStart = System.currentTimeMillis();
         worker.resetStats();
         CumulativeLatencies agg = collectStats(CorrectnessConfig.TestMode.DRAIN,
-                buildDuration, targetBacklogBytes, point.messageSize(), perf);
+                buildDuration, targetBacklogBytes, point.messageSize(), perf,
+                correctnessSeries);
 
         worker.pauseProducers();
         CountersStats buildCounters = worker.getCountersStats();
@@ -424,7 +458,7 @@ public class CorrectnessEngine extends BaseEngine {
         worker.setMaxConsumerRecreations(workload.engineConfig.maxConsumerRecreations);
         waitForClientsReady("CONSUMER", 60);
 
-        waitForDrain(config.gracePeriodSeconds, point.messageSize());
+        waitForDrain(config.gracePeriodSeconds, point.messageSize(), correctnessSeries);
 
         return agg;
     }
@@ -437,7 +471,9 @@ public class CorrectnessEngine extends BaseEngine {
      *                       when > 0 uses compact tabular format (DRAIN mode),
      *                       when 0 uses simple format (CONCURRENT grace period)
      */
-    private void waitForDrain(int timeoutSeconds, int messageSize) throws IOException {
+    private void waitForDrain(int timeoutSeconds, int messageSize,
+                              CorrectnessTimeSeriesRecorder correctnessSeries)
+            throws IOException {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(timeoutSeconds));
         long drainStart = System.currentTimeMillis();
         Instant lastLossCheck = Instant.now().minusSeconds(20);
@@ -474,6 +510,8 @@ public class CorrectnessEngine extends BaseEngine {
             Sleeper.sleepOrStop(stopRequested, config.sampleRateMillis, true);
             worker.getPeriodStats(); // ensures metrics endpoint of each worker is updated for scraping
             CountersStats counters = worker.getCountersStats();
+            CorrectnessResult.TestOutcome currentOutcome = correctnessSeries.record(
+                    worker.getCorrectnessResult());
             long received = counters.messagesReceived();
             long backlog = counters.messagesSent() - counters.messagesReceived();
             long now = System.nanoTime();
@@ -519,14 +557,13 @@ public class CorrectnessEngine extends BaseEngine {
                     && Duration.between(lastLossCheck, Instant.now()).toSeconds() >= 10) {
                 // fallback to check the correctness tester which is not based on counters.
                 lastLossCheck = Instant.now();
-                CorrectnessResult.TestOutcome outcome = worker.getCorrectnessResult();
-                if (outcome != null && outcome.correctness.lostMessages == 0) {
+                if (currentOutcome != null && currentOutcome.correctness.lostMessages == 0) {
                     long drainDurationMs = System.currentTimeMillis() - drainStart;
                     log.info("    Backlog drained in {}s — no loss detected", drainDurationMs / 1000);
                     return;
-                } else if (outcome != null) {
+                } else if (currentOutcome != null) {
                     log.info("  Fallen back to correctness checker for drain status - {} messages provisionally lost",
-                            outcome.correctness.lostMessages);
+                            currentOutcome.correctness.lostMessages);
                 }
             }
 
@@ -717,6 +754,7 @@ public class CorrectnessEngine extends BaseEngine {
 
     @Override
     public void close() throws Exception {
+        consumerRestartController.closeWindow();
         try {
             worker.stopAll();
             worker.awaitStopComplete(java.time.Duration.ofMinutes(5));

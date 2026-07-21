@@ -62,12 +62,12 @@ enum Commands {
     /// request to the coordinator to change the in-progress test point.
     /// Modify accepts:
     ///   --terminate                end the current test point early
+    ///   --skip-phase               end ramp-up or warm-up early
     ///   --discard-stats            wipe accumulated stats (test-phase only)
     ///   --run-for-minutes <N>      reset remaining test duration
-    ///   --<workloadField> <value>  override any workload field, e.g.
-    ///                              --producerRate 1000, --producersPerTopic 5
-    ///   --kafkaConfig.<path> <v>   override any Kafka config setting, e.g.
-    ///                              --kafkaConfig.producerConfig.batch.size 65536
+    ///   --restart-consumers <N>    restart N random consumers
+    ///   --restart-producers <N>    restart N random producers
+    ///   --set <key>=<value> ...    override workload or kafkaConfig fields
     /// In modify mode -k and -w are ignored.
     Run {
         /// Environment name (e.g. local, aws)
@@ -249,13 +249,13 @@ enum Commands {
         results_dir: Option<String>,
     },
 
-    /// Compare run result files side-by-side
+    /// Compare run or correctness result files side-by-side
     Compare {
         /// Labeled result files: LABEL=FILE (at least 2 required unless --directory is used)
         #[arg(num_args = 0.., value_name = "LABEL=FILE")]
         files: Vec<String>,
 
-        /// Directory containing per-run subdirectories; labels are read from metadata.label
+        /// Directory containing result files; labels are read from result metadata
         #[arg(short = 'd', long = "directory")]
         directory: Option<String>,
 
@@ -398,10 +398,10 @@ enum Commands {
 
 fn main() {
     // Intercept `dimster run <env> --modify ...` BEFORE clap runs. The
-    // modify path accepts arbitrary `--<workloadField> <value>` and
-    // `--kafkaConfig.<dotted.path> <value>` flags that clap-derive can't
-    // express statically. If the intercept handles it, we exit; otherwise
-    // we fall through to normal clap parsing.
+    // modify path has its own `--set key=value ...` and mutually-exclusive
+    // action grammar, which is clearer to validate as one request than as
+    // fields on the normal run command. If the intercept handles it, we exit;
+    // otherwise we fall through to normal clap parsing.
     let raw_args: Vec<String> = std::env::args().collect();
     if let Some(result) = commands::run::try_handle_modify(&raw_args) {
         if let Err(e) = result {

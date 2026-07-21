@@ -2,6 +2,9 @@ package dev.dimster.worker.topology;
 
 import java.util.List;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+
 import org.apache.kafka.common.TopicPartition;
 
 /**
@@ -31,6 +34,12 @@ public record VirtualConsumer(
         String topic,
         String consumerGroup,
         int consumerIdx,
+        // TopicPartition exposes topic() and partition() rather than JavaBean
+        // getters, so Jackson 2.13 cannot discover a portable wire shape by
+        // itself. Keep the codec on this boundary model so every mapper used
+        // by the coordinator, worker, and topology recorder agrees.
+        @JsonSerialize(contentUsing = TopicPartitionJson.Serializer.class)
+        @JsonDeserialize(contentUsing = TopicPartitionJson.Deserializer.class)
         List<TopicPartition> staticPartitions) {
 
     public VirtualConsumer {

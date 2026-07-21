@@ -22,6 +22,13 @@ public class CorrectnessConfig {
     public int sampleRateMillis = 10000;
     public int logDuplicateCount = 100;
 
+    /**
+     * Seed used to select consumers for live restart actions. The engine
+     * resets the random sequence for every test point so equivalent protocol
+     * cases receive equivalent consumer-ordinal selections.
+     */
+    public long consumerRestartSeed = 0;
+
     /** Target backlog size in GB for DRAIN mode. When > 0, overrides testDurationMinutes
      *  for the backlog build phase — producers run until this size is reached instead of
      *  for a fixed duration. Supports fractions, e.g. 0.05 = 50MB.

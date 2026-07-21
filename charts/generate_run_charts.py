@@ -1157,7 +1157,7 @@ def build_sidebar_html(scenarios, has_avail, chart_sections, mode="main", siblin
 
 
 def strip_heavy_data(data):
-    """Return a copy with performance results and availability time series removed."""
+    """Return a copy with high-volume result and diagnostic arrays removed."""
     stripped = {}
     for key, value in data.items():
         if key == "scenarioResults":
@@ -1168,7 +1168,21 @@ def strip_heavy_data(data):
                 for test in scenario.get("tests", []):
                     stripped_test = {}
                     for tk, tv in test.items():
-                        if tk == "results":
+                        if tk in ("results", "performance"):
+                            continue
+                        if tk == "correctness":
+                            stripped_test[tk] = {
+                                k: v
+                                for k, v in tv.items()
+                                if k not in (
+                                    "violations",
+                                    "lostMessageRanges",
+                                    "lostMessagesOverTime",
+                                    "duplicateCountOverTime",
+                                    "outOfOrderCountOverTime",
+                                    "crcFailureCountOverTime",
+                                )
+                            }
                             continue
                         if tk == "availability":
                             stripped_avail = dict(tv)

@@ -461,6 +461,7 @@ Verifies message delivery correctness. Each producer is pinned to a specific par
 | `detectOutOfOrder` | boolean | `true` | Enable out-of-order message detection. |
 | `enableCrc` | boolean | `false` | Enable CRC verification on message payloads to detect corruption. |
 | `staticConsumerAssignment` | boolean | `true` | Use static partition assignment for consumers (each consumer is pinned to a fixed set of partitions) rather than relying on the consumer group protocol. Removes rebalance noise from correctness measurements. |
+| `consumerRestartSeed` | integer | `0` | Seed used by correctness live consumer restarts. The random sequence resets for each test point so equivalent protocol cases select equivalent consumer ordinals. |
 | `sampleRateMillis` | integer | `10000` | Stats sampling interval in milliseconds. |
 | `logDuplicateCount` | integer | `100` | Number of duplicate messages to log before suppressing further output. |
 | `failOnLoss` | boolean | `true` | Fail the test if message loss is detected. |

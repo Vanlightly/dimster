@@ -502,6 +502,9 @@ public class RemoteWorkerClient implements Worker {
             var last = collapsed.getLast();
             if (last.type.equals(v.type) && last.producerId == v.producerId
                     && last.topic.equals(v.topic) && last.partition == v.partition
+                    // Do not erase temporal information while coalescing
+                    // worker results for correctness event timelines.
+                    && last.timestampMs == v.timestampMs
                     && last.tryExtend(v.fromSequence, v.highSequence)) {
                 continue;
             }

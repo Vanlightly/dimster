@@ -14,7 +14,32 @@ non-breaking changes only.
 
 ### Added
 
+- Live modification can restart a random subset of producers with
+  `--restart-producers <N>`.
+- Correctness `CONCURRENT` tests can restart dynamically assigned consumers
+  with deterministic per-test-point selection via `consumerRestartSeed`.
+- Correctness results record cumulative loss, duplicate, out-of-order, and CRC
+  counter arrays at the configured sample interval. Correctness charts and
+  `dimster compare --directory` render complete duplicate, out-of-order, and
+  CRC time series alongside aggregate violation bars. Message loss remains a
+  final aggregate because intermediate missing-message counts represent lag.
+
 ### Changed
+
+- `--restart-consumers <N>` now selects exactly N consumers uniformly from the
+  full topology instead of filtering by per-group consumer index. Random
+  producer and consumer selections are recorded in coordinator logs and result
+  JSON.
+- Correctness consumer restart attempts are recorded in each test outcome, and
+  a failed worker dispatch invalidates that outcome.
+
+### Fixed
+
+- Correctness workloads using static consumer assignment now serialize their
+  topic-partition topology correctly when dispatching consumers to remote
+  workers and when writing topology result files.
+- Correctness violation entries retain their detection timestamps so future
+  comparison timelines preserve temporal resolution.
 
 ## [0.1.0]
 

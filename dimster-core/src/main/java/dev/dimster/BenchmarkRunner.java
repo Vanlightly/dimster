@@ -29,6 +29,7 @@ import dev.dimster.engines.explore.ExploreWorkload;
 import dev.dimster.engines.run.RunResult;
 import dev.dimster.engines.run.Workload;
 import dev.dimster.engines.run.WorkloadEngine;
+import dev.dimster.coordinator.ModificationTarget;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.utils.StopRequestedException;
 import dev.dimster.worker.Worker;
@@ -69,13 +70,11 @@ public class BenchmarkRunner {
     private final Map<String, Object> extraDimensions;
     private final Checkpoint checkpoint;
 
-    // Optional callback to publish/clear the currently-running WorkloadEngine
-    // so the coordinator's /modify endpoint can find it. Only the `run` mode
-    // dispatch invokes it (with the engine on entry, null in finally) — all
-    // other modes leave it unpublished, which is what makes /modify reject
-    // for explore/correctness/drain-backlog runs. Null when the runner is
-    // constructed without a coordinator (tests, embedded use).
-    private final Consumer<WorkloadEngine> activeEngineSink;
+    // Optional callback to publish/clear the currently-running modification
+    // target so the coordinator's /modify endpoint can find it. Run and
+    // correctness modes publish their engines; explore and drain-backlog stay
+    // unpublished. Null when constructed without a coordinator.
+    private final Consumer<ModificationTarget> activeEngineSink;
 
     /**
      * A callback that engines call after each test point to persist progress.
@@ -109,7 +108,7 @@ public class BenchmarkRunner {
                            AtomicBoolean stopRequested, String system, String environment,
                            String hardware, Map<String, Object> userMetadata,
                            Map<String, Object> extraDimensions, Checkpoint checkpoint,
-                           Consumer<WorkloadEngine> activeEngineSink) throws Exception {
+                           Consumer<ModificationTarget> activeEngineSink) throws Exception {
         this.mode = mode;
         this.worker = worker;
         this.topologyPlanner = topologyPlanner;
@@ -398,6 +397,12 @@ public class BenchmarkRunner {
 
             engine = new CorrectnessEngine(correctnessWorkload, worker, topologyPlanner, fileKafkaConfig, stopRequested);
             engine.setTopologyRecorder(makeTopologyRecorder(workloadName));
+            // Correctness publishes for the whole engine run. Its internal
+            // controller accepts requests only during the measured CONCURRENT
+            // phase and supplies precise rejection reasons at other times.
+            if (activeEngineSink != null) {
+                activeEngineSink.accept(engine);
+            }
             log.info("=============== CORRECTNESS : {} ===============", correctnessWorkload.name);
 
             CorrectnessResult result = engine.run(startTestPoint, partialResult, callback);
@@ -417,6 +422,9 @@ public class BenchmarkRunner {
             jsonWriter.writeValue(resultFile, result);
             deletePartialResult(partialFileName);
         } finally {
+            if (activeEngineSink != null) {
+                activeEngineSink.accept(null);
+            }
             if (engine != null) {
                 try { engine.close(); } catch (Exception e) {}
             }

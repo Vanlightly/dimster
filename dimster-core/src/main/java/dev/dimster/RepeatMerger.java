@@ -172,7 +172,9 @@ public class RepeatMerger {
             m.correctness.duplicateCount = outcomes.stream().mapToLong(o -> o.correctness.duplicateCount).sum();
             m.correctness.outOfOrderCount = outcomes.stream().mapToLong(o -> o.correctness.outOfOrderCount).sum();
             m.correctness.crcFailureCount = outcomes.stream().mapToLong(o -> o.correctness.crcFailureCount).sum();
-            // lostMessageRanges and violations omitted from merged result
+            // Per-sample correctness arrays, lostMessageRanges, and violations
+            // are omitted for the same reason performance time series are:
+            // samples from separate runs do not share a wall-clock timeline.
 
             merged.tests.add(m);
         }

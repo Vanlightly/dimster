@@ -103,7 +103,8 @@ dimster run <env> -w <workload> [options]
 | `--skip-phase` | No | (with `--modify`) End the current ramp-up or warm-up phase and proceed straight to the next phase without affecting the test phase. Rejected during test phase (use `--terminate` instead). Must be sent alone. Only action flag accepted during ramp-up. |
 | `--discard-stats` | No | (with `--modify`) Wipe per-period stats and cumulative histograms accumulated so far in the current test phase. Effectively converts the elapsed test phase into additional warmup. Test phase only and cannot be combined with field overrides. Often paired with `--run-for-minutes`. |
 | `--run-for-minutes <N>` | No | (with `--modify`) Reset the test phase remaining duration to N minutes from the moment the engine processes the request. Stands alone (extends the current test phase) or pairs with `--discard-stats` (wipes stats AND gives a fresh N-minute window). Test phase only. Must be > 0. |
-| `--restart-consumers <N>` | No | (with `--modify`) Restart N consumers (or all consumers if N >= total count) without changing the total consumer count. Consumers are selected by index (0..N-1). Test phase only. Must be sent alone. |
+| `--restart-consumers <N>` | No | (with `--modify`) Restart N consumers selected uniformly without replacement from the complete topology, or all consumers if N is at least the total count. In correctness mode, selection uses `consumerRestartSeed` and is accepted only during measured `CONCURRENT` work with dynamic assignment. Must be sent alone. |
+| `--restart-producers <N>` | No | (with `--modify`) Restart N producers selected uniformly without replacement from the complete topology, or all producers if N is at least the total count. Run-mode test phase only. Must be sent alone. |
 
 The CLI checks Kafka and coordinator readiness, discovers worker pods, injects `bootstrap.servers` into configs, sends the run request to the coordinator, and streams coordinator logs until the benchmark completes. Results are automatically copied from the coordinator PVC to the local results directory, along with component logs and dashboard snapshots.
 
@@ -243,7 +244,8 @@ Runs `charts/generate_charts.py` against the results directory. Requires Python 
 
 ### compare
 
-Generate side-by-side comparison charts from two or more `run` result JSON files.
+Generate side-by-side comparison charts from two or more compatible `run` or
+`correctness` result JSON files.
 
 You can specify a directory (it will recursively search for result JSON files), or pass label=result-file-path.
 
@@ -257,12 +259,27 @@ dimster compare <LABEL=FILE> <LABEL=FILE> [LABEL=FILE ...] [-o <output>]
 | `--directory` | The parent directory of a set of result directories to recursively search |
 | `-o`, `--output <dir>` | Output directory for the generated charts. Defaults to the directory of the first input file. |
 
-Runs `charts/generate_compare_charts.py`. Requires Python with dependencies from `charts/requirements.txt`. Each input file must exist; missing files fail before the script runs.
+Runs `charts/generate_compare_charts.py`. Requires Python with dependencies
+from `charts/requirements.txt`. Each input file must exist; missing files fail
+before the script runs.
+
+For correctness results, the comparison contains aggregate bars for message
+loss, duplicates, out-of-order records, and CRC failures. It also contains
+cumulative sampled timelines for duplicates, out-of-order records, and CRC
+failures. Message loss is shown only as a final aggregate because intermediate
+missing-message counts primarily represent consumer lag. Older results fall
+back to the timestamped detailed violation list, which may be capped.
 
 Example:
 
 ```bash
 dimster compare baseline=results/2026-04-15/run.json tuned=results/2026-04-20/run.json -o results/compare/
+```
+
+Compare all compatible correctness results found recursively under a directory:
+
+```bash
+dimster compare --directory results/correctness-protocols
 ```
 
 ---

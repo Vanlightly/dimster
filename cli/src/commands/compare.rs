@@ -167,7 +167,7 @@ fn entries_from_directory(directory: &Path) -> Result<Vec<CompareEntry>> {
         }
         if let Some(dir) = typed_json_dirs.first() {
             bail!(
-                "No typed run result JSON with fileType='dimster-result', mode='run', and metadata.label found in {}",
+                "No supported result JSON with fileType='dimster-result' and mode='run' or mode='correctness' found in {}",
                 dir.display()
             );
         }
@@ -227,7 +227,7 @@ fn entry_from_json_files(directory: &Path, files: Vec<PathBuf>) -> Result<RunDir
         if json_file_has_type(&file)? {
             typed_file_count += 1;
         }
-        if let Some(label) = run_result_label(&file)? {
+        if let Some(label) = compare_result_label(&file)? {
             candidates.push(CompareEntry { label, file });
         }
     }
@@ -273,32 +273,56 @@ fn direct_json_files(directory: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn run_result_label(file: &Path) -> Result<Option<String>> {
+/// Return the comparison label for a supported result file.
+///
+/// Run comparisons intentionally require the explicit experiment label used
+/// by their existing chart layout. Correctness campaigns commonly vary the
+/// workload name instead, so they fall back to metadata.name when no label is
+/// present. Helper JSON files and unsupported result modes remain invisible to
+/// recursive directory discovery.
+fn compare_result_label(file: &Path) -> Result<Option<String>> {
     let content = std::fs::read_to_string(file)
         .with_context(|| format!("Failed to read result JSON: {}", file.display()))?;
     let value: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse result JSON: {}", file.display()))?;
 
     if value.get("fileType").and_then(|v| v.as_str()) != Some("dimster-result")
-        || value.get("mode").and_then(|v| v.as_str()) != Some("run")
         || !value.get("scenarioResults").is_some_and(|v| v.is_array())
     {
         return Ok(None);
     }
 
-    let label = value
-        .get("metadata")
-        .and_then(|v| v.get("label"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Run result JSON is missing string metadata.label: {}",
-                file.display()
-            )
-        })?;
+    let mode = value.get("mode").and_then(|v| v.as_str());
+    let metadata = value.get("metadata");
+    let label = match mode {
+        Some("run") => metadata
+            .and_then(|v| v.get("label"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Run result JSON is missing string metadata.label: {}",
+                    file.display()
+                )
+            })?,
+        Some("correctness") => metadata
+            .and_then(|v| v.get("label"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                metadata
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Correctness result JSON is missing string metadata.label or metadata.name: {}",
+                    file.display()
+                )
+            })?,
+        _ => return Ok(None),
+    };
     if label.is_empty() {
         bail!(
-            "Run result JSON has empty metadata.label: {}",
+            "Result JSON has an empty comparison label in metadata: {}",
             file.display()
         );
     }
@@ -338,6 +362,30 @@ mod tests {
           "label": "default",
           "workloadConfig": {{}},
           "results": {{}}
+        }}
+      ]
+    }}
+  ]
+}}"#
+        )
+    }
+
+    fn correctness_result(name: &str) -> String {
+        format!(
+            r#"{{
+  "fileType": "dimster-result",
+  "mode": "correctness",
+  "metadata": {{
+    "name": "{name}"
+  }},
+  "scenarioResults": [
+    {{
+      "name": "default",
+      "tests": [
+        {{
+          "label": "default",
+          "workloadConfig": {{"messageDistributor": "PINNED_PARTITIONS"}},
+          "correctness": {{}}
         }}
       ]
     }}
@@ -392,6 +440,24 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].label, "tls-none");
         assert_eq!(entries[1].label, "tls-client");
+    }
+
+    #[test]
+    fn entries_from_directory_accepts_correctness_results_using_workload_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("2026-07-21-11-33-29");
+        let second = tmp.path().join("2026-07-21-11-51-05");
+        write(&first.join("result.json"), &correctness_result("consumer"));
+        write(
+            &second.join("result.json"),
+            &correctness_result("cooperative-sticky"),
+        );
+
+        let entries = entries_from_directory(tmp.path()).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].label, "consumer");
+        assert_eq!(entries[1].label, "cooperative-sticky");
     }
 
     #[test]
@@ -457,6 +523,37 @@ mod tests {
         assert_eq!(csv.lines().count(), 3);
         assert!(csv.contains("tls-none"));
         assert!(csv.contains("tls-all"));
+    }
+
+    #[test]
+    fn write_combined_csv_supports_correctness_results() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first.json");
+        let second = tmp.path().join("second.json");
+        write(&first, &correctness_result("consumer"));
+        write(&second, &correctness_result("classic"));
+
+        let output_dir = tmp.path().join("out");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let entries = vec![
+            CompareEntry {
+                label: "consumer".to_string(),
+                file: first,
+            },
+            CompareEntry {
+                label: "classic".to_string(),
+                file: second,
+            },
+        ];
+
+        let csv_path = write_combined_csv(&entries, &output_dir.to_string_lossy()).unwrap();
+        let csv = std::fs::read_to_string(csv_path).unwrap();
+
+        assert!(csv.contains("lost_messages,duplicate_count,out_of_order_count"));
+        assert_eq!(csv.lines().count(), 3);
+        assert!(csv.contains("consumer"));
+        assert!(csv.contains("classic"));
+        assert!(csv.contains("PINNED_PARTITIONS"));
     }
 
     #[test]

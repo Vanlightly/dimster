@@ -68,7 +68,9 @@ public class RunResult {
      * surrounding scenario / metadata timestamps.
      */
     @JsonPropertyOrder({"timestamp", "workloadOverrides", "kafkaConfigOverrides",
-            "terminate", "skipPhase", "discardStats", "runForMinutes", "actions"})
+            "terminate", "skipPhase", "discardStats", "runForMinutes",
+            "restartConsumersCount", "restartedConsumerNames",
+            "restartProducersCount", "restartedProducerNames", "actions"})
     public static class Modification {
         public String timestamp;
         // The override maps echo the user's request — e.g. producerRate,
@@ -90,6 +92,15 @@ public class RunResult {
         public Integer runForMinutes;
         @JsonInclude(JsonInclude.Include.NON_NULL)
         public Integer restartConsumersCount;
+        // Random restart actions record stable topology names so a disturbance
+        // can be correlated with client and worker logs after the run. Empty
+        // lists (including an explicit count of zero) stay out of the JSON.
+        @JsonInclude(JsonInclude.Include.NON_EMPTY)
+        public List<String> restartedConsumerNames;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public Integer restartProducersCount;
+        @JsonInclude(JsonInclude.Include.NON_EMPTY)
+        public List<String> restartedProducerNames;
         // Human-readable description of each worker action the diff
         // applier issued, in the order it issued them. E.g.
         //   "adjust-publish-rate to 5000.0"

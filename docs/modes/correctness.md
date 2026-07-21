@@ -41,6 +41,7 @@ For each topic, its set of producers and consumers are scheduled on the same wor
 | `warmupDurationMinutes` | 1          | Warmup (stats discarded)                                                                                                                                                                                           |
 | `gracePeriodSeconds`    | 30         | Wait after production stops for in-flight consumption                                                                                                                                                              |
 | `staticConsumerAssignment` | true       | Uses static consumer assignment to avoid duplicates during assignment (only enabled for classic consumers). When false (or share groups) normal assignment is used (according to the Kafka version).               |                                                |
+| `consumerRestartSeed`    | 0          | Seed for deterministic `--restart-consumers` selection. The sequence resets for every test point.                                                                                                                  |
 | `enableCrc`             | false      | Enable CRC payload integrity checks                                                                                                                                                                                |
 | `sampleRateMillis`      | 10000      | Stats sampling interval                                                                                                                                                                                            |
 | `logDuplicateCount`     | 100        | Max duplicate events to log in detail                                                                                                                                                                              |
@@ -50,6 +51,25 @@ For each topic, its set of producers and consumers are scheduled on the same wor
 | `failOnDuplicates`      | false      | Whether duplicates causes the test to fail                                                                                                                                                                         |
 | `failOnOutOfOrder`      | true       | Whether out-of-order message receipt causes the test to fail                                                                                                                                                       |
 | `failOnCrc`      | true       | Whether CRC failures causes the test to fail                                                                                                                                                                       |
+
+## Restarting consumers
+
+During the measured phase of a `CONCURRENT` correctness test, a separate
+terminal can restart a deterministic subset of consumers:
+
+```bash
+./dimster run <env> --modify --restart-consumers 10
+```
+
+Set `staticConsumerAssignment: false` for classic consumer groups. The default
+manual assignment bypasses group coordination and is rejected by the live
+restart action because it would not test a rebalance. Share groups always use
+dynamic assignment and are eligible regardless of that setting.
+
+The action is rejected during setup, stabilization, grace periods, between
+test points, and in `DRAIN` mode. The selected names and action result are
+stored in the test outcome's `consumerRestarts` array. A worker restart failure
+also marks the correctness outcome as failed.
 
 ## Workload Example
 
@@ -86,7 +106,14 @@ The output includes:
 - **Received count** -- Total messages consumed.
 - **Duplicates found** -- Number of duplicate deliveries detected.
 - **Out-of-order count** -- Number of ordering violations detected.
-- **Loss count** -- Percentage of produced messages that were never consumed.
+- **Loss count** -- Number of produced messages that were never consumed.
+- **Violation time series** -- `lostMessagesOverTime`,
+  `duplicateCountOverTime`, `outOfOrderCountOverTime`, and
+  `crcFailureCountOverTime` contain cumulative counter snapshots taken every
+  `sampleRateMillis`. These arrays are complete even when detailed violation
+  records are capped. Loss snapshots are provisional while consumers can still
+  catch up; the final `lostMessages` scalar is authoritative after the
+  grace/drain phase.
 
 ## Scenarios
 

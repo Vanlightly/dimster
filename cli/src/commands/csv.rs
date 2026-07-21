@@ -167,7 +167,7 @@ struct RunTestEntry {
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct RunWorkloadConfig {
-    #[serde(default)]
+    #[serde(default, alias = "messageDistributor")]
     key_distributor: Option<String>,
     #[serde(default)]
     key_distributor_skew: f64,
@@ -258,6 +258,70 @@ struct RunPerformanceResults {
     aggregated_end_to_end_latency_p9999: f64,
     #[serde(default)]
     aggregated_end_to_end_latency_max: f64,
+}
+
+// --- Correctness result types ---
+
+/**
+ * Minimal correctness projection for comparison CSV output.
+ *
+ * Aggregate counters are authoritative. Individual violation records are
+ * retained only to report how much of each total is represented in the capped
+ * event list used by the comparison timelines.
+ */
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CorrectnessResult {
+    metadata: RunMetadata,
+    scenario_results: Vec<CorrectnessScenarioResult>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CorrectnessScenarioResult {
+    name: String,
+    tests: Vec<CorrectnessTestEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CorrectnessTestEntry {
+    label: Option<String>,
+    workload_config: RunWorkloadConfig,
+    correctness: CorrectnessData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CorrectnessData {
+    #[serde(default)]
+    passed: bool,
+    #[serde(default)]
+    total_sent: i64,
+    #[serde(default)]
+    total_received: i64,
+    #[serde(default)]
+    lost_messages: i64,
+    #[serde(default)]
+    duplicate_count: i64,
+    #[serde(default)]
+    out_of_order_count: i64,
+    #[serde(default)]
+    crc_failure_count: i64,
+    #[serde(default)]
+    violations: Vec<CorrectnessViolation>,
+}
+
+#[derive(Deserialize)]
+struct CorrectnessViolation {
+    #[serde(rename = "type")]
+    violation_type: String,
+    #[serde(default = "default_violation_count")]
+    count: i64,
+}
+
+fn default_violation_count() -> i64 {
+    1
 }
 
 // --- Drain-backlog result types ---
@@ -384,6 +448,13 @@ publish_delay_p99,publish_delay_p999,publish_delay_p9999,publish_delay_max,\
 e2e_latency_avg,e2e_latency_p50,e2e_latency_p75,e2e_latency_p95,\
 e2e_latency_p99,e2e_latency_p999,e2e_latency_p9999,e2e_latency_max";
 
+const CORRECTNESS_HEADER: &str = "workload,kafka_config,environment,system,\
+begin_time,end_time,scenario,label,\
+topics,partitions,producers_per_topic,consumer_groups_per_topic,consumers_per_group,\
+message_size,producer_rate,key_distributor,consumer_type,\
+passed,total_sent,total_received,lost_messages,duplicate_count,out_of_order_count,crc_failure_count,\
+recorded_duplicate_count,recorded_out_of_order_count,recorded_crc_failure_count";
+
 const DRAIN_BACKLOG_HEADER: &str = "workload,kafka_config,environment,system,hardware,\
 begin_time,end_time,scenario,label,\
 topics,partitions,producers_per_topic,consumer_groups_per_topic,consumers_per_group,\
@@ -462,6 +533,17 @@ pub fn convert_file(file: &Path) -> Result<Option<CsvDocument>> {
 }
 
 fn convert_value(raw: &serde_json::Value, file: &Path) -> Result<Option<CsvDocument>> {
+    // Legacy result files have no fileType. When a type is present, require the
+    // canonical result type so directory conversion does not deserialize run
+    // requests or topology snapshots merely because they share a mode value.
+    if raw
+        .get("fileType")
+        .and_then(|value| value.as_str())
+        .is_some_and(|file_type| file_type != "dimster-result")
+    {
+        return Ok(None);
+    }
+
     let annotation_columns = annotation_columns(raw);
     let mode = raw.get("mode").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -479,6 +561,13 @@ fn convert_value(raw: &serde_json::Value, file: &Path) -> Result<Option<CsvDocum
             let mut rows = Vec::new();
             convert_run(&result, &mut rows);
             (RUN_HEADER, rows)
+        }
+        "correctness" => {
+            let result: CorrectnessResult = serde_json::from_value(raw.clone())
+                .map_err(|e| anyhow::anyhow!("Cannot deserialize {}: {}", file.display(), e))?;
+            let mut rows = Vec::new();
+            convert_correctness(&result, &mut rows);
+            (CORRECTNESS_HEADER, rows)
         }
         "drain-backlog" => {
             let result: DrainBacklogResult = serde_json::from_value(raw.clone())
@@ -694,6 +783,61 @@ fn convert_run(result: &RunResult, rows: &mut Vec<String>) {
     }
 }
 
+// --- Correctness conversion ---
+
+fn convert_correctness(result: &CorrectnessResult, rows: &mut Vec<String>) {
+    let m = &result.metadata;
+
+    for scenario in &result.scenario_results {
+        for test in &scenario.tests {
+            let wc = &test.workload_config;
+            let c = &test.correctness;
+            let recorded_count = |violation_type: &str| -> i64 {
+                c.violations
+                    .iter()
+                    .filter(|v| v.violation_type == violation_type)
+                    .map(|v| v.count)
+                    .sum()
+            };
+
+            rows.push(format!(
+                "{},{},{},{},{},{},{},{},\
+                 {},{},{},{},{},\
+                 {},{},{},{},\
+                 {},{},{},{},{},{},{},\
+                 {},{},{}",
+                csv_escape(m.name.as_deref().unwrap_or("")),
+                csv_escape(m.kafka_config_name.as_deref().unwrap_or("")),
+                csv_escape(m.environment.as_deref().unwrap_or("")),
+                csv_escape(m.system.as_deref().unwrap_or("")),
+                csv_escape(m.begin_time.as_deref().unwrap_or("")),
+                csv_escape(m.end_time.as_deref().unwrap_or("")),
+                csv_escape(&scenario.name),
+                csv_escape(test.label.as_deref().unwrap_or("")),
+                wc.topics,
+                wc.partitions_per_topic,
+                wc.producers_per_topic,
+                wc.consumer_groups_per_topic,
+                wc.consumers_per_group,
+                wc.message_size,
+                wc.producer_rate,
+                csv_escape(wc.key_distributor.as_deref().unwrap_or("")),
+                csv_escape(wc.consumer_type.as_deref().unwrap_or("")),
+                c.passed,
+                c.total_sent,
+                c.total_received,
+                c.lost_messages,
+                c.duplicate_count,
+                c.out_of_order_count,
+                c.crc_failure_count,
+                recorded_count("DUPLICATE"),
+                recorded_count("OUT_OF_ORDER"),
+                recorded_count("CRC_FAILURE"),
+            ));
+        }
+    }
+}
+
 // --- Drain-backlog conversion ---
 
 fn convert_drain_backlog(result: &DrainBacklogResult, rows: &mut Vec<String>) {
@@ -778,5 +922,22 @@ fn csv_escape(s: &str) -> String {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_value_skips_typed_helper_files() {
+        let run_request = serde_json::json!({
+            "fileType": "dimster-run-request",
+            "mode": "correctness"
+        });
+
+        let converted = convert_value(&run_request, Path::new("run-request.json")).unwrap();
+
+        assert!(converted.is_none());
     }
 }

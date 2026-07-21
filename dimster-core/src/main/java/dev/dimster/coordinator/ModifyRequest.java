@@ -5,12 +5,12 @@ import java.util.Map;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 /**
- * Side-channel modification request for a running `run` mode benchmark.
+ * Side-channel modification request for a running benchmark.
  *
  * The CLI's `dimster run ... --modify ...` flow translates each `--<flag>
  * <value>` into one of:
- *  - an action flag (terminate / discardStats / runForMinutes) — engine-
- *    internal flips that don't change the workload itself,
+ *  - an action flag (terminate / discardStats / runForMinutes / restart
+ *    clients) — an explicit operation that does not change workload fields,
  *  - a workload override (`--<workloadField> <value>`) — a key/value pair
  *    in {@link #workloadOverrides()},
  *  - a Kafka config override (`--kafkaConfig.<dotted.path> <value>`) — a
@@ -20,10 +20,9 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  *    scalar (replicationFactor); the rest is the leaf key (which itself may
  *    contain dots — Kafka config keys are dotted strings).
  *
- * The coordinator routes the request through {@link
- * dev.dimster.engines.run.TestPointMutator} which constructs a new TestPoint
- * with the overrides applied, re-plans the topology, and executes a
- * minimally-disruptive set of worker actions.
+ * The coordinator delegates this shared wire shape to the active engine.
+ * Run mode supports the generalized fields below; correctness mode exposes
+ * only its explicitly documented consumer-restart action.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ModifyRequest(
@@ -47,11 +46,14 @@ public record ModifyRequest(
         // `terminate` to end the test point early. Must be sent alone.
         // The only action accepted while ramp-up is in progress.
         Boolean skipPhase,
-        // Restart exactly N consumers (if N < total) or all consumers
-        // (if N >= total) without changing the total consumer count.
-        // Action flag; must be sent alone (no other fields set).
-        // Consumers are selected by index order (0..N-1). Test-phase only.
+        // Restart exactly N randomly selected consumers (if N < total) or
+        // all consumers (if N >= total) without changing topology. Action
+        // flag; must be sent alone. Test-phase only.
         Integer restartConsumersCount,
+        // Producer counterpart to restartConsumersCount. Selection is made
+        // from the coordinator's complete producer topology, then existing
+        // worker routing sends each selected producer to its owning worker.
+        Integer restartProducersCount,
 
         // ---- generalized workload field overrides ----
         // Keys are TestPoint field names in camelCase: producerRate,

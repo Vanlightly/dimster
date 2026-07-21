@@ -63,6 +63,33 @@ struct RunRequest {
     results_subdir: Option<String>,
 }
 
+/// Wire payload posted to the coordinator's `/modify` endpoint.
+///
+/// Keeping this type at module scope lets the argument parser be tested without
+/// entering the Kubernetes transport path. Every optional field is omitted
+/// when unused so older coordinators continue to receive the compact request
+/// shape used by existing modify commands.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModifyRequest {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    terminate: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    discard_stats: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    skip_phase: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_for_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_consumers_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_producers_count: Option<i64>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    workload_overrides: HashMap<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    kafka_config_overrides: HashMap<String, serde_json::Value>,
+}
+
 pub struct RunArgs {
     pub mode: String,
     pub kafka_config: Option<String>,
@@ -473,11 +500,10 @@ pub fn run(
 /// `Some(result)` if the argv is a modify command (and we've handled it
 /// fully); `None` if it isn't (and main() should fall through to clap).
 ///
-/// Why pre-parse instead of going through clap: the modify path accepts
-/// arbitrary `--<workloadField> <value>` and `--kafkaConfig.<dotted.path>
-/// <value>` flags, which clap-derive can't express statically. We claim
-/// the flag handling for this one command and emit a single typed JSON
-/// request to the coordinator.
+/// Why pre-parse instead of going through clap: the modify path has a custom
+/// `--set key=value ...` grammar and action-combination rules. We claim the
+/// flag handling for this one command and emit a single typed JSON request to
+/// the coordinator.
 pub fn try_handle_modify(args: &[String]) -> Option<Result<()>> {
     // Match `... run <env> ... --modify ...`. The env appears as the first
     // non-flag positional after "run". --modify can sit anywhere after
@@ -518,12 +544,13 @@ pub fn try_handle_modify(args: &[String]) -> Option<Result<()>> {
     Some(execute_modify(env, &args[modify_idx.unwrap() + 1..]))
 }
 
-/// Parse the slice of args after `--modify` into a typed ModifyRequest
-/// JSON and POST it to the coordinator. Three flag categories:
-/// - Action flags: `--terminate`, `--skip-phase`, `--discard-stats`, `--run-for-minutes <N>`
-/// - Kafka config overrides: `--kafkaConfig.<dotted.path> <value>`
-/// - Workload field overrides: `--<workloadField> <value>` (anything else)
-fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
+/// Parse the slice of args after `--modify` into a typed request. `--set`
+/// accepts workload and Kafka config key/value pairs, while named action flags
+/// represent engine operations such as phase changes and client restarts.
+///
+/// Parsing is deliberately transport-free: tests can assert the exact wire
+/// payload and validation behavior without requiring kubectl or a coordinator.
+fn parse_modify_args(modify_args: &[String]) -> Result<ModifyRequest> {
     use serde_json::Value;
 
     let mut terminate = false;
@@ -531,6 +558,7 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
     let mut skip_phase = false;
     let mut run_for_minutes: Option<i64> = None;
     let mut restart_consumers_count: Option<i64> = None;
+    let mut restart_producers_count: Option<i64> = None;
     let mut workload_overrides: HashMap<String, Value> = HashMap::new();
     let mut kafka_overrides: HashMap<String, Value> = HashMap::new();
 
@@ -569,6 +597,19 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
                     bail!("--restart-consumers must be >= 0, got {}", count);
                 }
                 restart_consumers_count = Some(count);
+                continue;
+            }
+            "--restart-producers" => {
+                let v = iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--restart-producers requires a value"))?;
+                let count = v.parse::<i64>().map_err(|_| {
+                    anyhow::anyhow!("--restart-producers value must be an integer, got {}", v)
+                })?;
+                if count < 0 {
+                    bail!("--restart-producers must be >= 0, got {}", count);
+                }
+                restart_producers_count = Some(count);
                 continue;
             }
             "--set" => {
@@ -632,7 +673,7 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         // If we get here, it's an unrecognized flag
         bail!(
             "unrecognized modify flag: {}. Valid action flags: --terminate, --discard-stats, \
-               --skip-phase, --run-for-minutes, --restart-consumers, --set",
+               --skip-phase, --run-for-minutes, --restart-consumers, --restart-producers, --set",
             flag
         );
     }
@@ -646,11 +687,12 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
         && !skip_phase
         && run_for_minutes.is_none()
         && restart_consumers_count.is_none()
+        && restart_producers_count.is_none()
     {
         bail!(
             "--modify requires at least one workload override, --kafkaConfig.* override, \
                or action flag (--terminate / --discard-stats / --run-for-minutes / \
-               --skip-phase / --restart-consumers)"
+               --skip-phase / --restart-consumers / --restart-producers)"
         );
     }
     if terminate
@@ -673,46 +715,43 @@ fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
             bail!("--run-for-minutes must be > 0, got {}", m);
         }
     }
-    if restart_consumers_count.is_some()
-        && (has_field_overrides
+    if restart_consumers_count.is_some() && restart_producers_count.is_some() {
+        bail!("--restart-consumers and --restart-producers must be sent separately");
+    }
+    if restart_consumers_count.is_some() || restart_producers_count.is_some() {
+        let restart_flag = if restart_consumers_count.is_some() {
+            "--restart-consumers"
+        } else {
+            "--restart-producers"
+        };
+        if has_field_overrides
             || discard_stats
             || terminate
             || skip_phase
-            || run_for_minutes.is_some())
-    {
-        bail!("--restart-consumers must be sent alone (no other --modify fields with it)");
+            || run_for_minutes.is_some()
+        {
+            bail!(
+                "{} must be sent alone (no other --modify fields with it)",
+                restart_flag
+            );
+        }
     }
 
-    // Build the ModifyRequest JSON. Note the Java-side record uses
-    // camelCase field names; Jackson with JsonIgnoreProperties tolerates
-    // missing fields so we omit empty maps and unset action flags.
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ModifyRequest {
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        terminate: bool,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        discard_stats: bool,
-        #[serde(skip_serializing_if = "std::ops::Not::not")]
-        skip_phase: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        run_for_minutes: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        restart_consumers_count: Option<i64>,
-        #[serde(skip_serializing_if = "HashMap::is_empty")]
-        workload_overrides: HashMap<String, Value>,
-        #[serde(skip_serializing_if = "HashMap::is_empty")]
-        kafka_config_overrides: HashMap<String, Value>,
-    }
-    let request = ModifyRequest {
+    Ok(ModifyRequest {
         terminate,
         discard_stats,
         skip_phase,
         run_for_minutes,
         restart_consumers_count,
+        restart_producers_count,
         workload_overrides,
         kafka_config_overrides: kafka_overrides,
-    };
+    })
+}
+
+/// Parse and POST one modify request to the active coordinator.
+fn execute_modify(env: String, modify_args: &[String]) -> Result<()> {
+    let request = parse_modify_args(modify_args)?;
     let json = serde_json::to_string(&request)?;
 
     // Discover the coordinator and POST. Same kubectl + curl pattern as
@@ -1333,6 +1372,61 @@ fn coordinator_log_size_standalone(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn modify_args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn parse_restart_consumers_emits_only_consumer_count() {
+        let request = parse_modify_args(&modify_args(&["--restart-consumers", "10"])).unwrap();
+        let json = serde_json::to_value(request).unwrap();
+
+        assert_eq!(json, serde_json::json!({"restartConsumersCount": 10}));
+    }
+
+    #[test]
+    fn parse_restart_producers_emits_only_producer_count() {
+        let request = parse_modify_args(&modify_args(&["--restart-producers", "7"])).unwrap();
+        let json = serde_json::to_value(request).unwrap();
+
+        assert_eq!(json, serde_json::json!({"restartProducersCount": 7}));
+    }
+
+    #[test]
+    fn parse_restart_allows_zero_as_an_explicit_noop() {
+        let request = parse_modify_args(&modify_args(&["--restart-producers", "0"])).unwrap();
+
+        assert_eq!(request.restart_producers_count, Some(0));
+    }
+
+    #[test]
+    fn parse_restart_rejects_missing_invalid_and_negative_counts() {
+        assert!(parse_modify_args(&modify_args(&["--restart-producers"])).is_err());
+        assert!(parse_modify_args(&modify_args(&["--restart-producers", "many"])).is_err());
+        assert!(parse_modify_args(&modify_args(&["--restart-consumers", "-1"])).is_err());
+    }
+
+    #[test]
+    fn parse_restart_actions_must_be_separate() {
+        let both = parse_modify_args(&modify_args(&[
+            "--restart-consumers",
+            "2",
+            "--restart-producers",
+            "3",
+        ]))
+        .unwrap_err();
+        assert!(both.to_string().contains("sent separately"));
+
+        let with_override = parse_modify_args(&modify_args(&[
+            "--restart-producers",
+            "2",
+            "--set",
+            "producerRate=1000",
+        ]))
+        .unwrap_err();
+        assert!(with_override.to_string().contains("must be sent alone"));
+    }
 
     #[test]
     fn log_tail_monitor_does_not_reconnect_for_quiet_stream_without_file_growth() {

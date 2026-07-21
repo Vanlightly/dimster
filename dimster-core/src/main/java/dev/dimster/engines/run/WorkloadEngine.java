@@ -10,6 +10,7 @@ import dev.dimster.ScenarioExpander.TestPoint;
 import dev.dimster.TestResult;
 import dev.dimster.coordinator.ModifyRequest;
 import dev.dimster.coordinator.ModifyResult;
+import dev.dimster.coordinator.ModificationTarget;
 import dev.dimster.kafka.KafkaCluster;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.kafka.KafkaConsumerWrapper;
@@ -37,7 +38,7 @@ import dev.dimster.worker.Worker;
 import dev.dimster.worker.topology.TopologyPlanner;
 import dev.dimster.worker.topology.VirtualTopology;
 
-public class WorkloadEngine extends BaseEngine {
+public class WorkloadEngine extends BaseEngine implements ModificationTarget {
 
     /**
      * Overall run progress context — how far through the entire multi-test run we are.
@@ -483,12 +484,15 @@ public class WorkloadEngine extends BaseEngine {
     /**
      * Apply a side-channel modification to the in-progress test point.
      *
-     * Two distinct kinds of modifications flow through here:
+     * Three distinct kinds of modifications flow through here:
      *  1. Engine-internal action flags (terminate / discardStats /
      *     runForMinutes) — these flip a flag on the engine that
      *     {@link #collectStats} consumes on its next sample tick. They
      *     don't touch the workers.
-     *  2. Workload / Kafka-config field changes (producerRate, batch.size,
+     *  2. Explicit client restart actions — these select concrete producer
+     *     or consumer entries from the current topology and recreate them on
+     *     their owning workers without changing the topology.
+     *  3. Workload / Kafka-config field changes (producerRate, batch.size,
      *     producersPerTopic, ...) — these go through {@link
      *     TestPointMutator} which builds a diff and {@link DiffApplier}
      *     which executes it against the workers. The mutator+applier pair
@@ -525,6 +529,7 @@ public class WorkloadEngine extends BaseEngine {
         boolean discardStats = Boolean.TRUE.equals(req.discardStats());
         Integer runForMinutes = req.runForMinutes();
         Integer restartConsumersCount = req.restartConsumersCount();
+        Integer restartProducersCount = req.restartProducersCount();
         boolean hasWorkloadOverrides = req.workloadOverrides() != null
                 && !req.workloadOverrides().isEmpty();
         boolean hasKafkaConfigOverrides = req.kafkaConfigOverrides() != null
@@ -533,10 +538,10 @@ public class WorkloadEngine extends BaseEngine {
 
         // Cross-kind validation up front.
         if (!hasFieldOverrides && !terminate && !discardStats && !skipPhase && runForMinutes == null
-                && restartConsumersCount == null) {
+                && restartConsumersCount == null && restartProducersCount == null) {
             return ModifyResult.rejected("at least one workload/kafka override or " +
                     "action flag (terminate, discardStats, runForMinutes, skipPhase, " +
-                    "restartConsumersCount) must be supplied");
+                    "restartConsumersCount, restartProducersCount) must be supplied");
         }
         if (terminate && (hasFieldOverrides || discardStats || skipPhase || runForMinutes != null)) {
             return ModifyResult.rejected("terminate must be sent alone " +
@@ -566,17 +571,25 @@ public class WorkloadEngine extends BaseEngine {
             return ModifyResult.rejected("skipPhase has no effect during the test phase; " +
                     "use --terminate to end the current test point early");
         }
-        if (restartConsumersCount != null) {
-            if (restartConsumersCount < 0) {
-                return ModifyResult.rejected("restartConsumersCount must be >= 0, got "
-                        + restartConsumersCount);
+        if (restartConsumersCount != null && restartProducersCount != null) {
+            return ModifyResult.rejected("restartConsumersCount and restartProducersCount " +
+                    "must be sent separately");
+        }
+        Integer restartCount = restartConsumersCount != null
+                ? restartConsumersCount : restartProducersCount;
+        String restartField = restartConsumersCount != null
+                ? "restartConsumersCount" : "restartProducersCount";
+        if (restartCount != null) {
+            if (restartCount < 0) {
+                return ModifyResult.rejected(restartField + " must be >= 0, got "
+                        + restartCount);
             }
             if (hasFieldOverrides || discardStats || terminate || skipPhase || runForMinutes != null) {
-                return ModifyResult.rejected("restartConsumersCount must be sent alone " +
+                return ModifyResult.rejected(restartField + " must be sent alone " +
                         "(no other modify fields)");
             }
             if (!testPhaseActive) {
-                return ModifyResult.rejected("restartConsumersCount is only valid during the test " +
+                return ModifyResult.rejected(restartField + " is only valid during the test " +
                         "phase (warmup is in progress or no test point is running)");
             }
         }
@@ -620,6 +633,17 @@ public class WorkloadEngine extends BaseEngine {
                 return ModifyResult.rejected(e.getMessage());
             }
 
+            // The plan contains concrete topology entries. Capture their
+            // stable names before dispatch so both successful and partially
+            // failed distributed restarts remain auditable.
+            List<String> restartedNames = plan.actions().isEmpty()
+                    ? List.of()
+                    : ((DiffAction.RestartConsumers) plan.actions().get(0))
+                            .consumers().consumers().stream()
+                            .map(dev.dimster.worker.topology.VirtualConsumer::name)
+                            .toList();
+            log.info("MODIFY selected consumers for restart: {}", restartedNames);
+
             DiffApplier.Result applyResult = new DiffApplier(worker).apply(plan);
             logEntry.actions = applyResult.appliedActions().isEmpty()
                     ? null
@@ -631,6 +655,42 @@ public class WorkloadEngine extends BaseEngine {
             summary.append(" restartConsumersCount=").append(countDesc);
 
             logEntry.restartConsumersCount = restartConsumersCount;
+            logEntry.restartedConsumerNames = restartedNames;
+            currentModifications.add(logEntry);
+            log.info(summary.toString());
+            return applyResult.modifyResult();
+        }
+        if (restartProducersCount != null) {
+            TestPointMutator.MutationPlan plan;
+            try {
+                plan = new TestPointMutator(topologyPlanner,
+                        size -> buildPayloads(base, size))
+                        .planProducerRestart(testPoint, plannedTopology, restartProducersCount);
+            } catch (IllegalArgumentException e) {
+                log.warn("MODIFY rejected: {}", e.getMessage());
+                return ModifyResult.rejected(e.getMessage());
+            }
+
+            List<String> restartedNames = plan.actions().isEmpty()
+                    ? List.of()
+                    : ((DiffAction.RestartProducers) plan.actions().get(0))
+                            .producers().stream()
+                            .map(dev.dimster.worker.topology.VirtualProducer::name)
+                            .toList();
+            log.info("MODIFY selected producers for restart: {}", restartedNames);
+
+            DiffApplier.Result applyResult = new DiffApplier(worker).apply(plan);
+            logEntry.actions = applyResult.appliedActions().isEmpty()
+                    ? null
+                    : new java.util.ArrayList<>(applyResult.appliedActions());
+
+            String countDesc = restartProducersCount >= plannedTopology.producers().size()
+                    ? "all " + plannedTopology.producers().size()
+                    : String.valueOf(restartProducersCount);
+            summary.append(" restartProducersCount=").append(countDesc);
+
+            logEntry.restartProducersCount = restartProducersCount;
+            logEntry.restartedProducerNames = restartedNames;
             currentModifications.add(logEntry);
             log.info(summary.toString());
             return applyResult.modifyResult();

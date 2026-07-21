@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate HTML comparison charts from two or more Dimster run result JSON files.
+Generate HTML comparison charts from two or more Dimster result JSON files.
 
 Usage:
     python3 generate_compare_charts.py \
@@ -8,12 +8,16 @@ Usage:
         --output <dir>
 
 Validates that all files have matching scenario names and test labels,
-then generates a single HTML page with overlaid data series from all runs.
+then generates a single HTML page with comparison charts. Run results use
+overlaid performance series; correctness results use aggregate violation bars
+and recorded-event timelines.
 """
 
 import argparse
 import colorsys
+from datetime import datetime, timezone
 import json
+import math
 import os
 import sys
 
@@ -162,15 +166,24 @@ def parse_entries(entry_args):
 def validate_compare(entries):
     """Validate that all result files have compatible structure for comparison."""
     ref_label, _, ref_data = entries[0]
-    if ref_data.get("mode") != "run":
-        print(f"Error: {ref_label} file is not a run result (mode={ref_data.get('mode')})", file=sys.stderr)
+    ref_mode = ref_data.get("mode")
+    if ref_mode not in ("run", "correctness"):
+        print(
+            f"Error: {ref_label} file is not a run or correctness result "
+            f"(mode={ref_mode})",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     ref_scenarios = ref_data.get("scenarioResults", [])
 
     for label, _, data in entries[1:]:
-        if data.get("mode") != "run":
-            print(f"Error: {label} file is not a run result (mode={data.get('mode')})", file=sys.stderr)
+        if data.get("mode") != ref_mode:
+            print(
+                f"Error: result mode mismatch — {ref_label} has mode={ref_mode}, "
+                f"{label} has mode={data.get('mode')}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         scenarios = data.get("scenarioResults", [])
@@ -253,6 +266,237 @@ def compare_percentile_dataset(label, points, color, dash_pattern):
 
 
 def build_compare_chart_configs(entries):
+    """Dispatch to the chart model matching the validated result mode."""
+    if entries[0][2].get("mode") == "correctness":
+        return build_correctness_compare_chart_configs(entries)
+    return build_run_compare_chart_configs(entries)
+
+
+def _parse_timestamp_ms(value):
+    """Parse Dimster's compact or ISO-8601 timestamps as UTC epoch millis."""
+    if not value:
+        return None
+    try:
+        if "T" in value:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            parsed = datetime.strptime(value, "%Y-%m-%d-%H-%M-%S").replace(
+                tzinfo=timezone.utc
+            )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return round(parsed.timestamp() * 1000)
+    except (TypeError, ValueError):
+        return None
+
+
+def _recorded_violation_count(correctness, violation_type):
+    """Count represented events, respecting collapsed ViolationEntry ranges."""
+    return sum(
+        max(0, violation.get("count", 1))
+        for violation in correctness.get("violations", [])
+        if violation.get("type") == violation_type
+    )
+
+
+def _violation_buckets(test, violation_type, start_ms, bucket_ms, bucket_count):
+    """Bin recorded violations by elapsed time from the scenario start."""
+    buckets = [0] * bucket_count
+    if start_ms is None:
+        return buckets
+    for violation in test.get("correctness", {}).get("violations", []):
+        if violation.get("type") != violation_type:
+            continue
+        timestamp_ms = violation.get("timestampMs")
+        if not isinstance(timestamp_ms, (int, float)):
+            continue
+        elapsed_ms = max(0, timestamp_ms - start_ms)
+        index = min(bucket_count - 1, int(elapsed_ms // bucket_ms))
+        buckets[index] += max(0, violation.get("count", 1))
+    return buckets
+
+
+def _cumulative(values):
+    """Convert interval counts from legacy violation details into snapshots."""
+    total = 0
+    cumulative = []
+    for value in values:
+        total += value
+        cumulative.append(total)
+    return cumulative
+
+
+def _correctness_time_series(
+    test, series_key, legacy_type, start_ms, bucket_ms, bucket_count
+):
+    """Return a complete sampled series or reconstruct a legacy fallback.
+
+    New results contain uncapped cumulative counter snapshots. Older results
+    only have capped event details, so their fallback is necessarily partial.
+    """
+    correctness = test.get("correctness", {})
+    sampled = correctness.get(series_key)
+    if isinstance(sampled, list) and sampled:
+        return sampled
+    return _cumulative(
+        _violation_buckets(
+            test, legacy_type, start_ms, bucket_ms, bucket_count
+        )
+    )
+
+
+def build_correctness_compare_chart_configs(entries):
+    """Build correctness count bars and cumulative counter timelines.
+
+    New results provide complete sampled counter arrays. Capped ViolationEntry
+    details are used only as a compatibility fallback for older results.
+    """
+    labels = [entry[0] for entry in entries]
+    all_data = [entry[2] for entry in entries]
+    all_scenarios = [data.get("scenarioResults", []) for data in all_data]
+    chart_configs = []
+    chart_sections = {}
+
+    metrics = [
+        ("Message Loss", "lostMessages", "Lost messages", "#e15759"),
+        ("Duplicates", "duplicateCount", "Duplicate messages", "#f28e2b"),
+        ("Out of Order", "outOfOrderCount", "Out-of-order messages", "#59a14f"),
+        ("CRC Failures", "crcFailureCount", "CRC failures", "#4e79a7"),
+    ]
+    timeline_metrics = [
+        ("duplicateCountOverTime", "DUPLICATE", "Duplicates over Time"),
+        ("outOfOrderCountOverTime", "OUT_OF_ORDER", "Out-of-Order Violations over Time"),
+        ("crcFailureCountOverTime", "CRC_FAILURE", "CRC Failures over Time"),
+    ]
+
+    for scenario_index in range(len(all_scenarios[0])):
+        scenario_tests = [
+            scenarios[scenario_index].get("tests", []) for scenarios in all_scenarios
+        ]
+        if not scenario_tests[0]:
+            continue
+
+        test_labels = [
+            test.get("label", f"test-{index}")
+            for index, test in enumerate(scenario_tests[0])
+        ]
+        chart_index = 0
+        aggregate_start = chart_index
+
+        # One chart per authoritative correctness counter. The x-axis is the
+        # compared protocol/run and each dataset is a test point.
+        for title, key, y_label, color in metrics:
+            datasets = []
+            for test_index, test_label in enumerate(test_labels):
+                datasets.append({
+                    "label": test_label,
+                    "data": [
+                        scenario_tests[file_index][test_index]
+                        .get("correctness", {})
+                        .get(key, 0)
+                        for file_index in range(len(entries))
+                    ],
+                    "backgroundColor": color,
+                })
+            options = bar_options(title, y_label)
+            options["maintainAspectRatio"] = False
+            chart_configs.append({
+                "id": f"chart-{scenario_index}-{chart_index}",
+                "fullWidth": True,
+                "height": 320,
+                "config": {
+                    "type": "bar",
+                    "data": {"labels": labels, "datasets": datasets},
+                    "options": options,
+                },
+            })
+            chart_index += 1
+
+        aggregate_end = chart_index
+        per_dimension = []
+
+        for test_index, test_label in enumerate(test_labels):
+            dimension_start = chart_index
+            sample_rates = [
+                data.get("config", {})
+                .get("correctnessConfig", {})
+                .get("sampleRateMillis", 10000)
+                for data in all_data
+            ]
+            bucket_ms = max(1000, max(sample_rates, default=10000))
+
+            starts = []
+            ends = []
+            for file_index, data in enumerate(all_data):
+                scenario = all_scenarios[file_index][scenario_index]
+                starts.append(_parse_timestamp_ms(scenario.get("beginTime")))
+                ends.append(_parse_timestamp_ms(scenario.get("endTime")))
+            sampled_lengths = [
+                len(value)
+                for file_index in range(len(entries))
+                for series_key, _, _ in timeline_metrics
+                for value in [
+                    scenario_tests[file_index][test_index]
+                    .get("correctness", {})
+                    .get(series_key)
+                ]
+                if isinstance(value, list) and value
+            ]
+            if sampled_lengths:
+                bucket_count = max(sampled_lengths)
+            else:
+                durations = [
+                    end - start
+                    for start, end in zip(starts, ends)
+                    if start is not None and end is not None and end >= start
+                ]
+                max_duration_ms = max(durations, default=bucket_ms)
+                bucket_count = max(1, math.ceil(max_duration_ms / bucket_ms) + 1)
+            time_axis = [round(index * bucket_ms / 1000) for index in range(bucket_count)]
+
+            for series_key, legacy_type, title in timeline_metrics:
+                datasets = []
+                for file_index in range(len(entries)):
+                    palette = file_palette(file_index)
+                    alpha_palette = file_palette_alpha(file_index)
+                    datasets.append(compare_line_dataset(
+                        labels[file_index],
+                        _correctness_time_series(
+                            scenario_tests[file_index][test_index],
+                            series_key,
+                            legacy_type,
+                            starts[file_index],
+                            bucket_ms,
+                            bucket_count,
+                        ),
+                        palette[0],
+                        alpha_palette[0],
+                        file_dash(file_index),
+                    ))
+                chart_configs.append({
+                    "id": f"chart-{scenario_index}-{chart_index}",
+                    "zoomGroup": f"time-{scenario_index}-{test_index}",
+                    "config": {
+                        "type": "line",
+                        "data": {"labels": time_axis, "datasets": datasets},
+                        "options": line_options(
+                            title, "Cumulative count", "Elapsed test time (s)"
+                        ),
+                    },
+                })
+                chart_index += 1
+
+            per_dimension.append((test_label, dimension_start, chart_index))
+
+        chart_sections[scenario_index] = {
+            "aggregate": (aggregate_start, aggregate_end),
+            "per_dimension": per_dimension,
+        }
+
+    return chart_configs, chart_sections
+
+
+def build_run_compare_chart_configs(entries):
     """Build chart configs comparing N run results.
 
     Returns (chart_configs, chart_sections).
@@ -511,8 +755,20 @@ def build_compare_header(entries):
     """Build an N-column metadata comparison header."""
     def meta_col(data, label):
         m = data.get("metadata", {})
-        rc = data.get("runConfig", {})
-        kc = data.get("baseKafkaConfig", {})
+        if data.get("mode") == "correctness":
+            rc = data.get("config", {}).get("correctnessConfig", {})
+            kc = data.get("config", {}).get("baseKafkaConfig", {})
+            secondary_timing = (
+                f'<div class="meta-item"><span class="label">Grace Period:</span> '
+                f'<span class="value">{rc.get("gracePeriodSeconds", "")} s</span></div>'
+            )
+        else:
+            rc = data.get("runConfig", {})
+            kc = data.get("baseKafkaConfig", {})
+            secondary_timing = (
+                f'<div class="meta-item"><span class="label">Warmup:</span> '
+                f'<span class="value">{rc.get("warmupDurationMinutes", "")} min</span></div>'
+            )
         annotation_meta = metadata_annotation_html(m)
         return f"""
         <div class="compare-col">
@@ -522,7 +778,7 @@ def build_compare_header(entries):
             <div class="meta-item"><span class="label">Kafka Config:</span> <span class="value">{m.get("kafkaConfigName", "")}</span></div>
             <div class="meta-item"><span class="label">Replication Factor:</span> <span class="value">{kc.get("replicationFactor", "")}</span></div>
             <div class="meta-item"><span class="label">Test Duration:</span> <span class="value">{rc.get("testDurationMinutes", "")} min</span></div>
-            <div class="meta-item"><span class="label">Warmup:</span> <span class="value">{rc.get("warmupDurationMinutes", "")} min</span></div>
+            {secondary_timing}
             {annotation_meta}
             <div class="meta-item"><span class="label">Start:</span> <span class="value">{m.get("beginTime", "")}</span></div>
             <div class="meta-item"><span class="label">End:</span> <span class="value">{m.get("endTime", "")}</span></div>
@@ -706,6 +962,66 @@ def build_legend_hint(entries):
     return f'<div class="legend-hint">{" &nbsp;&nbsp; ".join(items)}</div>'
 
 
+def build_correctness_quality_note(entries):
+    """Explain sampled-series semantics and any legacy fallback limitations."""
+    if entries[0][2].get("mode") != "correctness":
+        return ""
+
+    count_keys = {
+        "DUPLICATE": ("duplicateCount", "duplicateCountOverTime"),
+        "OUT_OF_ORDER": ("outOfOrderCount", "outOfOrderCountOverTime"),
+        "CRC_FAILURE": ("crcFailureCount", "crcFailureCountOverTime"),
+    }
+    warnings = []
+    uses_legacy_fallback = False
+    for label, _, data in entries:
+        for scenario in data.get("scenarioResults", []):
+            for test in scenario.get("tests", []):
+                correctness = test.get("correctness", {})
+                test_label = test.get("label", "default")
+                for violation_type, (total_key, series_key) in count_keys.items():
+                    sampled = correctness.get(series_key)
+                    if isinstance(sampled, list) and sampled:
+                        continue
+                    uses_legacy_fallback = True
+                    total = correctness.get(total_key, 0)
+                    recorded = _recorded_violation_count(correctness, violation_type)
+                    if recorded != total:
+                        warnings.append(
+                            f"{label} / {test_label}: {violation_type} timeline represents "
+                            f"{recorded} of {total} total violations."
+                        )
+                    timestamps = {
+                        violation.get("timestampMs")
+                        for violation in correctness.get("violations", [])
+                        if violation.get("type") == violation_type
+                    }
+                    if recorded > 1 and len(timestamps) == 1:
+                        warnings.append(
+                            f"{label} / {test_label}: all recorded {violation_type} "
+                            "events share one timestamp; the source result has no finer timing."
+                        )
+
+    details = "".join(f"<li>{warning}</li>" for warning in warnings)
+    warning_block = f"<ul>{details}</ul>" if details else ""
+    fallback_text = (
+        " Older results without sampled arrays fall back to the recorded violation "
+        "list, which may be capped."
+        if uses_legacy_fallback
+        else ""
+    )
+    return f"""
+    <div class="data-quality-note">
+        <strong>Correctness timeline semantics</strong>
+        <p>Bar charts use final aggregate counters. Timelines prefer complete
+        cumulative counter snapshots recorded at the configured sample interval.
+        Message loss is intentionally shown only as a final aggregate because
+        intermediate missing-message counts primarily represent lag.{fallback_text}</p>
+        {warning_block}
+    </div>
+    """
+
+
 def build_compare_html(entries, chart_configs, chart_sections):
     """Generate the full comparison HTML page."""
     labels = [e[0] for e in entries]
@@ -723,6 +1039,7 @@ def build_compare_html(entries, chart_configs, chart_sections):
     config_html = build_compare_config_section(entries)
     sections_html = build_compare_scenario_sections(entries, chart_configs, chart_sections)
     legend_html = build_legend_hint(entries)
+    quality_note_html = build_correctness_quality_note(entries)
 
     # Build reset bars for all zoom groups
     zoom_groups_seen = set()
@@ -870,6 +1187,18 @@ body {{
 .scenario-section {{
     margin-bottom: 48px;
 }}
+.data-quality-note {{
+    background: #fff8e6;
+    border: 1px solid #f1cf7a;
+    border-radius: 6px;
+    color: #4f3b0b;
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 0 0 24px;
+    padding: 14px 18px;
+}}
+.data-quality-note p {{ margin-top: 5px; }}
+.data-quality-note ul {{ margin: 8px 0 0 20px; }}
 .scenario-section h2 {{
     font-size: 18px;
     font-weight: 700;
@@ -1043,6 +1372,8 @@ body {{
     </div>
 
     {legend_html}
+
+    {quality_note_html}
 
     {reset_bars_html}
 

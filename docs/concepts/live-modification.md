@@ -6,7 +6,11 @@ This page covers what can be changed, how to do it, how to track changes in the 
 
 ## What can be changed
 
-A `dimster run <env> --modify ...` invocation does **not** start a new benchmark. It POSTs a small JSON request to the running coordinator's `/modify` endpoint. The coordinator validates that a `run` mode test point is currently in progress and applies the change.
+A `dimster run <env> --modify ...` invocation does **not** start a new
+benchmark. It POSTs a small JSON request to the running coordinator's
+`/modify` endpoint. The coordinator delegates the request to the active run or
+correctness engine. Correctness exposes only the consumer-restart action
+described below.
 
 There are three categories of change:
 
@@ -39,7 +43,7 @@ Workload and Kafka config can be mixed in a single `--set`:
 
 ### 2. Action flags
 
-Five flags trigger engine-internal actions rather than parameter changes:
+Six flags trigger actions rather than parameter changes:
 
 | Flag                      | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                |
 |---------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -47,7 +51,8 @@ Five flags trigger engine-internal actions rather than parameter changes:
 | `--skip-phase`            | Ends the current ramp-up or warm-up phase early and proceeds straight to the next phase of the same test point — useful when the operator can see the cluster has already settled. In ramp-up: jumps directly to the full `producerRate` and starts warm-up. In warm-up: starts the recorded test phase. Rejected during the test phase (use `--terminate` to end the test point). The only flag accepted during ramp-up. Must be sent alone. |
 | `--discard-stats`         | Wipes the per-period stats and cumulative histograms accumulated so far in the current test phase, and resets worker recorders. Effectively converts the elapsed test phase into additional warmup so subsequent measurement starts fresh. Test phase only (rejected during warmup) and cannot be combined with field overrides. Often paired with `--run-for-minutes` to also reset the remaining duration.                          |
 | `--run-for-minutes <N>`   | Resets the test phase remaining duration to N minutes from the moment the engine processes the request. Stands alone (extends the current test phase) or pairs with `--discard-stats` (wipes stats AND gives a fresh N-minute window). Test phase only.                                                                                                                                                                               |
-| `--restart-consumers <N>` | Restarts N consumers (or all consumers if N >= total count) without changing the total consumer count. Consumers are selected deterministically by index (0..N-1). Useful for simulating consumer failures or testing resilience. Test phase only. Must be sent alone.                                                                                                                                                                |
+| `--restart-consumers <N>` | Restarts N consumers chosen uniformly without replacement from every consumer in the topology, or all consumers if N is at least the total. The total count and topology do not change. Useful for simulating consumer failures or testing resilience. Test phase only. Must be sent alone. |
+| `--restart-producers <N>` | Restarts N producers chosen uniformly without replacement from every producer in the topology, or all producers if N is at least the total. The total count, worker placement, and pinning do not change. Test phase only. Must be sent alone. |
 
 ### Combining flags
 
@@ -57,7 +62,41 @@ Multiple field overrides can be combined with `--set`:
 ./dimster run localBeefy --modify --set producerRate=100000 producersPerTopic=8 kafkaConfig.producerConfig.batch.size=65536
 ```
 
-Action flags (`--terminate`, `--skip-phase`, `--discard-stats`, `--run-for-minutes`, `--restart-consumers`) cannot be combined with `--set` field overrides. The exception is `--discard-stats` which can pair with `--run-for-minutes`.
+Action flags (`--terminate`, `--skip-phase`, `--discard-stats`,
+`--run-for-minutes`, `--restart-consumers`, `--restart-producers`) cannot be
+combined with `--set` field overrides. The two restart flags must also be sent
+in separate modify calls. The exception is `--discard-stats`, which can pair
+with `--run-for-minutes`.
+
+```bash
+./dimster run localBeefy --modify --restart-consumers 10
+./dimster run localBeefy --modify --restart-producers 5
+```
+
+### Correctness consumer restarts
+
+Correctness mode accepts `--restart-consumers <N>` only while a `CONCURRENT`
+test point is in its measured phase. Setup, the initial stabilization wait, the
+grace period, test-point transitions, and all `DRAIN` phases reject it. All
+other modify flags and field overrides remain run-mode only.
+
+Classic correctness consumers use manual partition assignment by default,
+which does not exercise the Kafka group protocol. Set dynamic assignment when
+the restart is intended to cause a rebalance:
+
+```yaml
+correctnessConfig:
+  testMode: CONCURRENT
+  staticConsumerAssignment: false
+  consumerRestartSeed: 0
+```
+
+The seed is reset at the beginning of every test point. Equivalent test points
+that receive the same sequence of restart commands therefore select equivalent
+consumer ordinals. Each accepted attempt is recorded in the correctness test
+outcome's `consumerRestarts` array. A worker dispatch failure is recorded and
+forces that correctness outcome to fail because the intended fault may have
+been only partially applied.
 
 ### Scope: current test point only
 
@@ -77,7 +116,9 @@ From the this terminal, issue `--modify` commands. They return immediately once 
 A modification is rejected (HTTP 409 from the coordinator, "ERROR: Modify rejected by coordinator" from the CLI) in any of these cases:
 
 - The coordinator is not in `RUNNING` state (idle, stopping, failed).
-- The current run is not in `run` mode (`explore`, `correctness`, `drain-backlog` runs cannot be modified).
+- The current mode does not expose the requested action. Explore and
+  drain-backlog cannot be modified. Correctness accepts only consumer restarts
+  under the restrictions above.
 - The run is between test points (during topic creation, worker setup, or teardown).
 - The current test point is in its [ramp-up phase](../modes/run.md#runconfig-fields), AND the request is anything other than `--skip-phase` or `--terminate`. The ramp is mutating the publish rate in equal increments, so accepting a concurrent rate change would race with the next ramp tick. `--skip-phase` (ends the ramp and proceeds to warm-up) and `--terminate` (ends the whole test point) are the two exceptions because neither races with the ramp. All other modifications are accepted once warm-up begins.
 - `--skip-phase` is sent during the test phase. The recorded measurement is already in flight, so skipping past it makes no sense; use `--terminate` to end the test point early.
@@ -151,6 +192,17 @@ Every accepted modification is appended to a per-test-point list and written int
       "runForMinutes": 30
     },
     {
+      "timestamp": "2026-05-14-10-00-00",
+      "restartConsumersCount": 2,
+      "restartedConsumerNames": [
+        "consumer-dimster-topic-abcd-0000-dimster-grp-000-efgh-i1",
+        "consumer-dimster-topic-abcd-0000-dimster-grp-000-efgh-i4"
+      ],
+      "actions": [
+        "restart-consumers (2) — --restart-consumers 2 (restarting 2 of 8 consumers)"
+      ]
+    },
+    {
       "timestamp": "2026-05-14-10-12-00",
       "terminate": true
     }
@@ -158,7 +210,14 @@ Every accepted modification is appended to a per-test-point list and written int
 }
 ```
 
-Each entry captures **what was requested** (the override maps and/or action flags) and **what the engine did about it** (the `actions` list — the same human-readable strings that landed in the coordinator log). Test points that ran untouched do not get a `modifications` field at all (it's omitted when empty), so the result JSON for an unmodified run is byte-identical to its pre-feature shape — older tooling stays happy.
+Each entry captures **what was requested** (the override maps and/or action
+flags) and **what the engine did about it** (the `actions` list — the same
+human-readable strings that landed in the coordinator log). Random restart
+entries also include `restartedConsumerNames` or `restartedProducerNames`, so
+the selected stable client identities can be correlated with coordinator and
+worker logs. Test points that ran untouched do not get a `modifications` field
+at all (it's omitted when empty), so the result JSON for an unmodified run is
+byte-identical to its pre-feature shape — older tooling stays happy.
 
 The recorded list is "what was actually applied" — modifications that were rejected outright don't appear. Modifications that **partially applied** before encountering a worker error appear with whatever actions succeeded plus a recovery action (see below) so the JSON tells the full story of what happened.
 
@@ -278,7 +337,9 @@ The consumer simulation runs per-record sleeps inside the consumer loop on the w
 ## Limitations
 
 - **Reliability.** This mode is inherently more complex than fixed configuration benchmarks as the coordinator has to compute a new topology, perform a diff between the new and current topology, figure out what changes to make on the fly. Failures can occur and recovery needed. This is designed for exploratory work and may not be as reliable as the standard benchmarks which consist of N fixed config test points. If you want to explore a set of different configurations, the usual multi-test-point test campaign is recommended. If you want to kick the tyres, do exploratory, interactive work, use the `--modify` commands with `run` mode.
-- **Run mode only.** Other modes (Explore, Correctness, Drain-Backlog) do not register an active modifiable engine — `--modify` against them is rejected.
+- **Restricted correctness support.** Correctness supports only seeded consumer
+  restarts during the measured `CONCURRENT` phase with dynamic assignment.
+  Explore and Drain-Backlog do not register a modification target.
 - **Current test point only.** Modifications never persist to the next test point. If you want a permanent change, edit the workload yaml.
 - **Some changes are still unsupported.** Topic count, partition count, consumer group count, consumer type, replication factor, and topic config can't yet be changed live.
 - **No undo.** A modification is applied immediately. If you make a mistake, send another `--modify` with the desired value (or rely on the recovery path if the mistake also caused a worker failure).
