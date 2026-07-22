@@ -1,6 +1,7 @@
 package dev.dimster.spi.kafka;
 
 import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.common.Metric;
@@ -28,7 +29,8 @@ import java.util.Map;
  * across them.
  *
  * <p>Stable Kafka types ({@link ConsumerRecords}, {@link OffsetAndMetadata},
- * {@link OffsetCommitCallback}, {@link TopicPartition}, {@link Metric},
+ * {@link OffsetCommitCallback}, {@link ConsumerRebalanceListener},
+ * {@link TopicPartition}, {@link Metric},
  * {@link MetricName}) are reused directly to avoid noisy mapping. They have been
  * API-stable across the 3.x and 4.x lines for every method dimster uses, and the SPI
  * pins them at the 3.7 baseline (provided scope in dimster-spi/pom.xml) so accidental
@@ -36,8 +38,13 @@ import java.util.Map;
  */
 public interface RawConsumer<K, V> extends AutoCloseable {
 
-    /** Subscribes to the given topics with dynamic partition assignment. */
-    void subscribe(Collection<String> topics);
+    /**
+     * Subscribes to the given topics with dynamic partition assignment.
+     *
+     * <p>The listener keeps rebalance observation in dimster-core while this
+     * version boundary remains a mechanical adapter around KafkaConsumer.
+     */
+    void subscribe(Collection<String> topics, ConsumerRebalanceListener listener);
 
     /** Statically assigns the given partitions. Mutually exclusive with subscribe(). */
     void assign(Collection<TopicPartition> partitions);

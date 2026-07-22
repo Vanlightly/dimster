@@ -2,6 +2,7 @@ package dev.dimster.kafka;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -22,6 +23,7 @@ import dev.dimster.MessageType;
 import dev.dimster.spi.kafka.RawConsumer;
 import dev.dimster.utils.Sleeper;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.common.Metric;
@@ -31,7 +33,12 @@ import org.apache.kafka.common.errors.WakeupException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback, KafkaMetricsSource {
+/**
+ * Runs a classic Kafka consumer and translates its polling, commit, and
+ * rebalance activity into Dimster's callback and metrics abstractions.
+ */
+public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback,
+        ConsumerRebalanceListener, KafkaMetricsSource {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumerWrapper.class);
     private static final String MANUAL_COMMIT_LINGER_CONFIG = "dimster.commit.linger.ms";
@@ -133,7 +140,9 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
             consumer.assign(staticPartitions);
             log.info("Consumer {} using static partition assignment: {}", name, staticPartitions);
         } else {
-            consumer.subscribe(List.of(topic));
+            // Kafka invokes this wrapper on the poll thread whenever group-managed
+            // ownership changes. Static assign() consumers deliberately bypass it.
+            consumer.subscribe(List.of(topic), this);
         }
 
         // this.pollThread = Thread.ofVirtual()
@@ -434,6 +443,18 @@ public class KafkaConsumerWrapper implements AutoCloseable, OffsetCommitCallback
 
     public String getFailureReason() {
         return failureReason;
+    }
+
+    @Override
+    public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+        callback.partitionsAssigned(partitions.size());
+        log.info("Consumer {} assigned {} partition(s): {}", name, partitions.size(), partitions);
+    }
+
+    @Override
+    public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+        callback.partitionsRevoked(partitions.size());
+        log.info("Consumer {} revoked {} partition(s): {}", name, partitions.size(), partitions);
     }
 
     @Override

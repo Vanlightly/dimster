@@ -47,6 +47,10 @@ public class StatsCollector implements ConsumerCallback {
     private final LongAdder totalPolls = new LongAdder();
     private final LongAdder totalCommitSync = new LongAdder();
     private final LongAdder totalCommitAsync = new LongAdder();
+    // Aggregate group-managed partition ownership changes across all classic
+    // consumers on this worker. Per-consumer detail remains available in logs.
+    private final LongAdder totalPartitionsAssigned = new LongAdder();
+    private final LongAdder totalPartitionsRevoked = new LongAdder();
 
     // Producer-transactions counters. Cumulative since worker start (or last
     // resetAll). Cumulative-only matches existing patterns like totalCommitSync;
@@ -296,6 +300,18 @@ public class StatsCollector implements ConsumerCallback {
         }
     }
 
+    @Override
+    public void partitionsAssigned(int partitionCount) {
+        // Count partitions rather than callback invocations so eager and
+        // cooperative assignors remain comparable when callbacks batch differently.
+        totalPartitionsAssigned.add(partitionCount);
+    }
+
+    @Override
+    public void partitionsRevoked(int partitionCount) {
+        totalPartitionsRevoked.add(partitionCount);
+    }
+
     /**
      * Snapshot all period counters/histograms and atomically reset them.
      * When per-partition metrics are enabled, the per-partition publish and
@@ -396,6 +412,8 @@ public class StatsCollector implements ConsumerCallback {
         totalPolls.reset();
         totalCommitSync.reset();
         totalCommitAsync.reset();
+        totalPartitionsAssigned.reset();
+        totalPartitionsRevoked.reset();
         totalTransactionsCommitted.reset();
         totalTransactionsAborted.reset();
 
@@ -537,6 +555,15 @@ public class StatsCollector implements ConsumerCallback {
         for (var entry : pcMessagesReceived.entrySet()) {
             writer.write("client_pc_messages_received_count{" + hostLabel + ",consumer=\"" + entry.getKey() + "\"} " + entry.getValue().sum() + "\n");
         }
+    }
+
+    /** Emit aggregate classic-consumer rebalance counters for this worker. */
+    public void writeConsumerRebalanceMetrics(StringWriter writer, String hostname) {
+        String hostLabel = "host=\"" + hostname + "\"";
+        writer.write("client_consumer_partitions_assigned_count{" + hostLabel + "} "
+                + totalPartitionsAssigned.sum() + "\n");
+        writer.write("client_consumer_partitions_revoked_count{" + hostLabel + "} "
+                + totalPartitionsRevoked.sum() + "\n");
     }
 
     private static byte[] serializeHistogram(Histogram histogram) {

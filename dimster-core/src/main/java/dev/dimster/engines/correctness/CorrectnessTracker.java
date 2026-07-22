@@ -65,6 +65,16 @@ public class CorrectnessTracker implements ConsumerCallback {
         stats.batchReceived(consumerName, messageCount);
     }
 
+    @Override
+    public void partitionsAssigned(int partitionCount) {
+        stats.partitionsAssigned(partitionCount);
+    }
+
+    @Override
+    public void partitionsRevoked(int partitionCount) {
+        stats.partitionsRevoked(partitionCount);
+    }
+
     public StatsCollector stats() {
         return stats;
     }

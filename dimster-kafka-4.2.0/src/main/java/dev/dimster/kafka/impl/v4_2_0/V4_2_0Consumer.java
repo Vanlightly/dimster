@@ -2,6 +2,7 @@ package dev.dimster.kafka.impl.v4_2_0;
 
 import dev.dimster.spi.kafka.RawConsumer;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
@@ -28,8 +29,8 @@ public class V4_2_0Consumer<K, V> implements RawConsumer<K, V> {
     }
 
     @Override
-    public void subscribe(Collection<String> topics) {
-        consumer.subscribe(topics);
+    public void subscribe(Collection<String> topics, ConsumerRebalanceListener listener) {
+        consumer.subscribe(topics, listener);
     }
 
     @Override

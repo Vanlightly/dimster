@@ -90,6 +90,7 @@ public class PrometheusEndpoint {
                     writer.write("client_consumer_polls_count{host=\"" + hostname + "\"} " + periodStats.totalPolls + "\n");
                     writer.write("client_consumer_commit_sync_count{host=\"" + hostname + "\"} " + periodStats.totalCommitSync + "\n");
                     writer.write("client_consumer_commit_async_count{host=\"" + hostname + "\"} " + periodStats.totalCommitAsync + "\n");
+                    statsCollector.writeConsumerRebalanceMetrics(writer, hostname);
                     writer.write("client_producer_transactions_committed_count{host=\"" + hostname + "\"} " + periodStats.totalTransactionsCommitted + "\n");
                     writer.write("client_producer_transactions_aborted_count{host=\"" + hostname + "\"} " + periodStats.totalTransactionsAborted + "\n");
 

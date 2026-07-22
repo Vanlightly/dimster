@@ -976,6 +976,87 @@ data:
             { "expr": "sum(kafka_consumer_share_metrics_background_event_queue_size)", "legendFormat": "background event queue" },
             { "expr": "sum(kafka_consumer_share_metrics_application_event_queue_size)", "legendFormat": "application event queue" }
           ]
+        },
+
+        {
+          "title": "Classic Consumer Rebalances",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 231 },
+          "collapsed": false
+        },
+        {
+          "title": "Partitions Assigned (rate/s)",
+          "description": "Aggregate rate of group-managed partitions assigned across all classic consumers",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 232 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_consumer_partitions_assigned_count[1m]))", "legendFormat": "assigned" }
+          ]
+        },
+        {
+          "title": "Partitions Revoked (rate/s)",
+          "description": "Aggregate rate of group-managed partitions released across all classic consumers",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 232 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(rate(client_consumer_partitions_revoked_count[1m]))", "legendFormat": "revoked" }
+          ]
+        },
+        {
+          "title": "Partitions Assigned (cumulative)",
+          "description": "Cumulative number of group-managed partitions assigned across all classic consumers",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 240 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "decimals": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(client_consumer_partitions_assigned_count)", "legendFormat": "assigned total" }
+          ]
+        },
+        {
+          "title": "Partitions Revoked (cumulative)",
+          "description": "Cumulative number of group-managed partitions released across all classic consumers",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 240 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "decimals": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "never" }
+            },
+            "overrides": []
+          },
+          "targets": [
+            { "expr": "sum(client_consumer_partitions_revoked_count)", "legendFormat": "revoked total" }
+          ]
         }
       ],
       "refresh": "10s",
@@ -2276,4 +2357,3 @@ data:
       "title": "Dimster - Kafka Broker",
       "uid": "dimster-kafka"
     }
-

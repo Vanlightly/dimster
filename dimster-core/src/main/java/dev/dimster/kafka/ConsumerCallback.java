@@ -19,4 +19,10 @@ public interface ConsumerCallback {
     default void commitAsyncCompleted() {}
     default void processingTimeCompleted(long latencyMicros) {}
     default void batchReceived(String consumerName, int messageCount) {}
+
+    /** Records how many dynamically managed partitions Kafka assigned. */
+    default void partitionsAssigned(int partitionCount) {}
+
+    /** Records how many dynamically managed partitions Kafka asked the consumer to release. */
+    default void partitionsRevoked(int partitionCount) {}
 }
