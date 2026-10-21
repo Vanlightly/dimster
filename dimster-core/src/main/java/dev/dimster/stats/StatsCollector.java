@@ -15,6 +15,7 @@ import org.HdrHistogram.Histogram;
 import org.HdrHistogram.Recorder;
 
 import dev.dimster.MessageType;
+import dev.dimster.datagen.RecordFormat;
 import dev.dimster.kafka.ConsumerCallback;
 import dev.dimster.worker.commands.CountersStats;
 import dev.dimster.worker.commands.PerPartitionStats;
@@ -24,6 +25,14 @@ public class StatsCollector implements ConsumerCallback {
 
     public static final long NON_E2E_LATENCY_MAX_MICROS = TimeUnit.MINUTES.toMicros(5);
     public static final long E2E_LATENCY_MAX_MICROS = TimeUnit.HOURS.toMicros(12);
+
+    /**
+     * Precision of the main latency histograms: 4 significant digits, so a
+     * recorded value is accurate to 1 part in 10,000 (0.01%), e.g. within
+     * 4 us at 100 ms and 32 us at 1 s. Reports show milliseconds to two
+     * decimals, so this is invisible below roughly 250 ms.
+     */
+    public static final int LATENCY_SIG_DIGITS = 4;
 
     private final LongAdder messagesSent = new LongAdder();
     private final LongAdder errors = new LongAdder();
@@ -58,18 +67,18 @@ public class StatsCollector implements ConsumerCallback {
     private final LongAdder totalTransactionsCommitted = new LongAdder();
     private final LongAdder totalTransactionsAborted = new LongAdder();
 
-    private final Recorder publishLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, 5);
-    private final Recorder scheduleLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, 5);
-    private final Recorder publishDelayLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, 5);
-    private final Recorder endToEndLatencyRecorder = new Recorder(E2E_LATENCY_MAX_MICROS, 5);
+    private final Recorder publishLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
+    private final Recorder scheduleLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
+    private final Recorder publishDelayLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
+    private final Recorder endToEndLatencyRecorder = new Recorder(E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
     // Delivery latency: publish timestamp → poll return time (before per-record processing).
     // Only meaningful when consumers simulate processing time — otherwise the value is
     // indistinguishable from endToEndLatency. Gated by recordDeliveryLatency so the
     // histogram + per-record CPU cost are skipped on the common no-processing workload.
-    private final Recorder endToEndDeliveryLatencyRecorder = new Recorder(E2E_LATENCY_MAX_MICROS, 5);
+    private final Recorder endToEndDeliveryLatencyRecorder = new Recorder(E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
     private volatile boolean recordDeliveryLatency = false;
     private final Recorder pollBatchSizeRecorder = new Recorder(100_000, 3);
-    private final Recorder commitSyncLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, 5);
+    private final Recorder commitSyncLatencyRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, LATENCY_SIG_DIGITS);
     private final Recorder processingTimeRecorder = new Recorder(NON_E2E_LATENCY_MAX_MICROS, 3);
     /**
      * Producer transaction commit latency. Read directly by PrometheusEndpoint
@@ -195,9 +204,9 @@ public class StatsCollector implements ConsumerCallback {
     }
 
     @Override
-    public void messageReceived(byte[] payload, String topic, int partition,
+    public void messageReceived(byte[] payload, RecordFormat format, String topic, int partition,
                                 long publishTimestampMillis, Instant deliveryTime, Instant processingStartTime) {
-        if (payload.length > 0 && payload[0] == MessageType.PROBE) {
+        if (format.typeOf(payload) == MessageType.PROBE) {
             probesReceived.increment();
             return;
         }
