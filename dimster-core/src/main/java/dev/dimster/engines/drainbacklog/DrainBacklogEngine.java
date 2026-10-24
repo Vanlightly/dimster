@@ -36,6 +36,13 @@ public class DrainBacklogEngine extends BaseEngine {
 
     private static final Logger log = LoggerFactory.getLogger(DrainBacklogEngine.class);
 
+    /** How often the drain phase polls the counters for completion. */
+    private static final long DRAIN_CHECK_INTERVAL_MS = 500;
+    /** How often the drain phase polls for the first consumed message. */
+    private static final long FIRST_RECEIVE_CHECK_INTERVAL_MS = 100;
+    /** Backlog (messages) at or below which the drain is considered complete. */
+    private static final long DRAINED_THRESHOLD_MSGS = 1000;
+
     private final DrainBacklogWorkload workload;
     private final BaseWorkload base;
     private final KafkaConfig fileKafkaConfig;
@@ -174,7 +181,7 @@ public class DrainBacklogEngine extends BaseEngine {
 
         var perf = new TestResult.PerformanceResults();
         var drainData = new DrainBacklogResult.DrainData();
-        long oldTime = startMeasurementWindow();
+        long oldTime = resetSampleClock();
 
         // === BUILD PHASE ===
         throwOnStopRequested(stopRequested);
@@ -187,8 +194,10 @@ public class DrainBacklogEngine extends BaseEngine {
         while (!stopRequested.get()) {
             Sleeper.sleepOrStop(stopRequested, dbc.sampleRateMillis, true);
 
-            PeriodStats stats = worker.getPeriodStats();
+            // Stamp before the call: stats are reset near the start of a
+            // (possibly slow) remote call, not when it returns.
             long now = System.nanoTime();
+            PeriodStats stats = worker.getPeriodStats();
             double elapsed = (now - oldTime) / 1e9;
             double publishRate = stats.messagesSent / elapsed;
             double consumeRate = stats.messagesReceived / elapsed;
@@ -244,7 +253,14 @@ public class DrainBacklogEngine extends BaseEngine {
         long lastLagRefresh = 0;
         long brokerLag = -1; // -1 means not yet fetched
 
-        long drainStart = System.currentTimeMillis();
+        // Start the drain clock at the first consumed message so group join
+        // and initial fetch latency are excluded from the drain duration.
+        long consumersReady = System.currentTimeMillis();
+        long drainStart = awaitFirstReceive(dbc.drainTimeoutMinutes);
+        log.info("    First message received {}ms after consumers ready", drainStart - consumersReady);
+        // Restart the sample clock so the first drain sample excludes the join wait.
+        oldTime = resetSampleClock();
+
         String lagDescription = isShareGroup
                 ? "broker-reported share group lag"
                 : "broker-reported consumer group lag (LogEndOffset - CommittedOffset)";
@@ -253,11 +269,31 @@ public class DrainBacklogEngine extends BaseEngine {
         log.info(String.format("    %12s %12s %14s %14s %14s %12s %10s %14s",
                 "pub msg/s", "cons msg/s", "total sent", "expect recv", "total recv", "backlog", "backlog MB", "lag"));
 
+        long drainEnd = 0;
         while (!stopRequested.get()) {
-            Sleeper.sleepOrStop(stopRequested, dbc.sampleRateMillis, true);
+            // Poll the cumulative counters within the sample period so drain
+            // completion is detected promptly without resetting period stats.
+            // On completion, end the period early so the final partial sample
+            // is still recorded below.
+            boolean drained = false;
+            long periodEndNanos = System.nanoTime() + dbc.sampleRateMillis * 1_000_000L;
+            long remainingMs;
+            while ((remainingMs = (periodEndNanos - System.nanoTime()) / 1_000_000) > 0) {
+                Sleeper.sleepOrStop(stopRequested, Math.min(DRAIN_CHECK_INTERVAL_MS, remainingMs), true);
+                CountersStats counters = worker.getCountersStats();
+                long backlog = counters.messagesSent() * point.consumerGroupsPerTopic() - counters.messagesReceived();
+                if (backlog <= DRAINED_THRESHOLD_MSGS) {
+                    drained = true;
+                    break;
+                }
+            }
+            // Stamp completion before the sample work (lag refresh is an admin call).
+            long periodEndMs = System.currentTimeMillis();
 
-            PeriodStats stats = worker.getPeriodStats();
+            // Stamp before the call: stats are reset near the start of a
+            // (possibly slow) remote call, not when it returns.
             long now = System.nanoTime();
+            PeriodStats stats = worker.getPeriodStats();
             double elapsed = (now - oldTime) / 1e9;
             double publishRate = stats.messagesSent / elapsed;
             double consumeRate = stats.messagesReceived / elapsed;
@@ -294,7 +330,10 @@ public class DrainBacklogEngine extends BaseEngine {
             drainData.backlogMessagesOverTime.add(currentBacklog);
             drainData.backlogBytesOverTime.add(currentBacklogBytes);
 
-            if (currentBacklog <= 1000) {
+            // Honour the sub-loop's detection even if producer load has since
+            // pushed the backlog back above the threshold.
+            if (drained || currentBacklog <= DRAINED_THRESHOLD_MSGS) {
+                drainEnd = periodEndMs;
                 break;
             }
 
@@ -310,7 +349,7 @@ public class DrainBacklogEngine extends BaseEngine {
 
         throwOnStopRequested(stopRequested);
 
-        long drainDuration = System.currentTimeMillis() - drainStart;
+        long drainDuration = (drainEnd > 0 ? drainEnd : System.currentTimeMillis()) - drainStart;
         log.info("    Backlog drained in {}s", drainDuration / 1000);
 
         // Build outcome
@@ -330,6 +369,32 @@ public class DrainBacklogEngine extends BaseEngine {
         outcome.performance = perf;
 
         return outcome;
+    }
+
+    /** Discards period stats and returns the new sample start time. Unlike
+     *  {@code startMeasurementWindow()}, stamps before the call, matching the
+     *  sampling loops. */
+    private long resetSampleClock() throws IOException {
+        long now = System.nanoTime();
+        worker.getPeriodStats();
+        return now;
+    }
+
+    /** Polls the cumulative counters until consumers receive their first
+     *  message and returns that time. Gives up after the drain timeout (if
+     *  set), returning the time of giving up so the drain loop can time out. */
+    private long awaitFirstReceive(int drainTimeoutMinutes) throws IOException {
+        long baselineRecv = worker.getCountersStats().messagesReceived();
+        long deadline = drainTimeoutMinutes > 0
+                ? System.currentTimeMillis() + drainTimeoutMinutes * 60_000L
+                : Long.MAX_VALUE;
+        while (System.currentTimeMillis() < deadline) {
+            Sleeper.sleepOrStop(stopRequested, FIRST_RECEIVE_CHECK_INTERVAL_MS, true);
+            if (worker.getCountersStats().messagesReceived() > baselineRecv) {
+                break;
+            }
+        }
+        return System.currentTimeMillis();
     }
 
     private void recordPeriodResults(TestResult.PerformanceResults r, PeriodStats stats,

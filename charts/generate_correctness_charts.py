@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from generate_run_charts import metadata_annotation_html
+from generate_run_charts import is_result_of_mode, metadata_annotation_html
 
 
 COLORS = [
@@ -39,12 +39,7 @@ COLORS_ALPHA = [
 
 
 def find_correctness_json_files(results_dir):
-    """Recursively find correctness results, excluding typed helper artifacts.
-
-    Older result files predate ``fileType``, so an absent type remains valid.
-    Newer run requests also carry ``mode == correctness`` and must be excluded
-    or they produce an empty, misleading chart.
-    """
+    """Recursively find correctness results, excluding typed helper artifacts."""
     found = []
     for root, _dirs, files in os.walk(results_dir):
         for f in files:
@@ -54,11 +49,7 @@ def find_correctness_json_files(results_dir):
             try:
                 with open(path, "r") as fh:
                     data = json.load(fh)
-                file_type = data.get("fileType")
-                if (
-                    data.get("mode") == "correctness"
-                    and file_type in (None, "dimster-result")
-                ):
+                if is_result_of_mode(data, "correctness"):
                     found.append((path, data))
             except json.JSONDecodeError as e:
                 print(f"Warning: skipping {path}: invalid JSON: {e}", file=sys.stderr)
