@@ -71,8 +71,18 @@ def build_histogram_buckets(values, max_buckets=20):
     return labels, counts
 
 
+def is_result_of_mode(data, mode):
+    """True if data is a result file of the given mode.
+
+    Run requests also carry ``mode`` and must be excluded, so the typed
+    ``fileType`` is checked too. Older result files predate ``fileType``,
+    so an absent type remains valid.
+    """
+    return data.get("mode") == mode and data.get("fileType") in (None, "dimster-result")
+
+
 def find_run_json_files(results_dir):
-    """Recursively find JSON files with mode == 'run'."""
+    """Recursively find run results, excluding typed helper artifacts."""
     found = []
     for root, _dirs, files in os.walk(results_dir):
         for f in files:
@@ -82,7 +92,7 @@ def find_run_json_files(results_dir):
             try:
                 with open(path, "r") as fh:
                     data = json.load(fh)
-                if data.get("mode") == "run":
+                if is_result_of_mode(data, "run"):
                     found.append((path, data))
             except json.JSONDecodeError as e:
                 print(f"Warning: skipping {path}: invalid JSON: {e}", file=sys.stderr)

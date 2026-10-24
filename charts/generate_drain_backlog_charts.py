@@ -15,7 +15,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from generate_run_charts import metadata_annotation_html
+from generate_run_charts import is_result_of_mode, metadata_annotation_html
 
 
 COLORS = [
@@ -38,7 +38,7 @@ COLORS_ALPHA = [
 
 
 def find_drain_backlog_json_files(results_dir):
-    """Recursively find JSON files with mode == 'drain-backlog'."""
+    """Recursively find drain-backlog results, excluding typed helper artifacts."""
     found = []
     for root, _dirs, files in os.walk(results_dir):
         for f in files:
@@ -48,7 +48,7 @@ def find_drain_backlog_json_files(results_dir):
             try:
                 with open(path, "r") as fh:
                     data = json.load(fh)
-                if data.get("mode") == "drain-backlog":
+                if is_result_of_mode(data, "drain-backlog"):
                     found.append((path, data))
             except json.JSONDecodeError as e:
                 print(f"Warning: skipping {path}: invalid JSON: {e}", file=sys.stderr)

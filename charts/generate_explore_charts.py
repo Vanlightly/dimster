@@ -17,7 +17,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from generate_run_charts import format_meta_value
+from generate_run_charts import format_meta_value, is_result_of_mode
 
 # ---------------------------------------------------------------------------
 # Metrics to chart: (extractor, title, y_axis_label)
@@ -54,13 +54,13 @@ def _strip_heavy_data(data):
 
 
 def find_explore_results(results_dir):
-    """Find all JSON files with mode=explore, recursively."""
+    """Recursively find explore results, excluding typed helper artifacts."""
     results = []
     for json_path in sorted(glob.glob(os.path.join(results_dir, '**', '*.json'), recursive=True)):
         try:
             with open(json_path) as f:
                 data = json.load(f)
-            if data.get('mode') == 'explore':
+            if is_result_of_mode(data, 'explore'):
                 results.append((json_path, data))
         except json.JSONDecodeError as e:
             print(f"Warning: skipping {json_path}: invalid JSON: {e}", file=sys.stderr)
