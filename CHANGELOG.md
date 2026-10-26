@@ -91,7 +91,7 @@ Initial public release.
 - With no `image:` (or `kubernetes:`/`results:`) block in `dimster-config.yaml`, as written by `dimster init`, the CLI used an empty image tag and `dimster build` failed.
 - The first period of each run, correctness and drain-backlog phase counted messages sent before the phase began (between the previous phase's last sample and this phase's start), inflating its rate. Most visible on slow clusters, where that gap spans seconds.
 
-## [Unreleased]
+## [0.6.0]
 
 ### Added
 

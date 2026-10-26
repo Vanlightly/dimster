@@ -6,9 +6,11 @@
 #   * Every child module pom.xml    (<parent><version> block)
 #   * cli/Cargo.toml                (package version)
 #   * eks-setup-cli/Cargo.toml      (package version)
+#   * cli/Cargo.lock, eks-setup-cli/Cargo.lock (the package's own entry)
 #
 # Why this script exists: the version lives in the root pom plus eight
-# child <parent> blocks plus two Cargo.toml [package] sections. Hand-
+# child <parent> blocks plus two Cargo.toml [package] sections and their
+# Cargo.lock entries. Hand-
 # editing them is error-prone, and a mismatch between root and child
 # <parent> versions silently degrades the build (Maven warns but proceeds).
 # Sweeping them in one command removes that class of bug from the release
@@ -123,6 +125,32 @@ bump_cargo() {
     echo "  updated $(realpath --relative-to="$REPO_ROOT" "$f" 2>/dev/null || echo "$f")"
 }
 
+# --- Cargo.lock -----------------------------------------------------------
+# The lock records the package's own version too, so a bumped Cargo.toml
+# leaves it stale until the next cargo build rewrites it. Replace the
+# `version = ...` line that follows the package's `name = "<name>"` line
+# (its [[package]] entry); dependency entries have other names. Edited
+# directly rather than with `cargo update`, which needs cargo and may
+# change dependency versions too.
+bump_cargo_lock() {
+    local toml="$1" lock="$2"
+    local name
+    name="$(awk -F'"' '/^name = "/ { print $2; exit }' "$toml")"
+    awk -v name="$name" -v ver="$VERSION" '
+        BEGIN { found = 0; done = 0 }
+        !done && $0 == "name = \"" name "\"" { found = 1; print; next }
+        found && !done && /^version = "/ {
+            print "version = \"" ver "\""
+            done = 1
+            next
+        }
+        { found = 0; print }
+        END { if (!done) exit 1 }
+    ' "$lock" > "$lock.tmp" || { rm -f "$lock.tmp"; echo "error: no '$name' entry in $lock" >&2; exit 1; }
+    mv "$lock.tmp" "$lock"
+    echo "  updated $(realpath --relative-to="$REPO_ROOT" "$lock" 2>/dev/null || echo "$lock")"
+}
+
 echo "Bumping versions: pom=$POM_VERSION, cargo=$VERSION"
 echo
 
@@ -137,8 +165,10 @@ for child_pom in "$REPO_ROOT"/*/pom.xml; do
     bump_child_pom "$child_pom"
 done
 
-bump_cargo "$REPO_ROOT/cli/Cargo.toml"
-bump_cargo "$REPO_ROOT/eks-setup-cli/Cargo.toml"
+for crate in cli eks-setup-cli; do
+    bump_cargo "$REPO_ROOT/$crate/Cargo.toml"
+    bump_cargo_lock "$REPO_ROOT/$crate/Cargo.toml" "$REPO_ROOT/$crate/Cargo.lock"
+done
 
 echo
-echo "Done. Review with:  git diff -- '**/pom.xml' '**/Cargo.toml'"
+echo "Done. Review with:  git diff -- '**/pom.xml' '**/Cargo.toml' '**/Cargo.lock'"
