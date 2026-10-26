@@ -147,7 +147,7 @@ public class TestPointMutatorRestartTest {
                 ConsumerType.CONSUMER_GROUP, new KafkaConfig(),
                 0, 0, 1, ConsumerProcMode.BLOCKING, 10_000,
                 null, null, new RunConfig(),
-                DatasetResolver.payloadDataset(100 - 1, 0.0, 1, null));
+                DatasetResolver.payloadDataset(100 - 1, 0.0, 1, null), null);
     }
 
     private VirtualTopology topology() {

@@ -55,6 +55,11 @@ import dev.dimster.utils.distributor.MessageDistributorType;
  * @param activeProducerWorkerCount   number of workers actually hosting at
  *                                    least one producer; used by callers to
  *                                    divide the global publish rate
+ * @param pipelineTopics              input topic -> output topic for test points
+ *                                    with a Flink stage, empty otherwise. Both
+ *                                    are in {@code topicPartitionCounts};
+ *                                    producers write the inputs and consumers
+ *                                    read the outputs
  */
 public record VirtualTopology(
         Map<String, Integer> topicPartitionCounts,
@@ -68,7 +73,20 @@ public record VirtualTopology(
         int consumerProcCapacity,
         MessageDistributorType messageDistributorType,
         double messageDistributorSkew,
-        int activeProducerWorkerCount) {
+        int activeProducerWorkerCount,
+        Map<String, String> pipelineTopics) {
+
+    /** A topology without a Flink stage: producers and consumers share topics. */
+    public VirtualTopology(Map<String, Integer> topicPartitionCounts, List<VirtualProducer> producers,
+                           List<VirtualConsumer> consumers, ConsumerType consumerType,
+                           int consumerProcMsMin, int consumerProcMsMax, int consumerProcParallelism,
+                           ConsumerProcMode consumerProcMode, int consumerProcCapacity,
+                           MessageDistributorType messageDistributorType, double messageDistributorSkew,
+                           int activeProducerWorkerCount) {
+        this(topicPartitionCounts, producers, consumers, consumerType, consumerProcMsMin, consumerProcMsMax,
+                consumerProcParallelism, consumerProcMode, consumerProcCapacity, messageDistributorType,
+                messageDistributorSkew, activeProducerWorkerCount, Map.of());
+    }
 
     public VirtualTopology {
         // Preserve insertion order (Map.copyOf does not). Topic order matters for several
@@ -77,6 +95,21 @@ public record VirtualTopology(
         topicPartitionCounts = Collections.unmodifiableMap(new LinkedHashMap<>(topicPartitionCounts));
         producers = List.copyOf(producers);
         consumers = List.copyOf(consumers);
+        pipelineTopics = Collections.unmodifiableMap(new LinkedHashMap<>(pipelineTopics));
+    }
+
+    /** The topics producers write to, in topic order: all topics except Flink outputs. */
+    public List<String> producerTopics() {
+        List<String> out = new ArrayList<>();
+        for (String topic : topicPartitionCounts.keySet()) {
+            if (!pipelineTopics.containsValue(topic)) out.add(topic);
+        }
+        return out;
+    }
+
+    /** The topics consumers read from, in topic order: the Flink outputs when there is a Flink stage. */
+    public List<String> consumerTopics() {
+        return pipelineTopics.isEmpty() ? producerTopics() : new ArrayList<>(pipelineTopics.values());
     }
 
     /** All distinct workers referenced anywhere in the topology, in insertion order. */

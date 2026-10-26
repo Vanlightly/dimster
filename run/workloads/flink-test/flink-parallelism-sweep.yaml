@@ -1,0 +1,31 @@
+# Sweeps the Flink job's parallelism at a fixed rate, with a pass-through
+# filter, to see how parallelism affects end-to-end latency through Flink.
+# Parallelism 4 needs 4 free task slots (flink.taskmanagers in the env).
+name: Flink parallelism sweep
+
+engineConfig:
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 2
+  warmupDurationMinutes: 1
+  rampIntervals: 0
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 4
+  producersPerTopic: 2
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 4
+  producerRate: 5000
+  dataset:
+    preset: orders
+    format: AVRO
+  flink:
+    sql: SELECT * FROM source WHERE status <> 'CANCELLED'
+
+scenarios:
+  - name: flink-parallelism
+    label: ["p1", "p2", "p4"]
+    flink:
+      parallelism: [1, 2, 4]

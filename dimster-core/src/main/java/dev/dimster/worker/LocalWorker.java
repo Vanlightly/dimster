@@ -173,6 +173,10 @@ public class LocalWorker implements Worker {
     // printContents is on. Producers read it per send, and consumer wrappers
     // take it at construction, like printMessages.
     private volatile RecordPrinter recordPrinter = null;
+    // Consumers' printer: recordPrinter, or one that doesn't decode with the
+    // dataset's schema when consumers read a Flink job's output.
+    private volatile RecordPrinter consumerRecordPrinter = null;
+    private volatile boolean consumedThroughFlink = false;
     // Layout of the record values consumers receive: RAW for the payload
     // pool, else the dataset's format. Set by setDataset before consumers
     // are created, and given to each consumer wrapper.
@@ -958,6 +962,12 @@ public class LocalWorker implements Worker {
     }
 
     @Override
+    public void setConsumedThroughFlink(boolean throughFlink) {
+        this.consumedThroughFlink = throughFlink;
+        updateRecordPrinter();
+    }
+
+    @Override
     public void setPrintMessages(boolean enabled) {
         this.printMessages = enabled;
         log.info("Per-message printing {}", enabled ? "enabled" : "disabled");
@@ -977,6 +987,9 @@ public class LocalWorker implements Worker {
     private void updateRecordPrinter() {
         DatasetGenerator dataset = datasetGenerator;
         recordPrinter = printContents && dataset != null ? new RecordPrinter(dataset.dataset()) : null;
+        consumerRecordPrinter = recordPrinter != null && consumedThroughFlink
+                ? RecordPrinter.forTransformedRecords(dataset.dataset())
+                : recordPrinter;
     }
 
     @Override
@@ -1360,7 +1373,7 @@ public class LocalWorker implements Worker {
             return new KafkaShareConsumerWrapper(kafkaConsumer, allProps, consumerCallback, vc.topic(),
                     vc.name(),
                     consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcParallelism(),
-                    printMessages, recordPrinter, recordFormat);
+                    printMessages, consumerRecordPrinter, recordFormat);
         } else {
             var consumerProps = kafkaConfig.classicConsumerProperties();
             var clientProps = new Properties();
@@ -1386,7 +1399,7 @@ public class LocalWorker implements Worker {
             return new KafkaConsumerWrapper(kafkaConsumer, allProps, consumerCallback, vc.topic(),
                     vc.name(),
                     consumerSet.consumerProcMsMin(), consumerSet.consumerProcMsMax(), consumerSet.consumerProcParallelism(),
-                    staticPartitions, printMessages, recordPrinter, recordFormat,
+                    staticPartitions, printMessages, consumerRecordPrinter, recordFormat,
                     consumerSet.consumerProcMode(), consumerSet.consumerProcCapacity());
         }
     }

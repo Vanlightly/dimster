@@ -1,0 +1,17 @@
+# Headless Service over every Flink pod, so Prometheus' dns_sd scrape job
+# finds the JobManager and each TaskManager's Prometheus reporter (9249).
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-metrics
+  namespace: dimster
+  labels:
+    app: flink
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: flink
+  ports:
+    - name: metrics
+      port: 9249

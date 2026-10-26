@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::commands::broker_config;
+use crate::commands::flink;
 use crate::commands::is_registry_image;
 use crate::commands::kafka_tls;
 use crate::config::{CpuManagerConfig, CpuManagerPolicy, DimsterConfig, Environment};
@@ -36,6 +37,8 @@ pub(crate) enum Component {
     Workers,
     Coordinator,
     Monitoring,
+    /// The Flink session cluster; only deployed for envs with a `flink:` block.
+    Flink,
 }
 
 /// What deploy knows about the currently deployed Kafka StatefulSet.
@@ -67,8 +70,9 @@ impl Component {
             "workers" => Ok(Component::Workers),
             "coordinator" => Ok(Component::Coordinator),
             "monitoring" => Ok(Component::Monitoring),
+            "flink" => Ok(Component::Flink),
             other => Err(anyhow::anyhow!(
-                "Unknown component '{}'. Valid components: kafka, workers, coordinator, monitoring",
+                "Unknown component '{}'. Valid components: kafka, workers, coordinator, monitoring, flink",
                 other
             )),
         }
@@ -80,6 +84,7 @@ impl Component {
             Component::Workers,
             Component::Coordinator,
             Component::Monitoring,
+            Component::Flink,
         ])
     }
 }
@@ -107,7 +112,16 @@ pub fn run(
     let ns = kubectl.namespace();
     let env_config = config.get_env(env)?;
     let external = env_config.is_external();
-    let components = parse_components(only)?;
+    let mut components = parse_components(only)?;
+
+    // Flink is deployed only for envs that ask for it.
+    if env_config.flink.is_none() && components.remove(&Component::Flink) && !only.is_empty() {
+        bail!(
+            "Environment '{}' has no flink block, so there is no Flink to deploy. \
+             Add a flink section to the environment in dimster-config.yaml.",
+            env
+        );
+    }
 
     // External mode never deploys Kafka
     if external && components.contains(&Component::Kafka) && !only.is_empty() {
@@ -180,6 +194,20 @@ pub fn run(
         )?;
     }
 
+    if components.contains(&Component::Flink) {
+        println!("==> Waiting for Flink to be ready...");
+        wait_for_deployment(
+            kubectl,
+            "flink-jobmanager",
+            "app=flink,component=jobmanager",
+        )?;
+        wait_for_deployment(
+            kubectl,
+            "flink-taskmanager",
+            "app=flink,component=taskmanager",
+        )?;
+    }
+
     println!("==> Deployment complete.");
     println!();
 
@@ -196,6 +224,11 @@ pub fn run(
     if components.contains(&Component::Workers) {
         println!("Benchmark workers:");
         let _ = kubectl.run_inherit(&["get", "pods", "-l", "app=benchmark-worker"]);
+    }
+    if components.contains(&Component::Flink) {
+        println!();
+        println!("Flink:");
+        let _ = kubectl.run_inherit(&["get", "pods", "-l", flink::POD_LABEL]);
     }
 
     Ok(())
@@ -619,6 +652,12 @@ fn build_component_resource_list(
         resources.push("  - base/results/pvc.yaml".into());
     }
 
+    if components.contains(&Component::Flink) {
+        for resource in flink::RESOURCES {
+            resources.push(format!("  - {resource}"));
+        }
+    }
+
     if components.contains(&Component::Monitoring) {
         match prometheus_config {
             PrometheusConfigResource::Base => {
@@ -767,6 +806,27 @@ fn deploy(
     if external && components.contains(&Component::Monitoring) {
         write_external_prometheus_config(tmp, kubectl.namespace())?;
     }
+    // Prometheus reads its config only at startup, so the pod template
+    // carries a hash of the rendered config: a changed config (such as the
+    // Flink scrape job appearing) rolls the pod, an unchanged one doesn't.
+    let prometheus_config_hash = if components.contains(&Component::Monitoring) {
+        let prometheus_config = if external {
+            tmp.join("prometheus-config.yaml")
+        } else {
+            tmp.join("base/monitoring/prometheus-config.yaml")
+        };
+        let mut content = std::fs::read_to_string(&prometheus_config)?;
+        // Scrape Flink's reporters only when the env has Flink.
+        if env_config.flink.is_some() {
+            content.push_str(&flink::scrape_job(kubectl.namespace()));
+            std::fs::write(&prometheus_config, &content)?;
+        }
+        let mut hash = Fnv1a64::new();
+        hash.update(content.as_bytes());
+        Some(format!("{:016x}", hash.finish()))
+    } else {
+        None
+    };
 
     // Build resource list based on selected components
     let resource_list = build_resource_list(components, external);
@@ -774,6 +834,20 @@ fn deploy(
     // Build patches separately — only emit the `patches:` key if there are entries.
     // Kustomize rejects an empty `patches:` key.
     let mut patches = String::new();
+
+    if let Some(hash) = &prometheus_config_hash {
+        patches.push_str(&format!(
+            r#"  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |
+      - op: add
+        path: /spec/template/metadata/annotations
+        value:
+          dimster.dev/config-hash: "{hash}"
+"#
+        ));
+    }
 
     // --- Kafka patches (full deployment only) ---
     if !external && components.contains(&Component::Kafka) {
@@ -1401,6 +1475,16 @@ fn deploy(
                 mount_path = mount_path,
                 secret = secret,
             ));
+        }
+    }
+
+    // --- Flink patches ---
+    if components.contains(&Component::Flink) {
+        if let Some(flink_config) = &env_config.flink {
+            let tls = tls_settings
+                .as_ref()
+                .map(|_| (kafka_tls::CLIENT_MOUNT_PATH, kafka_tls::CLIENT_SECRET));
+            patches.push_str(&flink::patches(flink_config, tls)?);
         }
     }
 
@@ -2328,6 +2412,29 @@ spec:
         assert!(resources.contains("base/workers/deployment.yaml"));
         assert!(!resources.contains("base/monitoring/prometheus.yaml"));
         assert!(!resources.contains("base/monitoring/grafana.yaml"));
+    }
+
+    #[test]
+    fn flink_resources_are_component_scoped() {
+        let flink = build_teardown_resource_list(&HashSet::from([Component::Flink]), false, false);
+        for resource in flink::RESOURCES {
+            assert!(flink.contains(resource), "{flink}");
+        }
+        assert!(!flink.contains("base/workers/deployment.yaml"));
+
+        let workers =
+            build_teardown_resource_list(&HashSet::from([Component::Workers]), false, false);
+        assert!(!workers.contains("base/flink/"));
+    }
+
+    #[test]
+    fn full_teardown_includes_flink() {
+        let resources = build_teardown_resource_list(&Component::all(), false, true);
+        assert!(resources.contains("base/flink/jobmanager.yaml"));
+        assert_eq!(
+            parse_components(&["flink".to_string()]).unwrap(),
+            HashSet::from([Component::Flink])
+        );
     }
 
     #[test]

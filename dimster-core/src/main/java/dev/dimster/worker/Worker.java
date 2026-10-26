@@ -144,6 +144,15 @@ public interface Worker extends AutoCloseable {
      */
     default void setDataset(ResolvedDataset dataset) throws IOException {}
 
+    /**
+     * Whether consumers read the output of a Flink job rather than the
+     * producers' records. The output keeps the dataset's format and the
+     * {@code _dimster} header, so counting and latency are unchanged, but its
+     * columns come from the workload's SQL: printed contents then can't be
+     * decoded with the dataset's schema. Set with {@link #setDataset}.
+     */
+    default void setConsumedThroughFlink(boolean throughFlink) throws IOException {}
+
     /** Adjust the simulated per-record processing time on all active consumers. */
     default void setConsumerProcessingTime(int minMs, int maxMs) {}
 

@@ -120,6 +120,22 @@ environments:
   #     requests:
   #       cpu: "500m"
   #       memory: "1Gi"
+  #   # Optional Flink session cluster for workloads with a Flink SQL stage
+  #   # (baseWorkload.flink; see docs/concepts/flink.md). Absent = no Flink.
+  #   flink:
+  #     # image: flink:2.2.1-java21   # must be Flink 2.2.x (the runner jar's version)
+  #     jobmanager:
+  #       requests:
+  #         cpu: "500m"
+  #         memory: "1Gi"
+  #     taskmanagers:
+  #       replicas: 1
+  #       slots: 4                   # a job of parallelism P needs P free slots
+  #       requests:
+  #         cpu: "2"
+  #         memory: "4Gi"
+  #     # config:                    # extra Flink configuration
+  #     #   pipeline.object-reuse: true
 
   # Example: An local deployment with an external Kafka cluster.
   # Benchmarking components run on minikube, Kafka run in Docker compose.

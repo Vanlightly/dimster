@@ -27,6 +27,10 @@ Consumers start and begin draining the backlog. Producer behavior during drain i
 
 Stats are collected at `sampleRateMillis` intervals throughout the drain phase, tracking consumer throughput and progress.
 
+### With a Flink SQL stage
+
+With a `baseWorkload.flink` block, the backlog builds on the input topics with no Flink job running. At the drain phase the consumers start on the output topics, then the Flink job starts, and the drain time is measured from when the job runs: it covers Flink processing the backlog plus the consumers reading its output. The drain counts one output record per input record, so the query must not filter; a filter keeps the drain going until `drainTimeoutMinutes`. See [Flink SQL Stage](../concepts/flink.md#drain-backlog-mode).
+
 ## drainBacklogConfig Fields
 
 | Field | Default | Description                                                               |

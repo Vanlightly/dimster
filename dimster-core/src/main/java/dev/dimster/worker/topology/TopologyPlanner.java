@@ -86,6 +86,9 @@ public class TopologyPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(TopologyPlanner.class);
 
+    /** Suffix of the Flink stage's output topic for each input topic. */
+    public static final String OUTPUT_TOPIC_SUFFIX = "-out";
+
     public enum WorkerMode { MIXED, SEPARATED }
 
     /** Constraint on how to split the worker pool in SEPARATED mode. */
@@ -139,7 +142,21 @@ public class TopologyPlanner {
             MessageDistributorType messageDistributorType,
             double messageDistributorSkew,
             boolean correctnessEnabled,
-            boolean staticConsumerPartitions) {
+            boolean staticConsumerPartitions,
+            int outputPartitionsPerTopic) {
+
+        /** A spec without a Flink stage. */
+        public TopologySpec(String topicPrefix, int numTopics, int partitionsPerTopic, int producersPerTopic,
+                            int consumerGroupsPerTopic, int consumersPerGroup, ConsumerType consumerType,
+                            int consumerProcMsMin, int consumerProcMsMax, int consumerProcParallelism,
+                            ConsumerProcMode consumerProcMode, int consumerProcCapacity,
+                            MessageDistributorType messageDistributorType, double messageDistributorSkew,
+                            boolean correctnessEnabled, boolean staticConsumerPartitions) {
+            this(topicPrefix, numTopics, partitionsPerTopic, producersPerTopic, consumerGroupsPerTopic,
+                    consumersPerGroup, consumerType, consumerProcMsMin, consumerProcMsMax, consumerProcParallelism,
+                    consumerProcMode, consumerProcCapacity, messageDistributorType, messageDistributorSkew,
+                    correctnessEnabled, staticConsumerPartitions, 0);
+        }
 
         public TopologySpec {
             if (topicPrefix == null || topicPrefix.isEmpty()) {
@@ -166,6 +183,19 @@ public class TopologyPlanner {
             if (consumersPerGroup < 0) {
                 throw new IllegalArgumentException("consumersPerGroup must be >= 0");
             }
+            if (outputPartitionsPerTopic < 0) {
+                throw new IllegalArgumentException("outputPartitionsPerTopic must be >= 0");
+            }
+            if (outputPartitionsPerTopic > 0 && correctnessEnabled) {
+                // Correctness co-locates each topic's producers and consumers,
+                // which assumes they share the topic.
+                throw new IllegalArgumentException("A Flink stage is not supported with correctness mode");
+            }
+        }
+
+        /** Whether a Flink stage sits between producers and consumers. */
+        public boolean pipelined() {
+            return outputPartitionsPerTopic > 0;
         }
     }
 
@@ -253,11 +283,24 @@ public class TopologyPlanner {
         }
         List<String> topicNames = new ArrayList<>(topicPartitionCounts.keySet());
 
+        // 1b. With a Flink stage, each input topic gets an output topic, which
+        //     consumers read instead. The "-out" suffix keeps it under the topic
+        //     prefix, so test-topic cleanup removes it too.
+        Map<String, String> pipelineTopics = new LinkedHashMap<>();
+        if (spec.pipelined()) {
+            for (String topic : topicNames) {
+                String output = topic + OUTPUT_TOPIC_SUFFIX;
+                pipelineTopics.put(topic, output);
+                topicPartitionCounts.put(output, spec.outputPartitionsPerTopic());
+            }
+        }
+        List<String> consumerTopics = spec.pipelined() ? new ArrayList<>(pipelineTopics.values()) : topicNames;
+
         // 2. Generate per-(topic, groupIdx) consumer group names. Same naming format
         //    as the legacy code (random suffix per group to avoid reusing offsets
         //    from a prior run on the same cluster).
         Map<String, List<String>> groupsByTopic = new LinkedHashMap<>();
-        for (String topic : topicNames) {
+        for (String topic : consumerTopics) {
             List<String> groups = new ArrayList<>(spec.consumerGroupsPerTopic());
             for (int g = 0; g < spec.consumerGroupsPerTopic(); g++) {
                 groups.add(String.format("dimster-grp-%03d-%s", g, randomSuffix.get()));
@@ -301,7 +344,7 @@ public class TopologyPlanner {
         List<VirtualProducer> producers = buildProducers(
                 spec, topicNames, pinning, topicAffinity, effectiveProducersPerTopic);
         List<VirtualConsumer> consumers = buildConsumers(
-                spec, topicNames, groupsByTopic, topicAffinity);
+                spec, consumerTopics, topicPartitionCounts, groupsByTopic, topicAffinity);
 
         int activeProducerWorkerCount = (int) producers.stream()
                 .map(VirtualProducer::worker)
@@ -320,7 +363,8 @@ public class TopologyPlanner {
                 spec.consumerProcCapacity(),
                 spec.messageDistributorType(),
                 spec.messageDistributorSkew(),
-                activeProducerWorkerCount);
+                activeProducerWorkerCount,
+                pipelineTopics);
     }
 
     // ------------- worker assignment helpers -------------
@@ -473,6 +517,7 @@ public class TopologyPlanner {
     // ------------- consumer construction -------------
 
     private List<VirtualConsumer> buildConsumers(TopologySpec spec, List<String> topicNames,
+                                                  Map<String, Integer> topicPartitionCounts,
                                                   Map<String, List<String>> groupsByTopic,
                                                   Map<String, String> topicAffinity) {
         if (spec.consumerGroupsPerTopic() == 0 || spec.consumersPerGroup() == 0) return List.of();
@@ -483,7 +528,7 @@ public class TopologyPlanner {
             for (String group : groupsByTopic.get(topic)) {
                 // Pre-compute static partitions for this (topic, group) once, then deal them out by consumerIdx.
                 List<List<TopicPartition>> staticByConsumerIdx = spec.staticConsumerPartitions()
-                        ? roundRobinPartitions(topic, spec.partitionsPerTopic(), spec.consumersPerGroup())
+                        ? roundRobinPartitions(topic, topicPartitionCounts.get(topic), spec.consumersPerGroup())
                         : null;
 
                 for (int consumerIdx = 0; consumerIdx < spec.consumersPerGroup(); consumerIdx++) {

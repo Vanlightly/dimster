@@ -235,6 +235,7 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
             // checkpoint and write the final JSON, breaking resume).
             log.warn("Benchmark terminated early due to stop requested");
             worker.stopAll();
+            stopFlink();
             throw e;
         }
 
@@ -258,6 +259,7 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
 
         cluster.deleteTestTopics();
         cluster.deleteTestGroups();
+        cancelLeftoverFlinkJobs(point);
 
         // Plan the virtual topology first — it owns topic and consumer-group naming —
         // then create the actual Kafka topics from the planned names.
@@ -267,7 +269,8 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
                 point.consumerProcMode(), point.consumerProcCapacity(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off in WorkloadEngine */,
-                false /* dynamic consumer assignment outside correctness mode */);
+                false /* dynamic consumer assignment outside correctness mode */,
+                outputPartitionsPerTopic(point));
         recordPlannedTopology(point.label(), workload.engineConfig.printTopology);
         topics = createPlannedTopics();
 
@@ -290,10 +293,19 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
         }
 
         configureDataset(point);
+        if (point.flink() != null) {
+            // The job must be reading the input topics before producers
+            // start; consumers read its output topics.
+            startFlink(point);
+        }
         createConsumers();
         setConsumerRecreation();
         createProducers();
-        ensureReady(topics, point.consumerGroupsPerTopic(), 60);
+        if (point.flink() != null) {
+            ensureReadyThroughFlink(plannedTopology.consumerTopics(), point.consumerGroupsPerTopic(), 60);
+        } else {
+            ensureReady(topics, point.consumerGroupsPerTopic(), 60);
+        }
 
         log.info("--------------- WORKLOAD : {} --- CONFIG : {} ---------------",
                 workload.name, pointConfig.name != null ? pointConfig.name : "embedded");
@@ -468,11 +480,30 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
         entry.results = testResult.results;
         entry.availability = testResult.availability;
         entry.modifications = consumeModifications();
+        entry.flink = flinkResult(point);
+        if (entry.flink != null) {
+            entry.flink.selectivity = selectivity(testResult.results, point.consumerGroupsPerTopic());
+            log.info("Flink job {}: selectivity {} (records consumed per record produced and group), {} restarts",
+                    entry.flink.jobId, entry.flink.selectivity, entry.flink.restarts);
+        }
         return entry;
+    }
+
+    /**
+     * Records consumed per record produced and consumer group over the
+     * measured periods: what fraction of rows the Flink SQL lets through.
+     * Null when nothing was produced.
+     */
+    static Double selectivity(TestResult.PerformanceResults results, int consumerGroupsPerTopic) {
+        long sent = results.sent.stream().mapToLong(Long::longValue).sum();
+        long consumed = results.consumed.stream().mapToLong(Long::longValue).sum();
+        if (sent == 0 || consumerGroupsPerTopic == 0) return null;
+        return Math.round(consumed * 10_000.0 / (sent * (double) consumerGroupsPerTopic)) / 10_000.0;
     }
 
     @Override
     public void close() throws Exception {
+        stopFlink();
         if (cluster != null) {
             cluster.close();
             cluster = null;
@@ -923,6 +954,7 @@ public class WorkloadEngine extends BaseEngine implements ModificationTarget {
         result.workloadConfig.partitionsPerTopic = testPoint.partitionsPerTopic();
         result.workloadConfig.messageSize = testPoint.messageSize();
         result.workloadConfig.setDataset(testPoint.dataset());
+        result.workloadConfig.setFlink(testPoint.flink());
         result.workloadConfig.messageDistributor = testPoint.messageDistributor().name();
         result.workloadConfig.messageDistributorSkew = testPoint.messageDistributorSkew();
         result.workloadConfig.consumerType = testPoint.consumerType().name();

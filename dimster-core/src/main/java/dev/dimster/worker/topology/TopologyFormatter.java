@@ -38,6 +38,12 @@ public final class TopologyFormatter {
             sb.append("    - ").append(e.getKey())
               .append(" (").append(e.getValue()).append(" partitions)\n");
         }
+        if (!topology.pipelineTopics().isEmpty()) {
+            sb.append("  Flink pipelines (").append(topology.pipelineTopics().size()).append("):\n");
+            for (var e : topology.pipelineTopics().entrySet()) {
+                sb.append("    - ").append(e.getKey()).append(" -> ").append(e.getValue()).append('\n');
+            }
+        }
 
         // Workers, in topology order. For each worker show producers then consumers.
         sb.append("  Workers (").append(topology.workers().size())

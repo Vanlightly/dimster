@@ -66,6 +66,23 @@
 			<scope>runtime</scope>
 			<useProjectArtifact>false</useProjectArtifact>
 			<outputFileNameMapping>${artifact.groupId}-${artifact.artifactId}-${artifact.version}${dashClassifier?}.${artifact.extension}</outputFileNameMapping>
+			<excludes>
+				<exclude>dev.dimster:dimster-flink</exclude>
+			</excludes>
+		</dependencySet>
+		<!-- The shaded Flink SQL runner jar runs inside Flink, not in the
+		     Dimster JVM, so it lives outside lib/. The coordinator uploads
+		     flink/dimster-flink-runner.jar to the Flink cluster. -->
+		<dependencySet>
+			<outputDirectory>flink</outputDirectory>
+			<unpack>false</unpack>
+			<scope>runtime</scope>
+			<useProjectArtifact>false</useProjectArtifact>
+			<useTransitiveDependencies>false</useTransitiveDependencies>
+			<includes>
+				<include>dev.dimster:dimster-flink</include>
+			</includes>
+			<outputFileNameMapping>dimster-flink-runner.jar</outputFileNameMapping>
 		</dependencySet>
 	</dependencySets>
 </assembly>

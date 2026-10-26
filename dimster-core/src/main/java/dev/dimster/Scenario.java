@@ -6,6 +6,7 @@ import dev.dimster.datagen.DatasetSpec;
 import dev.dimster.engines.drainbacklog.DrainBacklogDimensions;
 import dev.dimster.engines.explore.ExploreDimensions;
 import dev.dimster.engines.run.RunDimensions;
+import dev.dimster.flink.FlinkDimensions;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.utils.distributor.MessageDistributorType;
 
@@ -61,6 +62,9 @@ public class Scenario {
 
     /** Run-only: per-scenario overrides for runConfig fields (supports dimensions) */
     public RunDimensions runConfig;
+
+    /** Per-scenario overrides for baseWorkload.flink fields (supports dimensions) */
+    public FlinkDimensions flink;
 
     /** Number of times to repeat this scenario. Default 1 (no repeat). */
     public int repeat = 1;

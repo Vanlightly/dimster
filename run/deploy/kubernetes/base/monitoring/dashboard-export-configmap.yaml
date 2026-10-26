@@ -256,12 +256,14 @@ data:
         var_values: dict mapping template variable names to their replacement
         values (e.g. {'instance': '.*', 'share_group': '.*'}).
 
-        Returns (chart_htmls, chart_scripts) — lists of HTML snippets and
-        JS snippets to be joined into the page.
+        Returns (chart_htmls, chart_scripts, has_data) — lists of HTML
+        snippets and JS snippets to be joined into the page, and whether any
+        panel returned data.
         """
         chart_htmls = []
         chart_scripts = []
         chart_counter = [0]
+        has_data = False
 
         for panel in panels:
             ptype = panel.get('type', '')
@@ -291,6 +293,7 @@ data:
                 chart_counter[0] += 1
 
                 if datasets:
+                    has_data = True
                     # The <ul> sibling is the target for htmlLegendPlugin; its
                     # id is derived from the canvas id by the same convention
                     # used in render_timeseries_chart's htmlLegend.containerId.
@@ -325,6 +328,8 @@ data:
                         label = resolve_legend(legend_fmt, labels)
                         values.append((label, v))
 
+                if any(v is not None for _, v in values):
+                    has_data = True
                 if values:
                     cards = ''.join(render_stat_card_html(
                         f'{title} — {lbl}' if lbl else title, v, unit)
@@ -333,7 +338,7 @@ data:
                     cards = render_stat_card_html(title, None, unit)
                 chart_htmls.append(f'<div class="stat-row">{cards}</div>')
 
-        return chart_htmls, chart_scripts
+        return chart_htmls, chart_scripts, has_data
 
     # -----------------------------------------------------------------------
     # HTML page generation
@@ -1021,8 +1026,13 @@ data:
         all_var_values = {name: '.*' for name, _ in template_vars}
         section_id = _safe_id('all-instances')
         section_title = 'All Instances' if instances else title
-        chart_htmls, chart_scripts = process_panels(
+        chart_htmls, chart_scripts, has_data = process_panels(
             panels, prom_url, start, end, step, all_var_values, 'all')
+        if not has_data:
+            # A dashboard for something the run didn't use, such as the Flink
+            # dashboard without a Flink stage or the Kafka dashboard with
+            # external Kafka: an all-"No data" page is just noise.
+            return None
         sections.append({
             'id': section_id,
             'title': section_title,
@@ -1035,7 +1045,7 @@ data:
             inst_var_values = {name: '.*' for name, _ in template_vars}
             inst_var_values['instance'] = inst
             section_id = _safe_id(f'instance-{inst}')
-            chart_htmls, chart_scripts = process_panels(
+            chart_htmls, chart_scripts, _ = process_panels(
                 panels, prom_url, start, end, step, inst_var_values, _safe_id(inst))
             sections.append({
                 'id': section_id,
@@ -1187,7 +1197,7 @@ data:
                     filepath, args.prometheus_url, window['start'], window['end'],
                     step, js_libs, window=window)
                 if not html_content:
-                    print(f'    Skipped (no panels)')
+                    print(f'    Skipped (no panels, or no data in this window)')
                     continue
 
                 out_path = os.path.join(

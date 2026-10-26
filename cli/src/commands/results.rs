@@ -560,6 +560,24 @@ pub fn save_logs(kubectl: &Kubectl, result_dir: &str, full: bool) -> Result<()> 
         }
     }
 
+    // Save Flink JobManager and TaskManager logs (stdout; the stock image
+    // logs to the console). None when the env has no Flink.
+    let flink_pods = kubectl
+        .run(&[
+            "get",
+            "pods",
+            "-l",
+            crate::commands::flink::POD_LABEL,
+            "-o",
+            "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+        ])
+        .unwrap_or_default();
+
+    for pod in flink_pods.lines().filter(|l| !l.trim().is_empty()) {
+        let pod = pod.trim();
+        save_pod_logs(kubectl, pod, &logs_dir, since_time.as_deref());
+    }
+
     Ok(())
 }
 

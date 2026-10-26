@@ -5,6 +5,9 @@ use anyhow::Result;
 
 use crate::kubectl::{ChildGuard, Kubectl};
 
+/// Local port of the Flink web UI port-forward.
+const FLINK_UI_PORT: u16 = 8081;
+
 pub fn run(
     kubectl: &Kubectl,
     grafana_port: u16,
@@ -28,8 +31,16 @@ pub fn run(
         "--timeout=60s",
     ])?;
 
+    // The Flink web UI, for environments with Flink.
+    let flink_deployed = kubectl
+        .run(&["get", "deployment", "flink-jobmanager"])
+        .is_ok();
+
     println!("==> Grafana    http://localhost:{}", grafana_port);
     println!("    Prometheus  http://localhost:{}", prometheus_port);
+    if flink_deployed {
+        println!("    Flink UI    http://localhost:{}", FLINK_UI_PORT);
+    }
     println!("    Press Ctrl+C to stop");
 
     let prom_forward = format!("{}:9090", prometheus_port);
@@ -41,6 +52,17 @@ pub fn run(
     let grafana_child =
         kubectl.spawn_inherit(&["port-forward", "svc/grafana", &grafana_forward])?;
     let mut _grafana_guard = ChildGuard::new(grafana_child);
+
+    let _flink_guard = if flink_deployed {
+        let forward = format!("{}:8081", FLINK_UI_PORT);
+        Some(ChildGuard::new(kubectl.spawn_inherit(&[
+            "port-forward",
+            "svc/flink-jobmanager",
+            &forward,
+        ])?))
+    } else {
+        None
+    };
 
     // Wait for Ctrl+C
     while !stop.load(Ordering::Relaxed) {

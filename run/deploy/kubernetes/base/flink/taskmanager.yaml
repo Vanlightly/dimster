@@ -1,0 +1,63 @@
+# Flink TaskManagers of the session cluster. Each offers
+# taskmanager.numberOfTaskSlots slots; a job of parallelism P needs P free
+# slots. They register with the JobManager through Service flink-jobmanager.
+# FLINK_PROPERTIES is replaced by `dimster deploy`, as for the JobManager.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: dimster
+  labels:
+    app: flink
+    component: taskmanager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: flink
+      component: taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: taskmanager
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: taskmanager
+          image: flink:2.2.1-java21
+          imagePullPolicy: IfNotPresent
+          args: ["taskmanager"]
+          ports:
+            - containerPort: 6122
+              name: rpc
+            - containerPort: 9249
+              name: metrics
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                jobmanager.rpc.port: 6123
+                taskmanager.bind-host: 0.0.0.0
+                taskmanager.rpc.port: 6122
+                blob.server.port: 6124
+                taskmanager.numberOfTaskSlots: 2
+                taskmanager.memory.process.size: 1536m
+                taskmanager.memory.managed.fraction: 0.1
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9249
+          livenessProbe:
+            tcpSocket:
+              port: 6122
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1536Mi"
+            limits:
+              cpu: "1"
+              memory: "1536Mi"

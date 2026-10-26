@@ -21,7 +21,7 @@ Keep the following roles in your head:
 - **Workers** — N pods that produce and consume against Kafka.
 - **Monitoring** — Node exporter, Prometheus and Grafana. 
 
-Everything else on the page is detail behind those four roles.
+Everything else on the page is detail behind those four roles. Environments can also deploy an optional Flink session cluster, for workloads that put a [Flink SQL stage](flink.md) between producers and consumers; the coordinator runs one Flink job per test point on it.
 
 ## The four roles
 

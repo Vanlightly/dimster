@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>dev.dimster</groupId>
 		<artifactId>dimster</artifactId>
-		<version>0.5.0</version>
+		<version>0.6.0</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -57,6 +57,20 @@
 			<groupId>${project.groupId}</groupId>
 			<artifactId>dimster-kafka-4.1</artifactId>
 			<version>${project.version}</version>
+		</dependency>
+		<!-- The Flink SQL runner, shipped in flink/ for the coordinator to
+		     upload (see package-common/src/assemble/bin.xml). Not on the
+		     Dimster classpath. -->
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>dimster-flink</artifactId>
+			<version>${project.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>*</groupId>
+					<artifactId>*</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 	</dependencies>
 

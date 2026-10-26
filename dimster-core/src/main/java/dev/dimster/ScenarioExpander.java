@@ -10,6 +10,8 @@ import dev.dimster.engines.explore.ExploreDimensions;
 import dev.dimster.engines.explore.ExploreWorkload.ExploreConfig;
 import dev.dimster.engines.run.RunConfig;
 import dev.dimster.engines.run.RunDimensions;
+import dev.dimster.flink.FlinkDimensions;
+import dev.dimster.flink.FlinkSpec;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.utils.distributor.MessageDistributorType;
 import dev.dimster.utils.payload.FilePayloadReader;
@@ -53,7 +55,9 @@ public class ScenarioExpander {
             ExploreConfig exploreConfig,
             RunConfig runConfig,
             /* The dataset records are generated from: the workload's, or the payload dataset. */
-            ResolvedDataset dataset
+            ResolvedDataset dataset,
+            /* The Flink SQL stage, fully resolved (outputPartitionsPerTopic set), or null for none. */
+            FlinkSpec flink
     ) {
         public String toLogString() {
             var sb = new StringBuilder();
@@ -111,6 +115,13 @@ public class ScenarioExpander {
                   .append(", rampIntervals=").append(runConfig.rampIntervals)
                   .append(", rampIntervalSeconds=").append(runConfig.rampIntervalSeconds)
                   .append(", sampleRateMillis=").append(runConfig.sampleRateMillis);
+            }
+            if (flink != null) {
+                sb.append("\n    Flink: parallelism=").append(flink.parallelism)
+                  .append(", deliveryGuarantee=").append(flink.deliveryGuarantee)
+                  .append(", checkpointIntervalMs=").append(flink.checkpointIntervalMs)
+                  .append(", outputPartitionsPerTopic=").append(flink.outputPartitionsPerTopic)
+                  .append("\n    Flink SQL: ").append(flink.sql.strip().replaceAll("\\s+", " "));
             }
             if (exploreConfig != null) {
                 sb.append("\n    Explore: e2eLatencyPercentile=").append(exploreConfig.e2eLatencyPercentile)
@@ -383,6 +394,11 @@ public class ScenarioExpander {
             runRampSeconds    = resolve(runDims != null ? runDims.rampIntervalSeconds   : null, runDefaults.rampIntervalSeconds);
         }
 
+        FlinkDimensions flinkDims = scenario.flink;
+        if (flinkDims != null) {
+            flinkDims.validate(effectiveName);
+        }
+
         // Merge base + scenario kafkaConfig (property-level map merge)
         KafkaConfig mergedBaseKafkaConfig = KafkaConfig.merge(fileConfig, base.kafkaConfig);
         KafkaConfig finalMergedKafkaConfig = KafkaConfig.merge(mergedBaseKafkaConfig, scenario.kafkaConfig);
@@ -404,6 +420,10 @@ public class ScenarioExpander {
         if (runDefaults != null) {
             n = maxLength(n, runTestDuration, runWarmupDuration, runSampleRate,
                     runRampIntervals, runRampSeconds);
+        }
+        if (flinkDims != null) {
+            n = maxLength(n, flinkDims.lists().stream().filter(java.util.Objects::nonNull)
+                    .toArray(List<?>[]::new));
         }
         if (finalMergedKafkaConfig != null && finalMergedKafkaConfig.hasDimensions()) {
             n = Math.max(n, finalMergedKafkaConfig.dimensionSize());
@@ -481,6 +501,11 @@ public class ScenarioExpander {
             validate(effectiveName, n, "runConfig.rampIntervals",         runRampIntervals);
             validate(effectiveName, n, "runConfig.rampIntervalSeconds",   runRampSeconds);
         }
+        if (flinkDims != null) {
+            for (List<?> list : flinkDims.lists()) {
+                if (list != null) validate(effectiveName, n, "flink", list);
+            }
+        }
         if (finalMergedKafkaConfig != null && finalMergedKafkaConfig.hasDimensions()) {
             finalMergedKafkaConfig.validateDimensions(effectiveName, n);
         }
@@ -507,6 +532,13 @@ public class ScenarioExpander {
                     : pointRateSchedule.maxConfiguredRate();
             ResolvedDataset pointDataset = resolveDataset(effectiveName, base, get(datasets, i),
                     get(msgSize, i), get(keyDist, i), scenario.messageSize != null);
+            FlinkSpec pointFlink = resolveFlink(effectiveName,
+                    flinkDims != null ? flinkDims.applyAt(base.flink, i) : base.flink,
+                    pointDataset, get(partitions, i));
+            if (pointFlink != null) {
+                pointConfig = pointFlink.applyConsumerDefaults(pointConfig);
+                pointFlink.applySourceDefaults(pointConfig);
+            }
 
             // Build a fully resolved DrainBacklogConfig for this test point
             DrainBacklogConfig pointDrainConfig = null;
@@ -579,7 +611,8 @@ public class ScenarioExpander {
                     pointDrainConfig,
                     pointExploreConfig,
                     pointRunConfig,
-                    pointDataset
+                    pointDataset,
+                    pointFlink
             ));
         }
         return points;
@@ -599,6 +632,11 @@ public class ScenarioExpander {
         double producerRate = base.producerRateSchedule == null
                 ? base.producerRate
                 : base.producerRateSchedule.maxConfiguredRate();
+        FlinkSpec flink = resolveFlink("default", base.flink, dataset, base.partitionsPerTopic);
+        if (flink != null) {
+            merged = flink.applyConsumerDefaults(merged);
+            flink.applySourceDefaults(merged);
+        }
         return new TestPoint(
                 "default", 0, 1, label, 0, 1,
                 base.topics, base.partitionsPerTopic, base.producersPerTopic,
@@ -613,8 +651,31 @@ public class ScenarioExpander {
                 drainDefaults,
                 exploreDefaults,
                 runDefaults,
-                dataset
+                dataset,
+                flink
         );
+    }
+
+    /**
+     * Resolves and validates one test point's Flink stage: a copy with the
+     * output partition count filled in, or null when the point has none. A
+     * Flink stage needs a generated dataset, whose schema the Flink source
+     * table mirrors; the payload dataset is opaque bytes.
+     */
+    static FlinkSpec resolveFlink(String scenarioName, FlinkSpec spec, ResolvedDataset dataset,
+                                  int partitionsPerTopic) {
+        if (spec == null) return null;
+        FlinkSpec point = spec.copy();
+        if (point.outputPartitionsPerTopic == null) {
+            point.outputPartitionsPerTopic = partitionsPerTopic;
+        }
+        point.validate(scenarioName);
+        if (dataset.isPayloadDataset()) {
+            throw new IllegalArgumentException(
+                    "Scenario '%s': flink requires a dataset (AVRO or JSON); the Flink source table mirrors its schema"
+                            .formatted(scenarioName));
+        }
+        return point;
     }
 
     /** Rows sampled to estimate a dataset's average record size. */

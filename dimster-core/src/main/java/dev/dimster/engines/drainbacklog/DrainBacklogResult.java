@@ -38,6 +38,9 @@ public class DrainBacklogResult {
         public WorkloadConfig workloadConfig = new WorkloadConfig();
         public DrainData drain = new DrainData();
         public PerformanceResults performance = new PerformanceResults();
+        /** The test point's Flink job; null without a Flink stage. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        public dev.dimster.flink.FlinkResult flink;
     }
 
     @JsonPropertyOrder({"backlogSizeGB", "backlogSizeBytes", "backlogMessages",
