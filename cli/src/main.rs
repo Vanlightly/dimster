@@ -84,7 +84,7 @@ enum Commands {
         #[arg(short = 'l', long = "log-config")]
         log_config: Option<String>,
 
-        /// Deploy only specific components (comma-separated: kafka,workers,coordinator,monitoring)
+        /// Deploy only specific components (comma-separated: kafka,workers,coordinator,monitoring,flink)
         #[arg(short = 'o', long = "only", value_delimiter = ',')]
         only: Vec<String>,
     },
@@ -300,7 +300,7 @@ enum Commands {
         /// Environment name
         env: String,
 
-        /// Tear down only specific components (comma-separated: kafka,workers,coordinator,monitoring)
+        /// Tear down only specific components (comma-separated: kafka,workers,coordinator,monitoring,flink)
         #[arg(short = 'o', long = "only", value_delimiter = ',')]
         only: Vec<String>,
     },
@@ -363,12 +363,12 @@ enum Commands {
         prometheus_port: u16,
     },
 
-    /// View logs from worker, coordinator, or kafka pods
+    /// View logs from worker, coordinator, kafka or flink pods
     Logs {
         /// Environment name
         env: String,
 
-        /// Component to view logs for (worker, coordinator, kafka)
+        /// Component to view logs for (worker, coordinator, kafka, flink)
         #[arg(default_value = "worker")]
         component: String,
 

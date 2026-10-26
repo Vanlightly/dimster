@@ -11,6 +11,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 import dev.dimster.availability.AvailabilityResult;
 import dev.dimster.datagen.ResolvedDataset;
+import dev.dimster.flink.FlinkSpec;
 import dev.dimster.worker.commands.PeriodStats;
 
 @JsonPropertyOrder({"mode", "metadata", "kafkaConfig", "workloadConfig", "results"})
@@ -107,6 +108,24 @@ public class TestResult {
             if (dataset != null) {
                 datasetPreset = dataset.preset() != null ? dataset.preset() : "custom";
                 datasetFormat = dataset.format().name();
+            }
+        }
+
+        // The Flink stage's sweepable settings, flat so that charting and
+        // pivot tools see them as dimensions. Absent without a Flink stage.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public Integer flinkParallelism;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public String flinkDeliveryGuarantee;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public Integer flinkOutputPartitionsPerTopic;
+
+        /** Records the test point's Flink stage, if it has one. */
+        public void setFlink(FlinkSpec flink) {
+            if (flink != null) {
+                flinkParallelism = flink.parallelism;
+                flinkDeliveryGuarantee = flink.deliveryGuarantee.name();
+                flinkOutputPartitionsPerTopic = flink.outputPartitionsPerTopic;
             }
         }
     }

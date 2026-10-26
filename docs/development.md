@@ -57,6 +57,7 @@ dimster/
 ├── dimster-kafka-4.1/    # SPI impl bound to kafka-clients 4.1 (share consumer only)
 ├── dimster-kafka-4.2.0/  # SPI impl bound to kafka-clients 4.2.0 (full share-group support)
 ├── dimster-core/         # Java engine: producers, consumers, coordinator, modes (depends on dimster-spi only)
+├── dimster-flink/        # Flink SQL runner jar (Java 17, shaded), submitted to Flink by the coordinator
 ├── package-common/       # Shared assembly bits for the per-flavor packages
 ├── package-3.x/          # Per-flavor tarball bundling dimster-core + dimster-kafka-3.x
 ├── package-4.1/          # ... bundling dimster-core + dimster-kafka-4.1
@@ -136,6 +137,7 @@ IDE — call the Maven wrapper directly without a full image build:
 
 ```bash
 ./mvnw -pl dimster-core test                       # unit tests in the engine module
+./mvnw -pl dimster-flink test                      # Flink runner: plans pipelines with the real planner, no Kafka needed
 ./mvnw -pl dimster-core test -Dtest=SomeTest       # single test
 ./mvnw clean install -DskipTests                   # full reactor install (no tests)
 ```

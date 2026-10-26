@@ -14,6 +14,8 @@ import java.util.HexFormat;
  *       printed in the same JSON form, so both formats read alike.</li>
  *   <li>RAW records (the payload dataset) are mostly random bytes, so only
  *       their message type, size and first bytes are shown.</li>
+ *   <li>Avro records of a Flink job's output have the SQL's columns, not the
+ *       dataset's, so only their message type and size are shown.</li>
  * </ul>
  * Printing is only allowed at low rates (the engines force it off above
  * 50 msg/s), so rendering allocates freely and is thread-safe by building
@@ -26,10 +28,26 @@ public final class RecordPrinter {
     private static final int RAW_PREFIX_BYTES = 16;
 
     private final ResolvedDataset dataset;
+    /** False for records whose columns differ from the dataset's (a Flink job's output). */
+    private final boolean schemaKnown;
 
     /** @param dataset the test point's dataset */
     public RecordPrinter(ResolvedDataset dataset) {
+        this(dataset, true);
+    }
+
+    private RecordPrinter(ResolvedDataset dataset, boolean schemaKnown) {
         this.dataset = dataset;
+        this.schemaKnown = schemaKnown;
+    }
+
+    /**
+     * A printer for records in the dataset's format whose columns Dimster
+     * doesn't know, such as a Flink job's output: JSON is still printed as
+     * is, but Avro can't be decoded, so only the message type and size are shown.
+     */
+    public static RecordPrinter forTransformedRecords(ResolvedDataset dataset) {
+        return new RecordPrinter(dataset, false);
     }
 
     /** {@code key=<key> value=<rendered value>}, for appending to a log line. */
@@ -56,8 +74,11 @@ public final class RecordPrinter {
             text = renderRaw(value);
         } else if (dataset.format() == RecordFormat.JSON) {
             text = new String(value, StandardCharsets.UTF_8);
-        } else {
+        } else if (schemaKnown) {
             text = renderAvro(value);
+        } else {
+            text = "<" + MessageType.nameOf(RecordFormat.AVRO.typeOf(value)) + ", " + value.length
+                    + " bytes, Avro with the Flink SQL's output schema>";
         }
         return text.length() > MAX_CHARS ? text.substring(0, MAX_CHARS) + "...(truncated)" : text;
     }

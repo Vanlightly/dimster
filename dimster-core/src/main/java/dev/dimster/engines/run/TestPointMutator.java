@@ -248,6 +248,9 @@ public class TestPointMutator {
      */
     private TestPoint applyWorkloadOverrides(TestPoint current, Map<String, Object> overrides) {
         if (overrides == null || overrides.isEmpty()) return current;
+        if (overrides.containsKey("flink")) {
+            throw new IllegalArgumentException("flink can't be modified live: the Flink job is fixed for the test point");
+        }
         boolean fixedRateOverride = overrides.containsKey("producerRate");
         ProducerRateSchedule schedule = pickSchedule(overrides, "producerRateSchedule",
                 fixedRateOverride ? null : current.producerRateSchedule());
@@ -288,7 +291,8 @@ public class TestPointMutator {
                 // messageSize change for them).
                 messageSize != current.messageSize() && current.dataset().isPayloadDataset()
                         ? payloadDataset.apply(messageSize)
-                        : current.dataset());
+                        : current.dataset(),
+                current.flink());
     }
 
     private static int pickInt(Map<String, Object> overrides, String key, int current) {
@@ -348,7 +352,7 @@ public class TestPointMutator {
                 base.consumerProcMsMin(), base.consumerProcMsMax(), base.consumerProcParallelism(),
                 base.consumerProcMode(), base.consumerProcCapacity(),
                 base.drainBacklogConfig(), base.exploreConfig(),
-                base.runConfig(), base.dataset());
+                base.runConfig(), base.dataset(), base.flink());
     }
 
     // ─── Step 1b: Kafka config override application ────────────────────
@@ -834,7 +838,7 @@ public class TestPointMutator {
                                                         int oldCount, int newCount,
                                                         TestPoint mutated) {
         List<String> producerWorkers = planner.producerWorkers();
-        List<String> topics = new ArrayList<>(currentTopology.topicPartitionCounts().keySet());
+        List<String> topics = currentTopology.producerTopics();
         // Worker round-robin index continues from where existing producers
         // left off so the assignment matches a fresh full plan() call.
         int rrIdx = currentTopology.producers().size();
@@ -862,7 +866,7 @@ public class TestPointMutator {
     private List<VirtualProducer> buildProducerSetForDistributor(
             VirtualTopology currentTopology, TestPoint mutated) {
         List<String> producerWorkers = planner.producerWorkers();
-        List<String> topics = new ArrayList<>(currentTopology.topicPartitionCounts().keySet());
+        List<String> topics = currentTopology.producerTopics();
         // Pre-index existing producers by (topic, idx) -> worker so we
         // can reuse the placement of producers that survive the change.
         java.util.Map<String, String> existingPlacement = new java.util.HashMap<>();
@@ -1028,7 +1032,8 @@ public class TestPointMutator {
                 mutated.consumerProcCapacity(),
                 mutated.messageDistributor(),
                 mutated.messageDistributorSkew(),
-                Math.max(activeProducerWorkers, 1));
+                Math.max(activeProducerWorkers, 1),
+                current.pipelineTopics());
     }
 
     private static double effectiveTargetRate(TestPoint point) {

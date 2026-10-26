@@ -86,6 +86,23 @@ environments:
         requests:
           cpu: <string>
           memory: <string>
+
+    flink:                    # Flink session cluster (optional; absent = no Flink)
+      image: <string>           # Full image reference (default: "flink:2.2.1-java21")
+      jobmanager:
+        requests:
+          cpu: <string>
+          memory: <string>
+        nodeLabel: <string>
+      taskmanagers:
+        replicas: <int>
+        slots: <int>            # Task slots per TaskManager
+        requests:
+          cpu: <string>
+          memory: <string>
+        nodeLabel: <string>
+      config:                   # Extra Flink cluster configuration
+        <key>: <value>
 ```
 
 ---
@@ -268,6 +285,27 @@ The coordinator deployment uses `strategy: Recreate` because it has a ReadWriteO
 | `grafana.requests.memory` | string | -- | Override Grafana memory request/limit. |
 
 `prometheus` and `grafana` resource overrides only take effect when both `cpu` and `memory` are set; otherwise the base manifest defaults apply.
+
+### flink
+
+A Flink session cluster for workloads with a [Flink SQL stage](../concepts/flink.md): one JobManager and `taskmanagers.replicas` TaskManagers, from the stock Flink image. Deployed only when the block is present; `dimster deploy <env> --only flink` deploys just Flink. The coordinator runs one job per test point on it, so the cluster is shared by every test point and needs no redeploy between runs.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image` | string | `flink:2.2.1-java21` | Full image reference. Must be Flink 2.2.x, the version Dimster's Flink runner jar is built for. |
+| `jobmanager.requests.cpu` | string | `500m` | JobManager CPU request/limit. |
+| `jobmanager.requests.memory` | string | `1Gi` | JobManager memory request/limit; also its `jobmanager.memory.process.size`. At least `768Mi`. |
+| `jobmanager.nodeLabel` | string | -- | Node selector label (`key=value`) for the JobManager. |
+| `taskmanagers.replicas` | int | `1` | Number of TaskManagers. |
+| `taskmanagers.slots` | int | `2` | Task slots per TaskManager. A job of parallelism P needs P free slots. |
+| `taskmanagers.requests.cpu` | string | `1` | CPU request/limit per TaskManager. |
+| `taskmanagers.requests.memory` | string | `2Gi` | Memory request/limit per TaskManager; also its `taskmanager.memory.process.size`. At least `1Gi`. |
+| `taskmanagers.nodeLabel` | string | -- | Node selector label (`key=value`) for the TaskManagers. |
+| `config` | map | -- | Extra Flink configuration (`key: value`) for both processes, applied after Dimster's settings so it can override them. |
+
+Flink reserves 256Mi of metaspace and at least 192Mi of JVM overhead out of each process size, so smaller values would leave it no memory to start with; `dimster deploy` rejects them. Dimster sets `taskmanager.memory.managed.fraction: 0.1` (Flink's default is 0.4) because its jobs are stateless SQL that doesn't use managed memory; `config` can change it. With Kafka TLS enabled, the client TLS Secret is mounted into the Flink pods at the same path as on workers, so TLS workloads work through Flink too.
+
+Each Flink pod's Prometheus reporter is scraped as job `flink`, which feeds the **Dimster - Flink** dashboard.
 
 ---
 

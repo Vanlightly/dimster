@@ -155,7 +155,7 @@ public class WorkloadEngineModifyTest {
                 10000, // consumerProcCapacity
                 null, null,
                 new dev.dimster.engines.run.RunConfig(),
-                DatasetResolver.payloadDataset(1000 - 1, 0.5, 100, null));
+                DatasetResolver.payloadDataset(1000 - 1, 0.5, 100, null), null);
     }
 
     private TestPoint makeTestPointWithDistributor(int producersPerTopic, int consumersPerGroup,
@@ -174,7 +174,7 @@ public class WorkloadEngineModifyTest {
                 10000, // consumerProcCapacity
                 null, null,
                 new dev.dimster.engines.run.RunConfig(),
-                DatasetResolver.payloadDataset(1000 - 1, 0.5, 100, null));
+                DatasetResolver.payloadDataset(1000 - 1, 0.5, 100, null), null);
     }
 
     /** Variant of makeTopology with PINNED_PARTITIONS pinning (one partition per producer). */

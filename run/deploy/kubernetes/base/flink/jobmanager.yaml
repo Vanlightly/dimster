@@ -1,0 +1,97 @@
+# Flink JobManager of the session cluster that runs workloads' Flink SQL
+# stage. Deployed only for environments with a `flink:` block. The
+# coordinator submits one job per test point through the REST API on 8081
+# (Service flink-jobmanager), uploading the runner jar it ships with, so the
+# stock flink image is used as is.
+#
+# All Flink configuration is in FLINK_PROPERTIES, which the image's
+# entrypoint merges into its config file. `dimster deploy` replaces it with
+# values derived from the env's flink block (slots, memory, extra config);
+# the values below are the defaults for a direct `kubectl apply -k`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: dimster
+  labels:
+    app: flink
+    component: jobmanager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: flink
+      component: jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: jobmanager
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: jobmanager
+          image: flink:2.2.1-java21
+          imagePullPolicy: IfNotPresent
+          args: ["jobmanager"]
+          ports:
+            - containerPort: 6123
+              name: rpc
+            - containerPort: 6124
+              name: blob
+            - containerPort: 8081
+              name: rest
+            - containerPort: 9249
+              name: metrics
+          env:
+            - name: FLINK_PROPERTIES
+              value: |
+                jobmanager.rpc.address: flink-jobmanager
+                jobmanager.rpc.port: 6123
+                jobmanager.bind-host: 0.0.0.0
+                blob.server.port: 6124
+                rest.address: flink-jobmanager
+                rest.bind-address: 0.0.0.0
+                jobmanager.memory.process.size: 1024m
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9249
+          readinessProbe:
+            httpGet:
+              path: /overview
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 6123
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "250m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: dimster
+  labels:
+    app: flink
+spec:
+  selector:
+    app: flink
+    component: jobmanager
+  ports:
+    - name: rpc
+      port: 6123
+    - name: blob
+      port: 6124
+    - name: rest
+      port: 8081

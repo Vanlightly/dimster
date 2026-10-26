@@ -90,3 +90,18 @@ Initial public release.
 - Packaged images omitted kafka-clients' runtime compression codecs (lz4, zstd, snappy), so any `compression.type` other than `none` failed with `NoClassDefFoundError` on Kubernetes.
 - With no `image:` (or `kubernetes:`/`results:`) block in `dimster-config.yaml`, as written by `dimster init`, the CLI used an empty image tag and `dimster build` failed.
 - The first period of each run, correctness and drain-backlog phase counted messages sent before the phase began (between the previous phase's last sample and this phase's start), inflating its rate. Most visible on slow clusters, where that gap spans seconds.
+
+## [Unreleased]
+
+### Added
+
+- Flink SQL stage: a `baseWorkload.flink` block puts an Apache Flink SQL job (filters, projections and transformations) between producers and consumers in run and drain-backlog modes. The workload gives a `SELECT` over a `source` table derived from the dataset; Dimster creates the Kafka source and sink tables, derives the output schema from the query, and keeps the record header and producer timestamp so consumers measure end-to-end latency through Flink. Scenarios sweep `flink.parallelism` and other fields. Results record the job, restarts and selectivity. See docs/concepts/flink.md.
+- A `flink` environment block deploys a Flink session cluster (JobManager and TaskManagers) with `dimster deploy`; `--only flink`, `dimster logs <env> flink`, saved Flink logs in results, a Flink UI port-forward in `dimster dashboard`, and a "Dimster - Flink" Grafana dashboard.
+
+### Changed
+
+- Saved dashboard HTML pages are skipped for dashboards with no data in the run window (for example the Kafka dashboard with external Kafka).
+
+### Fixed
+
+- `dimster deploy` now restarts Prometheus when its scrape configuration changes; previously a changed configuration was only picked up after a manual restart.

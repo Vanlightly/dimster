@@ -1,5 +1,8 @@
 package dev.dimster;
 
+import dev.dimster.flink.FlinkPipeline;
+import dev.dimster.flink.FlinkRestClient;
+import dev.dimster.flink.FlinkResult;
 import dev.dimster.kafka.KafkaCluster;
 import dev.dimster.utils.Sleeper;
 import dev.dimster.utils.StopRequestedException;
@@ -50,6 +53,12 @@ public abstract class BaseEngine implements AutoCloseable {
      * {@code planTopology} call.
      */
     protected VirtualTopology plannedTopology;
+
+    /**
+     * Runs the Flink job of test points with a Flink stage. Created on first
+     * use, so runs without Flink never contact a Flink cluster.
+     */
+    private FlinkPipeline flinkPipeline;
 
     /**
      * Find an existing scenario by name in the list, or create and append a new one.
@@ -126,6 +135,9 @@ public abstract class BaseEngine implements AutoCloseable {
         if (!stopRequested.get())
             worker.awaitStopComplete(java.time.Duration.ofMinutes(5));
 
+        // The Flink job reads and writes the test topics: stop it before they go.
+        stopFlink();
+
         log.info("Test point teardown: Deleting topics and groups");
         cluster.deleteTestGroups();
         cluster.deleteTestTopics();
@@ -172,23 +184,13 @@ public abstract class BaseEngine implements AutoCloseable {
 
     protected void ensureReady(List<String> topics, int consumerGroupsPerTopic,
                                int readyTimeoutSeconds) throws IOException {
-        log.info("Waiting for all clients to be running");
-        Instant deadline = Instant.now().plus(Duration.ofSeconds(readyTimeoutSeconds));
-        while (Instant.now().isBefore(deadline)) {
-            ClientHealth health = worker.getHealth();
-            checkForFailedClients(health);
-            if (health.allRunning()) {
-                log.info("All clients are running");
-                break;
-            }
-            Sleeper.sleepOrStop(stopRequested, 1000, true);
-        }
+        awaitAllClientsRunning(readyTimeoutSeconds);
 
         log.info("Probing topics to verify end-to-end connectivity");
         int expectedMessages = topics.size() * consumerGroupsPerTopic;
         worker.probeProducers();
 
-        deadline = Instant.now().plus(Duration.ofSeconds(120));
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(120));
         Instant lastProbe = Instant.now();
         while (Instant.now().isBefore(deadline)) {
             long totalReceived = worker.getProbesReceived();
@@ -208,6 +210,111 @@ public abstract class BaseEngine implements AutoCloseable {
                 worker.getProbesReceived(), expectedMessages);
     }
 
+    private void awaitAllClientsRunning(int readyTimeoutSeconds) throws IOException {
+        log.info("Waiting for all clients to be running");
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(readyTimeoutSeconds));
+        while (Instant.now().isBefore(deadline)) {
+            ClientHealth health = worker.getHealth();
+            checkForFailedClients(health);
+            if (health.allRunning()) {
+                log.info("All clients are running");
+                return;
+            }
+            Sleeper.sleepOrStop(stopRequested, 1000, true);
+        }
+    }
+
+    /**
+     * Readiness when a Flink job sits between producers and consumers. The
+     * job is already running ({@link #startFlink} waits for that), so this
+     * waits for the clients and sends one round of probes. Probes are
+     * ordinary rows, so the workload's SQL may filter them out: a shortfall
+     * is expected and only logged, rather than retried for two minutes.
+     */
+    protected void ensureReadyThroughFlink(List<String> consumerTopics, int consumerGroupsPerTopic,
+                                           int readyTimeoutSeconds) throws IOException {
+        awaitAllClientsRunning(readyTimeoutSeconds);
+
+        int expectedMessages = consumerTopics.size() * consumerGroupsPerTopic;
+        log.info("Sending one probe per producer to the input topics; "
+                + "probes reach the consumers only if the Flink SQL keeps them");
+        worker.probeProducers();
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        while (Instant.now().isBefore(deadline)) {
+            if (worker.getProbesReceived() >= expectedMessages) {
+                log.info("All probes reached the consumers on the output topics");
+                return;
+            }
+            Sleeper.sleepOrStop(stopRequested, 1000, true);
+        }
+        log.info("{}/{} probes reached the consumers within 30s; continuing "
+                        + "(probes are ordinary rows, so the Flink SQL may filter them out)",
+                worker.getProbesReceived(), expectedMessages);
+    }
+
+    // ─── Flink stage ───────────────────────────────────────────────────
+
+    /** Test hook: use the given pipeline instead of one built from the environment. */
+    public void setFlinkPipeline(FlinkPipeline pipeline) {
+        this.flinkPipeline = pipeline;
+    }
+
+    private FlinkPipeline flinkPipeline() {
+        if (flinkPipeline == null) {
+            var pipeline = new FlinkPipeline(FlinkRestClient.fromEnvironment(), stopRequested);
+            pipeline.checkReachable();
+            flinkPipeline = pipeline;
+        }
+        return flinkPipeline;
+    }
+
+    /** For engines that don't support a Flink stage: fails if any test point has one. */
+    protected static void rejectFlink(String mode, List<ScenarioExpander.TestPoint> points) {
+        for (var point : points) {
+            if (point.flink() != null) {
+                throw new IllegalArgumentException("Scenario '%s': flink is supported in run and drain-backlog modes, not %s"
+                        .formatted(point.scenarioName(), mode));
+            }
+        }
+    }
+
+    /** Output partitions to plan for: the Flink stage's, or 0 without one. */
+    protected static int outputPartitionsPerTopic(ScenarioExpander.TestPoint point) {
+        return point.flink() != null ? point.flink().outputPartitionsPerTopic : 0;
+    }
+
+    /**
+     * Cancels Flink jobs left by an interrupted run, alongside the deletion of
+     * leftover topics. Only touches Flink for test points with a Flink stage
+     * (or once a pipeline exists), so other runs never need a Flink cluster.
+     */
+    protected void cancelLeftoverFlinkJobs(ScenarioExpander.TestPoint point) throws IOException {
+        if (point.flink() != null || flinkPipeline != null) {
+            flinkPipeline().cancelLeftovers();
+        }
+    }
+
+    /**
+     * Starts the test point's Flink job over the planned pipelines and waits
+     * until it runs. Call after the topics exist and before consumers start.
+     */
+    protected void startFlink(ScenarioExpander.TestPoint point) throws IOException {
+        flinkPipeline().start(point.flink(), point.dataset(), plannedTopology, point.kafkaConfig());
+    }
+
+    /** Cancels the running Flink job, if any. Safe to call at any time. */
+    protected void stopFlink() {
+        if (flinkPipeline != null) {
+            flinkPipeline.stop();
+        }
+    }
+
+    /** What the results record about a test point's Flink job; null without one. */
+    protected FlinkResult flinkResult(ScenarioExpander.TestPoint point) {
+        if (point.flink() == null || flinkPipeline == null) return null;
+        return FlinkResult.of(point.flink(), flinkPipeline.jobId(), flinkPipeline.restarts());
+    }
+
     /**
      * Build a {@link VirtualTopology} for the current test point and store it
      * as {@link #plannedTopology}. The planner generates topic and consumer
@@ -220,6 +327,23 @@ public abstract class BaseEngine implements AutoCloseable {
                                 ConsumerProcMode procMode, int procCapacity,
                                 MessageDistributorType messageDistributorType, double messageDistributorSkew,
                                 boolean correctnessEnabled, boolean staticConsumerPartitions) {
+        planTopology(numTopics, partitionsPerTopic, producersPerTopic, consumerGroupsPerTopic, consumersPerGroup,
+                consumerType, procMsMin, procMsMax, procParallelism, procMode, procCapacity,
+                messageDistributorType, messageDistributorSkew, correctnessEnabled, staticConsumerPartitions, 0);
+    }
+
+    /**
+     * As above, with a Flink stage when {@code outputPartitionsPerTopic > 0}:
+     * consumers then read a {@code <topic>-out} topic of that many partitions,
+     * which the Flink job writes.
+     */
+    protected void planTopology(int numTopics, int partitionsPerTopic,
+                                int producersPerTopic, int consumerGroupsPerTopic, int consumersPerGroup,
+                                ConsumerType consumerType, int procMsMin, int procMsMax, int procParallelism,
+                                ConsumerProcMode procMode, int procCapacity,
+                                MessageDistributorType messageDistributorType, double messageDistributorSkew,
+                                boolean correctnessEnabled, boolean staticConsumerPartitions,
+                                int outputPartitionsPerTopic) {
         var spec = new TopologyPlanner.TopologySpec(
                 cluster.topicPrefix(),
                 numTopics,
@@ -231,7 +355,8 @@ public abstract class BaseEngine implements AutoCloseable {
                 procMsMin, procMsMax, procParallelism, procMode, procCapacity,
                 messageDistributorType, messageDistributorSkew,
                 correctnessEnabled,
-                staticConsumerPartitions);
+                staticConsumerPartitions,
+                outputPartitionsPerTopic);
         this.plannedTopology = topologyPlanner.plan(spec);
         log.info("Planned topology: {} topics, {} producers, {} consumers, {} active producer workers",
                 plannedTopology.topicPartitionCounts().size(),
@@ -325,6 +450,7 @@ public abstract class BaseEngine implements AutoCloseable {
      */
     protected void configureDataset(ScenarioExpander.TestPoint point) throws IOException {
         worker.setDataset(point.dataset());
+        worker.setConsumedThroughFlink(point.flink() != null);
     }
 
 }

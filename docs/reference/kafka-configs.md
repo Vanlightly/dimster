@@ -20,6 +20,8 @@ Config files are typically stored in `run/kafka-configs/`. It is also possible t
 | `classicConsumerConfig` | map | `null` | Consumer properties for classic (group-based) consumers. |
 | `shareConsumerConfig` | map | `null` | Consumer properties for share group consumers. |
 
+With a [Flink SQL stage](../concepts/flink.md), the Flink job uses `commonConfig`, and its `-out` topics use `replicationFactor` and `topicConfig`. `producerConfig` and the consumer configs don't apply to Flink; see [Kafka configuration](../concepts/flink.md#kafka-configuration).
+
 ---
 
 ## Map Format
@@ -99,7 +101,7 @@ The time check is evaluated only inside the producer send loop. At very low send
 When `dimster.transactions=true`, dimster sets two related properties on your behalf if you have not set them yourself. Explicit user values always win.
 
 - **`enable.idempotence=true`** on the producer. Idempotence is mandatory for transactional producers; recent Kafka clients auto-enable it but dimster sets it explicitly so the produced `Properties` are self-describing in logs.
-- **`isolation.level=read_committed`** on `classicConsumerConfig` and `shareConsumerConfig`. Without this, a `read_uncommitted` consumer would surface aborted/uncommitted records and the workload's end-to-end latency would no longer reflect what a real EOS reader sees. Override by setting `isolation.level` explicitly in the relevant consumer config map.
+- **`isolation.level=read_committed`** on `classicConsumerConfig` and `shareConsumerConfig`. Without this, a `read_uncommitted` consumer would surface aborted/uncommitted records and the workload's end-to-end latency would no longer reflect what a real EOS reader sees. Override by setting `isolation.level` explicitly in the relevant consumer config map. With a [Flink SQL stage](../concepts/flink.md#kafka-configuration), the Flink job's source also defaults to `read_committed`; override it with `properties.isolation.level` in `flink.sourceOptions`.
 
 ### What an aborted transaction looks like
 

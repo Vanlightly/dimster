@@ -639,6 +639,67 @@ public class TopologyPlannerTest {
     }
 
     // =========================================================================
+    // Flink stage: consumers on output topics
+    // =========================================================================
+
+    private static TopologySpec pipelinedSpec(int numTopics, int partitions, int outputPartitions,
+                                              int consumersPerGroup, boolean staticConsumerPartitions) {
+        return new TopologySpec("p", numTopics, partitions, 2, 1, consumersPerGroup,
+                ConsumerType.CONSUMER_GROUP, 0, 0, 1, ConsumerProcMode.BLOCKING, 10000,
+                MessageDistributorType.NO_KEY, 1.0, false, staticConsumerPartitions, outputPartitions);
+    }
+
+    @Test
+    public void pipelinedTopologyProducesToInputsAndConsumesOutputs() {
+        var planner = newPlanner(List.of("w1", "w2"), WorkerMode.MIXED, new RatioSplit(1, 1));
+        VirtualTopology topology = planner.plan(pipelinedSpec(2, 4, 6, 2, false));
+
+        List<String> inputs = topology.producerTopics();
+        List<String> outputs = topology.consumerTopics();
+        assertEquals(2, inputs.size());
+        assertEquals(List.of(inputs.get(0) + "-out", inputs.get(1) + "-out"), outputs);
+        assertEquals(inputs.get(0) + "-out", topology.pipelineTopics().get(inputs.get(0)));
+
+        // All four topics are created, outputs with their own partition count.
+        assertEquals(4, topology.topicPartitionCounts().size());
+        assertEquals(Integer.valueOf(4), topology.topicPartitionCounts().get(inputs.get(0)));
+        assertEquals(Integer.valueOf(6), topology.topicPartitionCounts().get(outputs.get(0)));
+
+        assertTrue(topology.producers().stream().allMatch(vp -> inputs.contains(vp.topic())));
+        assertTrue(topology.consumers().stream().allMatch(vc -> outputs.contains(vc.topic())));
+        assertEquals(4, topology.producers().size());
+        assertEquals(4, topology.consumers().size());
+    }
+
+    @Test
+    public void pipelinedStaticPartitionsUseTheOutputPartitionCount() {
+        var planner = newPlanner(List.of("w1"), WorkerMode.MIXED, new RatioSplit(1, 1));
+        VirtualTopology topology = planner.plan(pipelinedSpec(1, 2, 6, 3, true));
+        String output = topology.consumerTopics().get(0);
+        Set<Integer> partitions = topology.consumers().stream()
+                .flatMap(vc -> vc.staticPartitions().stream())
+                .peek(tp -> assertEquals(output, tp.topic()))
+                .map(TopicPartition::partition)
+                .collect(Collectors.toSet());
+        assertEquals(Set.of(0, 1, 2, 3, 4, 5), partitions);
+    }
+
+    @Test
+    public void unpipelinedTopologyConsumesTheProducerTopics() {
+        var planner = newPlanner(List.of("w1"), WorkerMode.MIXED, new RatioSplit(1, 1));
+        VirtualTopology topology = planner.plan(spec("p", 2, 3, 1, 1, 1, false));
+        assertTrue(topology.pipelineTopics().isEmpty());
+        assertEquals(topology.producerTopics(), topology.consumerTopics());
+        assertEquals(2, topology.topicPartitionCounts().size());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void pipelinedCorrectnessIsRejected() {
+        new TopologySpec("p", 1, 1, 1, 1, 1, ConsumerType.CONSUMER_GROUP, 0, 0, 1,
+                ConsumerProcMode.BLOCKING, 10000, MessageDistributorType.NO_KEY, 1.0, true, true, 1);
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 

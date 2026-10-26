@@ -3,6 +3,7 @@ package dev.dimster;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import dev.dimster.datagen.DatasetSpec;
+import dev.dimster.flink.FlinkSpec;
 import dev.dimster.kafka.KafkaConfig;
 import dev.dimster.utils.distributor.MessageDistributorType;
 
@@ -52,6 +53,14 @@ public class BaseWorkload {
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public DatasetSpec dataset = null;
+
+    /**
+     * Optional Flink SQL stage between producers and consumers: producers
+     * write to the test topics, a Flink job runs this SQL over them and
+     * consumers read its output topics. Requires a dataset. Null by default.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public FlinkSpec flink = null;
 
     public MessageDistributorType messageDistributor = MessageDistributorType.NO_KEY;
     /**

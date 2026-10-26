@@ -132,6 +132,7 @@ public class WorkerHttpServer {
         server.createContext("/set-print-messages", this::handleSetPrintMessages);
         server.createContext("/set-print-contents", this::handleSetPrintContents);
         server.createContext("/set-dataset", this::handleSetDataset);
+        server.createContext("/set-consumed-through-flink", this::handleSetConsumedThroughFlink);
         server.createContext("/set-consumer-processing-time", this::handleSetConsumerProcessingTime);
         server.createContext("/set-consumer-proc-capacity", this::handleSetConsumerProcCapacity);
         server.createContext("/probes-received", this::handleProbesReceived);
@@ -360,6 +361,13 @@ public class WorkerHttpServer {
         handle(exchange, () -> {
             ResolvedDataset dataset = mapper.readValue(exchange.getRequestBody(), ResolvedDataset.class);
             localWorker.setDataset(dataset);
+        });
+    }
+
+    private void handleSetConsumedThroughFlink(HttpExchange exchange) throws IOException {
+        handle(exchange, () -> {
+            Boolean throughFlink = mapper.readValue(exchange.getRequestBody(), Boolean.class);
+            localWorker.setConsumedThroughFlink(throughFlink);
         });
     }
 

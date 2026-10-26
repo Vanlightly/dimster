@@ -2357,3 +2357,1046 @@ data:
       "title": "Dimster - Kafka Broker",
       "uid": "dimster-kafka"
     }
+  flink.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Job",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "collapsed": false
+        },
+        {
+          "title": "Jobs and task slots",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(flink_jobmanager_numRunningJobs)",
+              "legendFormat": "running jobs"
+            },
+            {
+              "expr": "max(flink_jobmanager_taskSlotsAvailable)",
+              "legendFormat": "slots available"
+            },
+            {
+              "expr": "max(flink_jobmanager_taskSlotsTotal)",
+              "legendFormat": "slots total"
+            }
+          ]
+        },
+        {
+          "title": "Job restarts",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(flink_jobmanager_job_numRestarts)",
+              "legendFormat": "restarts"
+            }
+          ],
+          "description": "Non-zero means the job failed and recovered during the test point."
+        },
+        {
+          "title": "Selectivity (records out / records in)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond{operator_name=~\".*_Writer\"}) / sum(flink_taskmanager_job_task_operator_numRecordsOutPerSecond{operator_name=~\"Source:.*\"})",
+              "legendFormat": "selectivity"
+            }
+          ],
+          "description": "Fraction of input rows the SQL writes to the output: 100% for a pass-through query."
+        },
+        {
+          "title": "Throughput",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "collapsed": false
+        },
+        {
+          "title": "Records read by the source (rec/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numRecordsOutPerSecond{operator_name=~\"Source:.*\"})",
+              "legendFormat": "total"
+            },
+            {
+              "expr": "flink_taskmanager_job_task_operator_numRecordsOutPerSecond{operator_name=~\"Source:.*\"}",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ]
+        },
+        {
+          "title": "Records written by the sink (rec/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond{operator_name=~\".*_Writer\"})",
+              "legendFormat": "total"
+            },
+            {
+              "expr": "flink_taskmanager_job_task_operator_numRecordsInPerSecond{operator_name=~\".*_Writer\"}",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ]
+        },
+        {
+          "title": "Producer vs Flink vs consumer (rec/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 18
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(client_messages_sent_count[1m]))",
+              "legendFormat": "Dimster producers"
+            },
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numRecordsOutPerSecond{operator_name=~\"Source:.*\"})",
+              "legendFormat": "Flink source"
+            },
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numRecordsInPerSecond{operator_name=~\".*_Writer\"})",
+              "legendFormat": "Flink sink"
+            },
+            {
+              "expr": "sum(rate(client_messages_received_count[1m]))",
+              "legendFormat": "Dimster consumers"
+            }
+          ],
+          "description": "Producers write the input topics, Flink reads them and writes the output topics, consumers read those."
+        },
+        {
+          "title": "Source input lag (records not yet read)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_pendingRecords{operator_name=~\"Source:.*\"})",
+              "legendFormat": "total"
+            },
+            {
+              "expr": "flink_taskmanager_job_task_operator_pendingRecords{operator_name=~\"Source:.*\"}",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ],
+          "description": "Records on the input topics the Flink source has not read yet (pendingRecords)."
+        },
+        {
+          "title": "Sink bytes out (B/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 26
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_numBytesOutPerSecond{operator_name=~\".*_Writer\"})",
+              "legendFormat": "total"
+            }
+          ]
+        },
+        {
+          "title": "Sink Kafka producer",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 26
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "avg(flink_taskmanager_job_task_operator_KafkaProducer_request_latency_avg)",
+              "legendFormat": "request latency avg (ms)"
+            },
+            {
+              "expr": "sum(flink_taskmanager_job_task_operator_KafkaProducer_record_send_rate)",
+              "legendFormat": "record send rate (rec/s)"
+            }
+          ]
+        },
+        {
+          "title": "Latency",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 34
+          },
+          "collapsed": false
+        },
+        {
+          "title": "End-to-end latency through Flink (Dimster consumers)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 35
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(client_e2e_latency{percentile=\"50\"})",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "max(client_e2e_latency{percentile=\"99\"})",
+              "legendFormat": "p99"
+            },
+            {
+              "expr": "max(client_e2e_latency{percentile=\"99.9\"})",
+              "legendFormat": "p99.9"
+            }
+          ],
+          "description": "Producer send to consumer receive, measured from the producer's record timestamp, which the Flink job keeps."
+        },
+        {
+          "title": "Tasks",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 43
+          },
+          "collapsed": false
+        },
+        {
+          "title": "Busy time (ms/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 44
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_job_task_busyTimeMsPerSecond",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ]
+        },
+        {
+          "title": "Back-pressured time (ms/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 44
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_job_task_backPressuredTimeMsPerSecond",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ]
+        },
+        {
+          "title": "Idle time (ms/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 44
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_job_task_idleTimeMsPerSecond",
+              "legendFormat": "subtask {{subtask_index}}"
+            }
+          ]
+        },
+        {
+          "title": "Checkpoints",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 52
+          },
+          "collapsed": false
+        },
+        {
+          "title": "Last checkpoint duration",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 53
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(flink_jobmanager_job_lastCheckpointDuration)",
+              "legendFormat": "duration"
+            }
+          ]
+        },
+        {
+          "title": "Last checkpoint size",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 53
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(flink_jobmanager_job_lastCheckpointSize)",
+              "legendFormat": "size"
+            }
+          ]
+        },
+        {
+          "title": "Checkpoints",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 53
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "max(flink_jobmanager_job_numberOfCompletedCheckpoints)",
+              "legendFormat": "completed"
+            },
+            {
+              "expr": "max(flink_jobmanager_job_numberOfFailedCheckpoints)",
+              "legendFormat": "failed"
+            }
+          ]
+        },
+        {
+          "title": "JVM",
+          "type": "row",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 61
+          },
+          "collapsed": false
+        },
+        {
+          "title": "CPU load",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_Status_JVM_CPU_Load",
+              "legendFormat": "taskmanager {{host}}"
+            },
+            {
+              "expr": "flink_jobmanager_Status_JVM_CPU_Load",
+              "legendFormat": "jobmanager"
+            }
+          ]
+        },
+        {
+          "title": "Heap used",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_Status_JVM_Memory_Heap_Used",
+              "legendFormat": "taskmanager {{host}}"
+            },
+            {
+              "expr": "flink_jobmanager_Status_JVM_Memory_Heap_Used",
+              "legendFormat": "jobmanager"
+            }
+          ]
+        },
+        {
+          "title": "GC time (ms/s)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 62
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "flink_taskmanager_Status_JVM_GarbageCollector_All_TimeMsPerSecond",
+              "legendFormat": "taskmanager {{host}}"
+            },
+            {
+              "expr": "flink_jobmanager_Status_JVM_GarbageCollector_All_TimeMsPerSecond",
+              "legendFormat": "jobmanager"
+            }
+          ]
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": false,
+              "text": "Prometheus",
+              "value": "Prometheus"
+            },
+            "hide": 0,
+            "includeAll": false,
+            "name": "DS_PROMETHEUS",
+            "options": [],
+            "query": "prometheus",
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "timezone": "utc",
+      "title": "Dimster - Flink",
+      "uid": "dimster-flink"
+    }

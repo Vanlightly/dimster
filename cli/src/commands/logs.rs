@@ -13,8 +13,9 @@ pub fn run(
         "worker" | "workers" => "app=benchmark-worker",
         "coordinator" => "app=benchmark-coordinator",
         "kafka" => "app=kafka",
+        "flink" => crate::commands::flink::POD_LABEL,
         other => bail!(
-            "Unknown component '{}'. Use: worker, coordinator, kafka",
+            "Unknown component '{}'. Use: worker, coordinator, kafka, flink",
             other
         ),
     };

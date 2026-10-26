@@ -90,6 +90,20 @@ struct ModifyRequest {
     kafka_config_overrides: HashMap<String, serde_json::Value>,
 }
 
+/// Whether a workload has a Flink stage: a `flink` block in `baseWorkload`
+/// or in any scenario. Unparseable YAML is left for the coordinator to report.
+fn workload_uses_flink(content: &str) -> bool {
+    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(content) else {
+        return false;
+    };
+    let has_flink = |v: &serde_yaml::Value| v.get("flink").is_some_and(|f| !f.is_null());
+    doc.get("baseWorkload").is_some_and(has_flink)
+        || doc
+            .get("scenarios")
+            .and_then(|s| s.as_sequence())
+            .is_some_and(|scenarios| scenarios.iter().any(has_flink))
+}
+
 pub struct RunArgs {
     pub mode: String,
     pub kafka_config: Option<String>,
@@ -270,6 +284,36 @@ pub fn run(
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Cannot read workload '{}': {}", wl_path, e))?;
         raw_workloads.push((name, content));
+    }
+
+    // Workloads with a Flink stage need the env's Flink cluster. Checking
+    // here fails fast with a deploy hint instead of mid-run in the coordinator.
+    if let Some((name, _)) = raw_workloads
+        .iter()
+        .find(|(_, content)| workload_uses_flink(content))
+    {
+        println!(
+            "==> Checking Flink readiness (workload '{}' has a Flink stage)...",
+            name
+        );
+        let available = kubectl
+            .run(&[
+                "get",
+                "deployment",
+                "flink-jobmanager",
+                "-o",
+                "jsonpath={.status.availableReplicas}",
+            ])
+            .unwrap_or_default();
+        if available.trim() != "1" {
+            bail!(
+                "Workload '{}' has a flink block but no Flink JobManager is running in namespace {}. \
+                 Add a flink section to the environment in dimster-config.yaml and run 'dimster deploy'.",
+                name,
+                kubectl.namespace()
+            );
+        }
+        println!("    Flink is ready.");
     }
 
     // TLS detection: a security.protocol: SSL/SASL_SSL line in EITHER the -k
@@ -1375,6 +1419,21 @@ fn coordinator_log_size_standalone(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_flink_in_base_or_scenarios() {
+        assert!(workload_uses_flink(
+            "baseWorkload:\n  flink:\n    sql: SELECT * FROM source\n"
+        ));
+        assert!(workload_uses_flink(
+            "baseWorkload: {topics: 1}\nscenarios:\n  - name: a\n  - name: b\n    flink: {parallelism: [1, 2]}\n"
+        ));
+        assert!(!workload_uses_flink(
+            "baseWorkload: {topics: 1}\nscenarios:\n  - name: a\n"
+        ));
+        assert!(!workload_uses_flink("baseWorkload:\n  flink: null\n"));
+        assert!(!workload_uses_flink(": not yaml ["));
+    }
 
     fn modify_args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()

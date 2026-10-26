@@ -67,7 +67,9 @@ Deploy Kafka, workers, coordinator, and monitoring stack to Kubernetes.
 dimster deploy <env> 
 ```
 
-Generates a dynamic Kustomize overlay from the environment configuration, applies it to the Kubernetes cluster, and waits for all pods to become ready. In `external` deploy mode, Kafka pods are not deployed.
+Generates a dynamic Kustomize overlay from the environment configuration, applies it to the Kubernetes cluster, and waits for all pods to become ready. In `external` deploy mode, Kafka pods are not deployed. Environments with a [`flink`](dimster-config.md#flink) block also get a Flink session cluster.
+
+`--only <components>` deploys a comma-separated subset of `kafka`, `workers`, `coordinator`, `monitoring` and `flink` (`flink` requires a `flink` block in the environment).
 
 Use the `--env-override` argument to override specific environment field values. For example:
 
@@ -344,7 +346,7 @@ dimster dashboard --snapshot <result-dir>
 | `grafana_port` | No | `3000` | Local port for Grafana. Not used with `--snapshot`. |
 | `prometheus_port` | No | `9090` | Local port for Prometheus. Not used with `--snapshot`. |
 
-Runs until interrupted with Ctrl+C.
+Runs until interrupted with Ctrl+C. When the environment has a Flink cluster, its web UI is forwarded to http://localhost:8081 too.
 
 With `--snapshot`, no cluster is needed, only Docker. The CLI loads the snapshot into a temporary Prometheus container, starts Grafana with the dashboards the snapshot was taken with, and prints a link to each dashboard set to the run's time range. It uses ports 3000 and 9090 when they're free, and otherwise picks free ports, so it can run alongside `dimster dashboard <env>`. Ctrl+C removes the containers and temporary data. Snapshots are saved when `snapshot` is in the environment's `metricsOutput` or passed with `--metrics-output` (see [results](#results)).
 
@@ -361,7 +363,7 @@ dimster logs <env> [component] [options]
 | Argument / Flag | Required | Default | Description |
 |-----------------|----------|---------|-------------|
 | `env` | Yes | -- | Environment name. |
-| `component` | No | `worker` | Component to view logs for: `worker`, `coordinator`, or `kafka`. |
+| `component` | No | `worker` | Component to view logs for: `worker`, `coordinator`, `kafka`, or `flink` (the JobManager and TaskManagers). |
 | `-f`, `--follow` | No | `false` | Follow (stream) log output. |
 | `-p`, `--previous` | No | `false` | Show logs from the previous (crashed) container. |
 | `--tail <n>` | No | -- | Show only the last N lines from the end of logs. |

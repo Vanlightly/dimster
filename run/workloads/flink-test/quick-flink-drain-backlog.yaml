@@ -1,0 +1,31 @@
+# Builds a backlog on the input topic with no Flink job running, then starts
+# the job and the consumers together and measures how long Flink plus the
+# consumers take to catch up end to end.
+#
+# The drain counts one output record per input record, so drain-backlog
+# needs a non-filtering query (projections and transformations). A filter
+# would keep the drain waiting until drainTimeoutMinutes.
+name: Quick Flink drain backlog
+
+engineConfig:
+  cooldownMinutes: 0
+
+drainBacklogConfig:
+  backlogSizeGB: 10
+  buildRate: 50000
+  backlogProducerRate: 0
+  sampleRateMillis: 5000
+  drainTimeoutMinutes: 5
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 1
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  dataset:
+    preset: clicks
+    format: AVRO
+  flink:
+    parallelism: 1
+    sql: SELECT _dimster, _dimster_ts, user_id, url, country FROM source

@@ -102,4 +102,20 @@ public class RecordPrinterTest {
                 RecordPrinter.logSuffix(new RecordPrinter(PAYLOAD), "k", probe));
         assertEquals("", RecordPrinter.logSuffix(null, "k", probe));
     }
+
+    @Test
+    public void flinkOutputAvroIsSummarisedNotDecodedWithTheDatasetSchema() {
+        ResolvedDataset avro = DatasetResolver.resolve(allTypes(RecordFormat.AVRO));
+        byte[] record = new DatasetGenerator(avro).newRowGenerator("producer-0", 0).next(HEADER);
+        String text = RecordPrinter.forTransformedRecords(avro).render(record);
+        assertEquals("<normal, " + record.length + " bytes, Avro with the Flink SQL's output schema>", text);
+    }
+
+    @Test
+    public void flinkOutputJsonIsPrintedAsIs() {
+        ResolvedDataset json = DatasetResolver.resolve(allTypes(RecordFormat.JSON));
+        byte[] projected = "{\"_dimster\":\"00\",\"city\":\"Paris\"}".getBytes(StandardCharsets.UTF_8);
+        assertEquals(new String(projected, StandardCharsets.UTF_8),
+                RecordPrinter.forTransformedRecords(json).render(projected));
+    }
 }

@@ -6,6 +6,7 @@ pub mod csv;
 pub mod dashboard;
 pub mod deploy;
 pub mod download_kafka_logs;
+pub mod flink;
 pub mod health;
 pub mod init;
 pub mod inspect;

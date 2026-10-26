@@ -10,6 +10,12 @@ use serde::Deserialize;
 /// to flip the implicit default for existing configs.
 pub const DEFAULT_KAFKA_VERSION: &str = "4.2.0";
 
+/// Flink image for envs with a `flink:` block that set no `flink.image`.
+/// Must match `flink.version` in dimster-flink/pom.xml: the runner jar the
+/// coordinator submits is built against that Flink version and its Kafka
+/// connector.
+pub const DEFAULT_FLINK_IMAGE: &str = "flink:2.2.1-java21";
+
 /// Available Kafka client flavors, in ascending version order. Each entry
 /// defines a flavor module that can be used for versions >= the min version
 /// and < the next flavor's min version (or unbounded if it's the last entry).
@@ -337,6 +343,10 @@ pub struct Environment {
     pub coordinator: Option<CoordinatorEnvConfig>,
     #[serde(default)]
     pub monitoring: Option<MonitoringEnvConfig>,
+    /// Optional Flink session cluster for workloads with a Flink SQL stage.
+    /// Absent means no Flink is deployed.
+    #[serde(default)]
+    pub flink: Option<FlinkEnvConfig>,
     /// Which metrics outputs to save after a run. `None` (key absent) means
     /// the default of `[html]`; an explicit `[]` saves no metrics. Overridden
     /// by `--metrics-output` on the CLI (see `resolve_metrics_output`).
@@ -477,6 +487,73 @@ pub struct MonitoringResourceConfig {
     pub requests: Option<ResourceRequests>,
 }
 
+/// A Flink session cluster (one JobManager, N TaskManagers) deployed next to
+/// the workers. The coordinator runs one job per test point on it for
+/// workloads with a `flink` block. Lives under `flink` in an environment.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FlinkEnvConfig {
+    /// Full image reference. Defaults to `DEFAULT_FLINK_IMAGE`.
+    pub image: Option<String>,
+    #[serde(default)]
+    pub jobmanager: Option<FlinkJobManagerConfig>,
+    #[serde(default)]
+    pub taskmanagers: Option<FlinkTaskManagerConfig>,
+    /// Extra Flink cluster configuration (`key: value`), appended after
+    /// the settings Dimster derives, so it can override them. Values may be
+    /// YAML scalars of any type (`taskmanager.memory.network.fraction: 0.2`).
+    #[serde(default)]
+    pub config: BTreeMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FlinkJobManagerConfig {
+    /// The memory request also sets `jobmanager.memory.process.size`.
+    #[serde(default)]
+    pub requests: Option<ResourceRequests>,
+    pub node_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FlinkTaskManagerConfig {
+    pub replicas: Option<u32>,
+    /// Task slots per TaskManager. A job of parallelism P needs P free slots.
+    pub slots: Option<u32>,
+    /// The memory request also sets `taskmanager.memory.process.size`.
+    #[serde(default)]
+    pub requests: Option<ResourceRequests>,
+    pub node_label: Option<String>,
+}
+
+impl FlinkEnvConfig {
+    pub fn image(&self) -> &str {
+        self.image.as_deref().unwrap_or(DEFAULT_FLINK_IMAGE)
+    }
+
+    /// `config` with each value rendered as Flink expects it in its
+    /// configuration file (scalars as written, `true`/`false`, numbers).
+    pub fn config_strings(&self) -> Vec<(String, String)> {
+        self.config
+            .iter()
+            .map(|(k, v)| {
+                let value = match v {
+                    serde_yaml::Value::String(s) => s.clone(),
+                    serde_yaml::Value::Bool(b) => b.to_string(),
+                    serde_yaml::Value::Number(n) => n.to_string(),
+                    serde_yaml::Value::Null => String::new(),
+                    other => serde_yaml::to_string(other)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                };
+                (k.clone(), value)
+            })
+            .collect()
+    }
+}
+
 /// Connection details for an external Kafka-compatible cluster.
 /// All keys use standard Kafka dot-syntax (e.g. `bootstrap.servers`,
 /// `security.protocol`) and are injected as-is into client configs.
@@ -570,6 +647,17 @@ impl Environment {
                     conn.bootstrap_servers()?;
                 }
             }
+        }
+        if let Some(flink) = &self.flink {
+            let tm = flink.taskmanagers.as_ref();
+            if tm.and_then(|t| t.replicas) == Some(0) || tm.and_then(|t| t.slots) == Some(0) {
+                bail!(
+                    "Environment '{}' sets flink.taskmanagers.replicas or slots to 0. \
+                     A Flink job needs at least one task slot; remove the flink block to deploy no Flink.",
+                    name
+                );
+            }
+            crate::commands::flink::check_memory(flink, name)?;
         }
         if let Some(cpu_manager) = &self.cpu_manager {
             if cpu_manager.policy == CpuManagerPolicy::None && cpu_manager.full_pcpus_only {
@@ -817,6 +905,42 @@ mod tests {
 
     fn env_from_yaml(yaml: &str) -> Result<Environment> {
         Ok(serde_yaml::from_str(yaml)?)
+    }
+
+    #[test]
+    fn flink_block_is_optional_and_defaults_its_image() {
+        let none = env_from_yaml("image: dimster").unwrap();
+        assert!(none.flink.is_none());
+
+        let env = env_from_yaml(
+            "flink:\n  taskmanagers:\n    replicas: 2\n    slots: 4\n    nodeLabel: role=flink\n  \
+             config:\n    taskmanager.memory.network.fraction: 0.2\n    pipeline.object-reuse: true\n",
+        )
+        .unwrap();
+        let flink = env.flink.as_ref().unwrap();
+        assert_eq!(flink.image(), DEFAULT_FLINK_IMAGE);
+        let tm = flink.taskmanagers.as_ref().unwrap();
+        assert_eq!(tm.replicas, Some(2));
+        assert_eq!(tm.slots, Some(4));
+        assert_eq!(tm.node_label.as_deref(), Some("role=flink"));
+        assert_eq!(
+            flink.config_strings(),
+            vec![
+                ("pipeline.object-reuse".to_string(), "true".to_string()),
+                (
+                    "taskmanager.memory.network.fraction".to_string(),
+                    "0.2".to_string()
+                ),
+            ]
+        );
+        env.validate("local").unwrap();
+    }
+
+    #[test]
+    fn flink_with_no_slots_is_rejected() {
+        let env = env_from_yaml("flink:\n  taskmanagers:\n    slots: 0\n").unwrap();
+        let err = env.validate("local").unwrap_err().to_string();
+        assert!(err.contains("flink.taskmanagers"), "{err}");
     }
 
     /// Absent key keeps today's behaviour (HTML only); an explicit empty

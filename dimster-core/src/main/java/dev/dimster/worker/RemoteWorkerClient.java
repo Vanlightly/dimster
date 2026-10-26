@@ -300,6 +300,11 @@ public class RemoteWorkerClient implements Worker {
         sendPost(planner.allWorkers(), "/set-dataset", writer.writeValueAsBytes(dataset));
     }
 
+    @Override
+    public void setConsumedThroughFlink(boolean throughFlink) throws IOException {
+        sendPost(planner.consumerWorkers(), "/set-consumed-through-flink", writer.writeValueAsBytes(throughFlink));
+    }
+
     // Forward to consumer workers only — producers don't simulate processing time.
     // Wire payload is a 2-element int array [minMs, maxMs]; see WorkerHttpServer#handleSetConsumerProcessingTime.
     @Override

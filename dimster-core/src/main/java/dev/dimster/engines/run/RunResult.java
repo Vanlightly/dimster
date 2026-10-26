@@ -53,6 +53,10 @@ public class RunResult {
 
         @JsonInclude(JsonInclude.Include.NON_NULL)
         public AvailabilityResult.AvailabilityData availability;
+
+        /** The test point's Flink job; null without a Flink stage. */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public dev.dimster.flink.FlinkResult flink;
     }
 
     /**

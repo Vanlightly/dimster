@@ -107,6 +107,7 @@ public class ExploreEngine extends BaseEngine {
 
         List<TestPoint> allPoints = ScenarioExpander.expand(base, exploreWorkload.scenarios,
                 fileKafkaConfig, exploreWorkload.exploreConfig);
+        rejectFlink("explore", allPoints);
         int totalTests = allPoints.size();
 
         // The explore engine drives rate dynamically via ExploreConfig (initialRate

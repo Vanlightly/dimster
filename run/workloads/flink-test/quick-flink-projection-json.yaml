@@ -1,0 +1,34 @@
+# A projection and transformation over JSON clicks: the output topic carries
+# only the columns the SELECT returns. Every row passes, so the consume rate
+# matches the publish rate. printContents shows the transformed rows at the
+# consumers (low rate only).
+name: Quick Flink projection - clicks JSON
+
+engineConfig:
+  cooldownMinutes: 0
+  # printContents: true
+
+runConfig:
+  testDurationMinutes: 10
+  warmupDurationMinutes: 1
+  rampIntervals: 0
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 1
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  producerRate: 5000
+  messageDistributor: KEY_COLUMN
+  dataset:
+    preset: clicks
+    format: JSON
+    keyColumn: user_id
+  flink:
+    # _dimster_key keeps the record key (user_id), so the output topic is
+    # partitioned by user like the input.
+    sql: |
+      SELECT _dimster, _dimster_ts, _dimster_key,
+             user_id, UPPER(country) AS country, duration_ms / 1000 AS duration_s
+      FROM source

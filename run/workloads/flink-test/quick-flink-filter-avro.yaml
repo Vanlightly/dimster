@@ -1,0 +1,34 @@
+# Producers send clicks rows (Avro) to the input topic, a Flink SQL job keeps
+# the purchases and add-to-carts and writes them to the output topic, and
+# consumers read the output. About 5% of clicks pass the filter, so the
+# consume rate is about 5% of the publish rate (reported as the result's
+# flink.selectivity).
+#
+# Needs an environment with a flink block (see docs/concepts/flink.md).
+name: Quick Flink filter - clicks AVRO
+
+engineConfig:
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 2
+  warmupDurationMinutes: 0
+  rampIntervals: 0
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 2
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  producerRate: 2000
+  dataset:
+    preset: clicks
+    format: AVRO
+  flink:
+    parallelism: 2
+    # SELECT * keeps _dimster (the message type) and _dimster_ts (the
+    # producer's timestamp, which end-to-end latency is measured from).
+    sql: |
+      SELECT * FROM source
+      WHERE event_type IN ('purchase', 'add_to_cart')

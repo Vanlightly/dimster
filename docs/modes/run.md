@@ -75,6 +75,10 @@ baseWorkload:
 
 Run mode optionally supports availability monitoring. Add an `availabilityConfig` section to the workload to enable per-partition availability probes during the test phase. See [Availability](availability.md) for configuration details.
 
+## Flink SQL Stage
+
+A workload with a `baseWorkload.flink` block puts a Flink SQL job between producers and consumers: consumers read the job's output topics, so end-to-end latency includes Flink. With a filtering query the consume rate is below the publish rate; the result's `flink.selectivity` records the ratio. See [Flink SQL Stage](../concepts/flink.md).
+
 ## Live Modification
 
 A running test point can be modified from a separate terminal using `dimster run <env> --modify ...`. This lets you change `producerRate` or the consumer simulated processing time mid-flight, end the current ramp-up or warm-up phase early with `--skip-phase` (proceeds to the next phase without discarding the test point), or end the whole test point early with `--terminate`. Each accepted modification is recorded into the test entry's `modifications` array in the result JSON. See [Live Workload Modification](../concepts/live-modification.md) for the full reference and the workflow patterns it enables (interactive throughput discovery, bursty traffic simulation, consumer back-pressure probing).

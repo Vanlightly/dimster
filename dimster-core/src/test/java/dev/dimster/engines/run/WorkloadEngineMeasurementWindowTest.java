@@ -109,7 +109,7 @@ public class WorkloadEngineMeasurementWindowTest {
         TestPoint point = new TestPoint("default", 0, 1, "default", 0, 1,
                 1, 1, 1, 1, 1, 100, RATE, null, MessageDistributorType.NO_KEY, 1.0,
                 ConsumerType.CONSUMER_GROUP, new KafkaConfig(), 0, 0, 1, ConsumerProcMode.BLOCKING, 10000,
-                null, null, runConfig, null);
+                null, null, runConfig, null, null);
         setField(engine, "testPoint", point);
         // Used only for the progress line in the period log.
         setField(engine, "runProgress", new WorkloadEngine.RunProgress(1, 0, 0, 1));

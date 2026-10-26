@@ -14,6 +14,7 @@
 		<module>dimster-kafka-4.1</module>
 		<module>dimster-kafka-4.2.0</module>
 		<module>dimster-core</module>
+		<module>dimster-flink</module>
 		<module>package-3.x</module>
 		<module>package-4.1</module>
 		<module>package-4.2.0</module>

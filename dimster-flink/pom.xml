@@ -1,0 +1,184 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>dev.dimster</groupId>
+		<artifactId>dimster</artifactId>
+		<version>0.5.0</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<artifactId>dimster-flink</artifactId>
+	<name>Dimster Flink SQL Runner</name>
+
+	<!--
+	The Flink application the coordinator submits to the Flink session cluster,
+	one job per test point. It turns the workload's SELECT into a Kafka-to-Kafka
+	SQL pipeline (see DimsterSqlJob). It runs inside Flink, not in the Dimster
+	JVM, so:
+	  - it targets Java 17 (Flink 2.x runs on 11/17/21; Dimster itself is 25);
+	  - Flink itself is `provided` (the cluster has it in lib/);
+	  - the Kafka connector and Avro format, which the stock flink image lacks,
+	    are shaded into one jar, as is Jackson (relocated) for the job spec.
+	The package-* modules copy the shaded jar to flink/ in the tarball, off the
+	Dimster classpath, and the coordinator uploads it over the Flink REST API.
+
+	flink.version must match the default Flink image in cli/src/config.rs
+	(DEFAULT_FLINK_IMAGE), and the connector version must be the one built for
+	that Flink minor version.
+	-->
+
+	<properties>
+		<maven.compiler.release>17</maven.compiler.release>
+		<flink.version>2.2.1</flink.version>
+		<flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
+	</properties>
+
+	<dependencies>
+		<!-- Provided by the Flink distribution at runtime. -->
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-table-api-java</artifactId>
+			<version>${flink.version}</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- Not in the stock image: shaded into the runner jar. Both are
+		     already self-contained "sql" uber jars. -->
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-sql-connector-kafka</artifactId>
+			<version>${flink.kafka.connector.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-sql-avro</artifactId>
+			<version>${flink.version}</version>
+		</dependency>
+
+		<!-- Inherited from the parent pom. slf4j is provided by Flink; the YAML
+		     module is unused here. jackson-databind stays compile scope and is
+		     relocated by the shade plugin. -->
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>1.7.25</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-yaml</artifactId>
+			<version>${jackson.version}</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- Tests plan real pipelines (no Kafka needed) with the planner. -->
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-table-planner-loader</artifactId>
+			<version>${flink.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-table-runtime</artifactId>
+			<version>${flink.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-clients</artifactId>
+			<version>${flink.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- In flink-dist on a cluster; the Kafka connector needs it. -->
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-connector-base</artifactId>
+			<version>${flink.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-json</artifactId>
+			<version>${flink.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.13.1</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+				<configuration>
+					<!-- Overrides the parent's Java 25 profile. -->
+					<source>17</source>
+					<target>17</target>
+					<release>17</release>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.2.5</version>
+				<configuration>
+					<!-- Flink's planner reflects into JDK internals. -->
+					<argLine>--add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.6.0</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<!-- Replaces the main artifact, so the package-* modules
+							     depend on (and install) the shaded jar. -->
+							<createDependencyReducedPom>true</createDependencyReducedPom>
+							<dependencyReducedPomLocation>${project.build.directory}/dependency-reduced-pom.xml</dependencyReducedPomLocation>
+							<transformers>
+								<!-- Connector and format factories are found via SPI. -->
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>dev.dimster.flink.runner.DimsterSqlJob</mainClass>
+								</transformer>
+							</transformers>
+							<relocations>
+								<relocation>
+									<pattern>com.fasterxml.jackson</pattern>
+									<shadedPattern>dev.dimster.flink.shaded.jackson</shadedPattern>
+								</relocation>
+							</relocations>
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/*.SF</exclude>
+										<exclude>META-INF/*.DSA</exclude>
+										<exclude>META-INF/*.RSA</exclude>
+										<exclude>module-info.class</exclude>
+										<exclude>META-INF/versions/*/module-info.class</exclude>
+									</excludes>
+								</filter>
+							</filters>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

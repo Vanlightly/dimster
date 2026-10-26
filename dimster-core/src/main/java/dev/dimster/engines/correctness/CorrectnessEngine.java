@@ -79,6 +79,7 @@ public class CorrectnessEngine extends BaseEngine implements ModificationTarget 
         }
 
         List<TestPoint> allPoints = ScenarioExpander.expand(base, workload.scenarios, fileKafkaConfig);
+        rejectFlink("correctness", allPoints);
         int totalTests = allPoints.size();
 
         applyPrintMessages(allPoints);

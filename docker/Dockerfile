@@ -58,6 +58,7 @@ COPY .mvn/ .mvn/
 # only sources change.
 COPY dimster-spi/pom.xml dimster-spi/pom.xml
 COPY dimster-core/pom.xml dimster-core/pom.xml
+COPY dimster-flink/pom.xml dimster-flink/pom.xml
 COPY dimster-kafka-3.x/pom.xml dimster-kafka-3.x/pom.xml
 COPY dimster-kafka-4.1/pom.xml dimster-kafka-4.1/pom.xml
 COPY dimster-kafka-4.2.0/pom.xml dimster-kafka-4.2.0/pom.xml
@@ -70,6 +71,7 @@ COPY docker/pom.xml docker/pom.xml
 # flavors get copied too — Maven only compiles what -pl asks for.
 COPY dimster-spi/src/ dimster-spi/src/
 COPY dimster-core/src/ dimster-core/src/
+COPY dimster-flink/src/ dimster-flink/src/
 COPY dimster-kafka-3.x/src/ dimster-kafka-3.x/src/
 COPY dimster-kafka-4.1/src/ dimster-kafka-4.1/src/
 COPY dimster-kafka-4.2.0/src/ dimster-kafka-4.2.0/src/

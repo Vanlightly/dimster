@@ -144,6 +144,7 @@ public class DrainBacklogEngine extends BaseEngine {
 
         cluster.deleteTestTopics();
         cluster.deleteTestGroups();
+        cancelLeftoverFlinkJobs(point);
 
         throwOnStopRequested(stopRequested);
 
@@ -154,7 +155,8 @@ public class DrainBacklogEngine extends BaseEngine {
                 point.consumerProcMode(), point.consumerProcCapacity(),
                 point.messageDistributor(), point.messageDistributorSkew(),
                 false /* correctness off */,
-                false /* dynamic consumer assignment */);
+                false /* dynamic consumer assignment */,
+                outputPartitionsPerTopic(point));
         recordPlannedTopology(point.label(), workload.engineConfig.printTopology);
         createPlannedTopics();
         // Set before producers: consumers, created after the backlog is
@@ -243,6 +245,20 @@ public class DrainBacklogEngine extends BaseEngine {
         worker.setMaxConsumerRecreations(workload.engineConfig.maxConsumerRecreations);
         waitForClientsReady("CONSUMER", 60);
 
+        long flinkRunningAt = 0;
+        if (point.flink() != null) {
+            // With a Flink stage the backlog sits on the input topics. The
+            // consumers are already waiting on the (empty) output topics, so
+            // the drain clock starts when the job runs and covers Flink
+            // processing the backlog plus consumers reading its output.
+            // Completion counts assume one output row per input row: a
+            // filtering query never reaches the expected count and drains
+            // until drainTimeoutMinutes.
+            log.info("Starting the Flink job to drain the backlog (the drain assumes a non-filtering query)");
+            startFlink(point);
+            flinkRunningAt = System.currentTimeMillis();
+        }
+
         // Extract unique group names for broker lag reporting
         Set<String> groupNames = plannedTopology.consumers().stream()
                 .map(vc -> vc.consumerGroup())
@@ -255,9 +271,17 @@ public class DrainBacklogEngine extends BaseEngine {
 
         // Start the drain clock at the first consumed message so group join
         // and initial fetch latency are excluded from the drain duration.
-        long consumersReady = System.currentTimeMillis();
-        long drainStart = awaitFirstReceive(dbc.drainTimeoutMinutes);
-        log.info("    First message received {}ms after consumers ready", drainStart - consumersReady);
+        // With Flink, it starts when the job runs (see above): records only
+        // reach the consumers once Flink has processed them, which is part
+        // of what the drain measures.
+        long drainStart;
+        if (flinkRunningAt > 0) {
+            drainStart = flinkRunningAt;
+        } else {
+            long consumersReady = System.currentTimeMillis();
+            drainStart = awaitFirstReceive(dbc.drainTimeoutMinutes);
+            log.info("    First message received {}ms after consumers ready", drainStart - consumersReady);
+        }
         // Restart the sample clock so the first drain sample excludes the join wait.
         oldTime = resetSampleClock();
 
@@ -367,6 +391,7 @@ public class DrainBacklogEngine extends BaseEngine {
         drainData.sampleRateMillis = dbc.sampleRateMillis;
         outcome.drain = drainData;
         outcome.performance = perf;
+        outcome.flink = flinkResult(point);
 
         return outcome;
     }
@@ -426,6 +451,7 @@ public class DrainBacklogEngine extends BaseEngine {
         wc.partitionsPerTopic = point.partitionsPerTopic();
         wc.messageSize = point.messageSize();
         wc.setDataset(point.dataset());
+        wc.setFlink(point.flink());
         wc.messageDistributor = point.messageDistributor().name();
         wc.producersPerTopic = point.producersPerTopic();
         wc.producerRate = point.producerRate();
@@ -436,6 +462,7 @@ public class DrainBacklogEngine extends BaseEngine {
 
     @Override
     public void close() throws Exception {
+        stopFlink();
         try {
             worker.stopAll();
             worker.awaitStopComplete(java.time.Duration.ofMinutes(5));
