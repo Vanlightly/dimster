@@ -6,7 +6,7 @@ A workload can put an Apache Flink SQL job between its producers and consumers:
 producers ──► dimster-<s>-0000 ──► Flink SQL job ──► dimster-<s>-0000-out ──► consumers
 ```
 
-Producers send [dataset](data-generation.md) records to the test topics as usual. A Flink job reads each topic, runs the workload's SQL over it, and writes the result to a matching `-out` topic. The consumers read the `-out` topics and measure end-to-end latency from the producer's send to their receipt, so the latency includes the time spent in Flink.
+Producers send [dataset](data-generation.md) records to the test topics as usual. A Flink job reads each topic, runs the workload's SQL over it, and writes the result to a matching `-out` topic. The consumers read the `-out` topics and measure end-to-end latency from the producer's send to their receipt, so the latency includes the time spent in Flink. Flink also stamps each output record with the time it emitted it, so the latency is also reported in two parts: [producer to Flink and Flink to consumer](#latency-through-flink).
 
 The SQL is a `SELECT` over a table named `source`. It can filter, project and transform rows, but it can't aggregate or join: each input row gives at most one output row. Dimster writes everything else: the Kafka source and sink tables, their formats, and the plumbing that keeps the fields Dimster needs.
 
@@ -36,7 +36,7 @@ environments:
 
 This deploys a Flink session cluster: one JobManager and the configured TaskManagers, from the stock `flink` image. The coordinator runs one Flink job per test point on it. See [`flink` in the config reference](../reference/dimster-config.md#flink) for sizing, and `--only flink` to deploy just Flink.
 
-A job of parallelism P needs P free task slots (replicas × slots in total). Flink's metrics are scraped by Prometheus and shown on the **Dimster - Flink** Grafana dashboard. `dimster dashboard` also forwards the Flink web UI to http://localhost:8081, and `dimster logs <env> flink` shows the Flink logs.
+A job needs as many free task slots (replicas × slots in total) as its highest parallelism (see [Source, query and sink parallelism](#source-query-and-sink-parallelism)). Flink's metrics are scraped by Prometheus and shown on the **Dimster - Flink** Grafana dashboard. `dimster dashboard` also forwards the Flink web UI to http://localhost:8081, and `dimster logs <env> flink` shows the Flink logs.
 
 ### The workload
 
@@ -140,6 +140,7 @@ The output schema is derived from the query:
 1. The runner asks Flink's planner for the query's resolved schema (`tEnv.sqlQuery(sql).getResolvedSchema()`), which type-checks the `SELECT` against `source`. For example, `UPPER(country)` resolves to `STRING`.
 2. It checks that `_dimster` and `_dimster_ts` are present with their source types, and puts the columns in sink order: `_dimster`, the other columns in query order, `_dimster_key` if selected, then `_dimster_ts`.
 3. It creates the `sink` table with those columns, and inserts the query, reordered, into it. `_dimster_ts` is written as the record timestamp, `_dimster_key` as the record key, and the rest as the value in the dataset's format.
+4. It adds a `_dimster_headers` column, written as the record headers, which carries the time Flink emitted the record (see [Latency through Flink](#latency-through-flink)). It isn't part of the value, and a query can't return a column with that name.
 
 Flink's format then encodes the output with a schema built from the sink's columns. `_dimster` is first because it is the first column. With `SELECT *` the sink columns are the source's, so output records are byte for byte the input records.
 
@@ -150,9 +151,61 @@ The runner's `main` runs on the JobManager while the job is being submitted, so 
 The output schema isn't stored or sent anywhere: it exists only inside the Flink job. Consumers don't need it, because they never decode dataset columns. They read only:
 
 - the message type and header from `_dimster`, found from the format alone: in Avro it is a length-prefixed byte string at the start of the value, and in JSON it is the first member;
-- the record timestamp, for end-to-end latency, which is the producer's send time carried through `_dimster_ts`.
+- the record timestamp, for end-to-end latency, which is the producer's send time carried through `_dimster_ts`;
+- the `dimster-flink-emit` header, for the [latency split](#latency-through-flink) at the Flink job.
 
 This is why `_dimster` must stay first and unchanged, and why the consumers only need to be told the format, which is the dataset's. The one place the schema would be needed is `printContents`: consumed JSON prints as it is, but consumed Avro prints only its type and size, because the consumers can't decode it with the dataset's schema.
+
+## Source, query and sink parallelism
+
+`flink.parallelism` is the job's parallelism. `flink.sourceParallelism` and `flink.sinkParallelism` override it for the Kafka source and sink, and `flink.outputPartitionsPerTopic` sets the output topics' partition count. For example, to read a single-partition topic with one source subtask and write a four-partition output topic with four sink subtasks:
+
+```yaml
+baseWorkload:
+  partitionsPerTopic: 1
+  flink:
+    sql: SELECT * FROM source
+    parallelism: 1
+    sourceParallelism: 1
+    sinkParallelism: 4
+    outputPartitionsPerTopic: 4
+```
+
+Dimster passes them to Flink as the connector's `scan.parallelism` and `sink.parallelism` table options. The query's operators run at `parallelism`.
+
+Flink chains operators with the same parallelism into one task, and redistributes records round-robin (a rebalance) where the parallelism changes. In the example, the source and the query run as one task, which sends its records round-robin to the four sink subtasks. With `parallelism: 4`, the rebalance is between the source and the query instead, and the query and sink are chained.
+
+Things to know:
+
+- **Slots.** With Flink's default slot sharing, the job needs as many task slots as its most parallel operator: the highest of the three settings. Dimster waits for that many free slots before submitting the job.
+- **Idle sources.** Each input partition is read by one source subtask, so source subtasks beyond the input partition count are idle. Dimster logs a warning.
+- **Per-key order.** A rebalance sends records of the same key to different subtasks. Each sink subtask still sends a key to the same output partition (when the query keeps `_dimster_key`), but the subtasks' writes interleave, so per-key order in the output topic isn't guaranteed. Run and drain-backlog results don't depend on it.
+- **Which subtask writes which partition.** By default the sink partitions keyed records by key and spreads unkeyed records in batches, so every sink subtask writes to every output partition. `sinkOptions: {sink.partitioner: fixed}` instead pins sink subtask *i* to partition *i* modulo the partition count.
+- **Latency.** The [emit time](#latency-through-flink) is stamped in the query's operator, so with a rebalance before the sink, the hop to the sink subtasks counts as Flink to consumer.
+
+The result's `workloadConfig` records `flinkSourceParallelism` and `flinkSinkParallelism`, resolved, alongside `flinkParallelism`. All three can be swept by scenarios. The example is `run/workloads/flink-test/quick-flink-sink-fanout.yaml`.
+
+## Latency through Flink
+
+End-to-end latency through Flink covers the input topic, the Flink job, Flink's writes to the output topic and the consumers' reads of it. To show where the time goes, Dimster also reports it in two parts:
+
+- **Producer to Flink**: from the producer's send to the Flink job emitting the output record. This covers the input topic, the Flink source and the query.
+- **Flink to consumer**: from the Flink job emitting the record to a Dimster consumer starting to process it. This covers the Flink Kafka sink (batching, acknowledgements and, with `EXACTLY_ONCE`, the wait for the checkpoint that commits the transaction), the output topic and the consumer.
+
+To measure the split, the runner adds a function to the projection that feeds the sink. It reads the clock for every row and writes the result as the `dimster-flink-emit` record header: 8 bytes, big-endian microseconds since the epoch. The record timestamp is still the producer's, so end-to-end latency is measured exactly as before. Consumers read the header from each record, which needs no knowledge of the output schema. The header adds about 30 bytes to each output record.
+
+The two parts are recorded as separate histograms. Percentiles don't add up, so the p99 of the two parts doesn't sum to the end-to-end p99.
+
+Like end-to-end latency, each part compares two hosts' clocks: the producer's and the TaskManager's for the first part, and the TaskManager's and the consumer's for the second. If the TaskManager's clock is ahead, the first part reads high and the second low by the same amount. End-to-end latency doesn't involve the TaskManager's clock. Values of zero or below are dropped, as for end-to-end latency.
+
+In run mode, the result's `results` record both parts alongside end-to-end latency, with the same fields:
+
+| Part | Per period | Over the measured phase |
+|---|---|---|
+| Producer to Flink | `producerToFlinkLatencyAvg`, `producerToFlinkLatency50pct`, ... `producerToFlinkLatency99pct`, ... `producerToFlinkLatencyMax` | `aggregatedProducerToFlinkLatency50pct`, ... `aggregatedProducerToFlinkLatencyMax`, `aggregatedProducerToFlinkLatencyQuantiles` |
+| Flink to consumer | `flinkToConsumerLatency...` | `aggregatedFlinkToConsumerLatency...` |
+
+The fields appear only for test points with a Flink stage. The run charts show both parts, the period log and aggregated results print them under end-to-end latency, and the **Dimster - Flink** Grafana dashboard shows them next to end-to-end latency (`client_producer_to_flink_latency` and `client_flink_to_consumer_latency` in Prometheus).
 
 ## Topics, jobs and test points
 
@@ -199,7 +252,7 @@ An explicit setting is kept in both cases: `isolation.level` in the consumer con
 
 ## Results
 
-Each test point's result has a `flink` section with the SQL, job id, checkpoint interval, restart count and, in run mode, the selectivity: records consumed per record produced and consumer group over the measured phase. A pass-through query gives 1.0; a filter gives the fraction of rows it keeps. The result's `workloadConfig` also records `flinkParallelism`, `flinkDeliveryGuarantee` and `flinkOutputPartitionsPerTopic`, so they work as chart dimensions.
+Each test point's result has a `flink` section with the SQL, job id, checkpoint interval, restart count and, in run mode, the selectivity: records consumed per record produced and consumer group over the measured phase. A pass-through query gives 1.0; a filter gives the fraction of rows it keeps. The result's `workloadConfig` also records `flinkParallelism`, `flinkSourceParallelism`, `flinkSinkParallelism`, `flinkDeliveryGuarantee` and `flinkOutputPartitionsPerTopic`, so they work as chart dimensions.
 
 The consumed rate is the output rate. With a filter it is below the publish rate, which is expected.
 
