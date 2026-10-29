@@ -123,6 +123,7 @@ public class ScenarioExpander {
                   .append(", deliveryGuarantee=").append(flink.deliveryGuarantee)
                   .append(", checkpointIntervalMs=").append(flink.checkpointIntervalMs)
                   .append(", outputPartitionsPerTopic=").append(flink.outputPartitionsPerTopic)
+                  .append(", outputColumns=").append(flink.outputColumns)
                   .append("\n    Flink SQL: ").append(flink.sql.strip().replaceAll("\\s+", " "));
             }
             if (exploreConfig != null) {

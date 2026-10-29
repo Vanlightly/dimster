@@ -156,6 +156,30 @@ The output schema isn't stored or sent anywhere: it exists only inside the Flink
 
 This is why `_dimster` must stay first and unchanged, and why the consumers only need to be told the format, which is the dataset's. The one place the schema would be needed is `printContents`: consumed JSON prints as it is, but consumed Avro prints only its type and size, because the consumers can't decode it with the dataset's schema.
 
+## Writing only Dimster's fields
+
+By default the output records carry the query's columns. Writing them costs the Flink sink serialization and Kafka writes, and under load that cost can hold back the source through back pressure. To measure [producer to Flink](#latency-through-flink) latency without it, set `outputColumns: DIMSTER_ONLY`:
+
+```yaml
+baseWorkload:
+  flink:
+    sql: SELECT * FROM source WHERE event_type = 'purchase'
+    outputColumns: DIMSTER_ONLY
+```
+
+The sink then writes only what consumers read:
+
+- `_dimster` as the value: in Avro a one-field record, in JSON `{"_dimster":"<hex>"}`;
+- `_dimster_key` as the key, if the query selects it, so the output is partitioned as with `ALL`;
+- `_dimster_ts` as the record timestamp;
+- the emit-time header.
+
+The query is unchanged and validated as before, so it still has to return `_dimster` and `_dimster_ts`. The source still decodes every column (the Kafka source has no projection pushdown), and filters still run, so selectivity is the same. Flink's planner drops the expressions of columns that aren't written, though, so a projection such as `UPPER(country)` isn't evaluated. Producer-to-Flink latency then leaves out the cost of computing those columns.
+
+The consumed bytes rate falls to the size of the header per record. Selectivity and end-to-end latency are measured as before.
+
+The `outputColumns` setting can be swept to compare the two modes in one run. The example is `run/workloads/flink-test/quick-flink-dimster-only.yaml`.
+
 ## Source, query and sink parallelism
 
 `flink.parallelism` is the job's parallelism. `flink.sourceParallelism` and `flink.sinkParallelism` override it for the Kafka source and sink, and `flink.outputPartitionsPerTopic` sets the output topics' partition count. For example, to read a single-partition topic with one source subtask and write a four-partition output topic with four sink subtasks:
@@ -252,7 +276,7 @@ An explicit setting is kept in both cases: `isolation.level` in the consumer con
 
 ## Results
 
-Each test point's result has a `flink` section with the SQL, job id, checkpoint interval, restart count and, in run mode, the selectivity: records consumed per record produced and consumer group over the measured phase. A pass-through query gives 1.0; a filter gives the fraction of rows it keeps. The result's `workloadConfig` also records `flinkParallelism`, `flinkSourceParallelism`, `flinkSinkParallelism`, `flinkDeliveryGuarantee` and `flinkOutputPartitionsPerTopic`, so they work as chart dimensions.
+Each test point's result has a `flink` section with the SQL, job id, checkpoint interval, restart count and, in run mode, the selectivity: records consumed per record produced and consumer group over the measured phase. A pass-through query gives 1.0; a filter gives the fraction of rows it keeps. The result's `workloadConfig` also records `flinkParallelism`, `flinkSourceParallelism`, `flinkSinkParallelism`, `flinkDeliveryGuarantee`, `flinkOutputPartitionsPerTopic` and `flinkOutputColumns`, so they work as chart dimensions.
 
 The consumed rate is the output rate. With a filter it is below the publish rate, which is expected.
 

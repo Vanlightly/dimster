@@ -106,8 +106,9 @@ public class FlinkJobSpecTest {
         json.fieldNames().forEachRemaining(names::add);
         assertEquals(new TreeSet<>(Set.of("jobName", "sql", "format", "columns", "pipelines", "sourceGroupId",
                 "kafkaProperties", "parallelism", "deliveryGuarantee", "checkpointIntervalMs", "config",
-                "sourceOptions", "sinkOptions")), names);
+                "sourceOptions", "sinkOptions", "outputColumns")), names);
         assertEquals("JSON", json.path("format").asText());
+        assertEquals("ALL", json.path("outputColumns").asText());
         assertEquals("AT_LEAST_ONCE", json.path("deliveryGuarantee").asText());
         assertEquals("dimster-abc-0000-out", json.path("pipelines").get(0).path("sinkTopic").asText());
         assertEquals(Set.of("bootstrap.servers", "security.protocol"),

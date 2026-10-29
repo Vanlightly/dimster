@@ -26,6 +26,14 @@ public class FlinkSpec {
     public enum DeliveryGuarantee { AT_LEAST_ONCE, EXACTLY_ONCE, NONE }
 
     /**
+     * What the sink writes. {@code DIMSTER_ONLY} drops the query's data columns
+     * and writes only what consumers need ({@code _dimster}, the key, the
+     * timestamp and the emit-time header), so producer→Flink latency can be
+     * measured without the cost of writing full records.
+     */
+    public enum OutputColumns { ALL, DIMSTER_ONLY }
+
+    /**
      * Kafka table options Dimster sets itself, which the workload's
      * {@link #sourceOptions}/{@link #sinkOptions} may not override.
      */
@@ -48,6 +56,7 @@ public class FlinkSpec {
     /** 0 disables checkpointing. */
     public long checkpointIntervalMs = 10_000;
     public DeliveryGuarantee deliveryGuarantee = DeliveryGuarantee.AT_LEAST_ONCE;
+    public OutputColumns outputColumns = OutputColumns.ALL;
     /** Partitions of each output topic. Null means the input's partitionsPerTopic. */
     public Integer outputPartitionsPerTopic;
     /** Extra Flink job configuration, e.g. {@code table.exec.*} or {@code pipeline.*}. */
@@ -65,6 +74,7 @@ public class FlinkSpec {
         c.sinkParallelism = sinkParallelism;
         c.checkpointIntervalMs = checkpointIntervalMs;
         c.deliveryGuarantee = deliveryGuarantee;
+        c.outputColumns = outputColumns;
         c.outputPartitionsPerTopic = outputPartitionsPerTopic;
         c.config = config == null ? new LinkedHashMap<>() : new LinkedHashMap<>(config);
         c.sourceOptions = sourceOptions == null ? new LinkedHashMap<>() : new LinkedHashMap<>(sourceOptions);

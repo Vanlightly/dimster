@@ -1,0 +1,37 @@
+# Compares a pass-through Flink job writing full records (ALL) with one
+# writing only Dimster's fields (DIMSTER_ONLY): the _dimster header, key,
+# timestamp and emit-time header. The query, source and filter are the same;
+# only the sink's work shrinks, which isolates producer -> Flink latency from
+# the cost of writing full records. The consume bytes rate drops to the
+# header's size per record.
+#
+# Needs an environment with a flink block (see docs/concepts/flink.md).
+name: Quick Flink DIMSTER_ONLY output - clicks AVRO
+
+engineConfig:
+  cooldownMinutes: 0
+
+runConfig:
+  testDurationMinutes: 2
+  warmupDurationMinutes: 0
+  rampIntervals: 0
+
+baseWorkload:
+  topics: 1
+  partitionsPerTopic: 2
+  producersPerTopic: 1
+  consumerGroupsPerTopic: 1
+  consumersPerGroup: 1
+  producerRate: 2000
+  dataset:
+    preset: clicks
+    format: AVRO
+  flink:
+    parallelism: 2
+    sql: SELECT * FROM source
+
+scenarios:
+  - name: flink-output
+    label: ["all", "dimster-only"]
+    flink:
+      outputColumns: [ALL, DIMSTER_ONLY]
