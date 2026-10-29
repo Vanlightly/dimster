@@ -23,11 +23,12 @@ public class FlinkDimensions {
     public List<Long> checkpointIntervalMs;
     public List<FlinkSpec.DeliveryGuarantee> deliveryGuarantee;
     public List<Integer> outputPartitionsPerTopic;
+    public List<FlinkSpec.OutputColumns> outputColumns;
 
     /** Every list, in field order, for length checks. */
     public List<List<?>> lists() {
         return java.util.Arrays.asList(sql, parallelism, sourceParallelism, sinkParallelism,
-                checkpointIntervalMs, deliveryGuarantee, outputPartitionsPerTopic);
+                checkpointIntervalMs, deliveryGuarantee, outputPartitionsPerTopic, outputColumns);
     }
 
     /**
@@ -37,7 +38,7 @@ public class FlinkDimensions {
      */
     public void validate(String scenarioName) {
         String[] names = {"sql", "parallelism", "sourceParallelism", "sinkParallelism",
-                "checkpointIntervalMs", "deliveryGuarantee", "outputPartitionsPerTopic"};
+                "checkpointIntervalMs", "deliveryGuarantee", "outputPartitionsPerTopic", "outputColumns"};
         List<List<?>> lists = lists();
         int n = -1;
         String first = null;
@@ -72,6 +73,9 @@ public class FlinkDimensions {
         }
         if (outputPartitionsPerTopic != null && !outputPartitionsPerTopic.isEmpty()) {
             point.outputPartitionsPerTopic = at(outputPartitionsPerTopic, index);
+        }
+        if (outputColumns != null && !outputColumns.isEmpty()) {
+            point.outputColumns = at(outputColumns, index);
         }
         return point;
     }

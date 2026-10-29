@@ -41,7 +41,8 @@ public record FlinkJobSpec(
         long checkpointIntervalMs,
         Map<String, String> config,
         Map<String, String> sourceOptions,
-        Map<String, String> sinkOptions) {
+        Map<String, String> sinkOptions,
+        String outputColumns) {
 
     /** A source column: name and Flink SQL type, including nullability. */
     public record Column(String name, String type) {}
@@ -76,7 +77,8 @@ public record FlinkJobSpec(
                 sourceGroupId, kafka, flink.parallelism, flink.deliveryGuarantee.name(),
                 flink.checkpointIntervalMs, flink.config,
                 withParallelism(flink.sourceOptions, FlinkSpec.SCAN_PARALLELISM, flink.resolved(flink.sourceParallelism)),
-                withParallelism(flink.sinkOptions, FlinkSpec.SINK_PARALLELISM, flink.resolved(flink.sinkParallelism)));
+                withParallelism(flink.sinkOptions, FlinkSpec.SINK_PARALLELISM, flink.resolved(flink.sinkParallelism)),
+                flink.outputColumns.name());
     }
 
     /**

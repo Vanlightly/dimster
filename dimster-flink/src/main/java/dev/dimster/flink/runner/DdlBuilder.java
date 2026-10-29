@@ -56,6 +56,16 @@ final class DdlBuilder {
             names.add(timestamp.name());
             return names;
         }
+
+        /**
+         * The same layout without the query's data columns, for
+         * {@code outputColumns: DIMSTER_ONLY}: the value is just {@code _dimster},
+         * which is all consumers read. The planner then prunes the expressions
+         * that computed the dropped columns.
+         */
+        SinkLayout withoutDataColumns() {
+            return new SinkLayout(header, List.of(), key, timestamp);
+        }
     }
 
     static String headerType(String format) {

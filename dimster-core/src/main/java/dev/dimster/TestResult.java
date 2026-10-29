@@ -127,6 +127,8 @@ public class TestResult {
         public String flinkDeliveryGuarantee;
         @JsonInclude(JsonInclude.Include.NON_NULL)
         public Integer flinkOutputPartitionsPerTopic;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        public String flinkOutputColumns;
 
         /** Records the test point's Flink stage, if it has one. */
         public void setFlink(FlinkSpec flink) {
@@ -136,6 +138,7 @@ public class TestResult {
                 flinkSinkParallelism = flink.sinkParallelism;
                 flinkDeliveryGuarantee = flink.deliveryGuarantee.name();
                 flinkOutputPartitionsPerTopic = flink.outputPartitionsPerTopic;
+                flinkOutputColumns = flink.outputColumns.name();
             }
         }
     }

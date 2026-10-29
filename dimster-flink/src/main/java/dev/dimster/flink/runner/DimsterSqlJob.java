@@ -22,7 +22,9 @@ import java.util.Map;
  * a {@code source} table in its own database {@code p<i>}, so the workload's
  * SELECT resolves {@code source} to that pair's input. It then derives the
  * sink from the query's resolved schema ({@link DdlBuilder}) and stamps each
- * output record with its emit time ({@link EmitTimeHeaders}). All pairs go
+ * output record with its emit time ({@link EmitTimeHeaders}). With
+ * {@code outputColumns: DIMSTER_ONLY} the sink writes only Dimster's fields,
+ * not the query's data columns. All pairs go
  * into one statement set, so the test point is a single job and its pipelines
  * share slots.
  */
@@ -73,6 +75,9 @@ public final class DimsterSqlJob {
             DdlBuilder.SinkLayout layout = DdlBuilder.sinkLayout(
                     columns(query.getResolvedSchema()),
                     columns(tEnv.from("source").getResolvedSchema()));
+            if (spec.dimsterOnly()) {
+                layout = layout.withoutDataColumns();
+            }
             tEnv.executeSql(DdlBuilder.sinkDdl(spec, i, layout));
 
             // Sink columns are matched by position: the query's columns in

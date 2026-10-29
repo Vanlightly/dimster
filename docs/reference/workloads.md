@@ -323,17 +323,18 @@ baseWorkload:
 | `checkpointIntervalMs` | integer | `10000` | Checkpoint interval in milliseconds. `0` disables checkpointing. |
 | `deliveryGuarantee` | enum | `AT_LEAST_ONCE` | Kafka sink guarantee: `AT_LEAST_ONCE`, `EXACTLY_ONCE` (transactions committed on checkpoints; requires checkpointing, and consumers default to `isolation.level: read_committed`) or `NONE`. |
 | `outputPartitionsPerTopic` | integer | `partitionsPerTopic` | Partitions of each output topic. |
-
-The job needs as many free task slots as the highest of `parallelism`, `sourceParallelism` and `sinkParallelism`. See [Source, query and sink parallelism](../concepts/flink.md#source-query-and-sink-parallelism).
+| `outputColumns` | enum | `ALL` | What the output records carry. `ALL` writes the query's columns. `DIMSTER_ONLY` writes only `_dimster`, the key, the timestamp and the emit-time header, to measure producer-to-Flink latency without the cost of writing full records. See [Writing only Dimster's fields](../concepts/flink.md#writing-only-dimsters-fields). |
 | `config` | map | _(empty)_ | Extra Flink job configuration, e.g. `table.exec.mini-batch.enabled: true` or `pipeline.object-reuse: true`. |
 | `sourceOptions` | map | _(empty)_ | Extra options of the Kafka source table, e.g. `properties.fetch.min.bytes`. |
 | `sinkOptions` | map | _(empty)_ | Extra options of the Kafka sink table, e.g. `properties.linger.ms` or `sink.partitioner`. |
+
+The job needs as many free task slots as the highest of `parallelism`, `sourceParallelism` and `sinkParallelism`. See [Source, query and sink parallelism](../concepts/flink.md#source-query-and-sink-parallelism).
 
 Dimster sets the tables' `connector`, `topic`, formats, key options, `properties.bootstrap.servers`, `properties.group.id` and `scan.startup.mode`, so `sourceOptions` and `sinkOptions` can't. `scan.parallelism` and `sink.parallelism` are set with `sourceParallelism` and `sinkParallelism` instead. The workload's Kafka `commonConfig` (bootstrap servers and security settings) is passed to both tables, and the `-out` topics get the `replicationFactor` and `topicConfig`. `producerConfig` and the consumer configs apply only to Dimster's producers and consumers; tune the Flink source and sink with `sourceOptions` and `sinkOptions` instead. With transactional producers, the source defaults to `properties.isolation.level: read_committed`. See [Kafka configuration](../concepts/flink.md#kafka-configuration).
 
 In drain-backlog mode the job starts when the backlog is built, and the drain completes when the consumers have received one record per record produced, so the query must not filter (see [Drain-backlog mode](../concepts/flink.md#drain-backlog-mode)).
 
-Scenarios sweep the fields `sql`, `parallelism`, `sourceParallelism`, `sinkParallelism`, `checkpointIntervalMs`, `deliveryGuarantee` and `outputPartitionsPerTopic` through a nested `flink` block, like `runConfig`:
+Scenarios sweep the fields `sql`, `parallelism`, `sourceParallelism`, `sinkParallelism`, `checkpointIntervalMs`, `deliveryGuarantee`, `outputPartitionsPerTopic` and `outputColumns` through a nested `flink` block, like `runConfig`:
 
 ```yaml
 scenarios:
@@ -380,7 +381,7 @@ Scenarios allow running multiple test variations from a single workload file. Ea
 | `kafkaConfig` | object | Override [Kafka configuration](kafka-configs.md). Individual property values within its config maps may be lists to express dimensions (see [Per-scenario Kafka config overrides](kafka-configs.md#per-scenario-kafka-config-overrides)). |
 | `drainBacklogConfig` | object | Drain-backlog mode only. Per-scenario overrides for `drainBacklogConfig` fields. Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `drainBacklogConfig`. |
 | `exploreConfig` | object | Explore mode only. Per-scenario overrides for `exploreConfig` fields. Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `exploreConfig`. |
-| `flink` | object | Per-scenario overrides for `baseWorkload.flink` fields (`sql`, `parallelism`, `sourceParallelism`, `sinkParallelism`, `checkpointIntervalMs`, `deliveryGuarantee`, `outputPartitionsPerTopic`). Each field is a list expressing a per-test-point dimension; omitted fields inherit from `baseWorkload.flink`. See [Flink SQL Stage](#flink-sql-stage). |
+| `flink` | object | Per-scenario overrides for `baseWorkload.flink` fields (`sql`, `parallelism`, `sourceParallelism`, `sinkParallelism`, `checkpointIntervalMs`, `deliveryGuarantee`, `outputPartitionsPerTopic`, `outputColumns`). Each field is a list expressing a per-test-point dimension; omitted fields inherit from `baseWorkload.flink`. See [Flink SQL Stage](#flink-sql-stage). |
 | `runConfig` | object | Run mode only. Per-scenario overrides for `runConfig` fields (`testDurationMinutes`, `warmupDurationMinutes`, `sampleRateMillis`, `rampIntervals`, `rampIntervalSeconds`). Each field is a list expressing a per-test-point dimension; omitted fields inherit from the workload-level `runConfig`. |
 | `repeat` | integer | Number of times to repeat this scenario back-to-back. Default `1`. Useful for stability/reproducibility runs. |
 

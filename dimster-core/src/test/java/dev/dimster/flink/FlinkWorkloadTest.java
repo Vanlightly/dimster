@@ -67,6 +67,7 @@ public class FlinkWorkloadTest {
         assertEquals(10_000, flink.checkpointIntervalMs);
         assertEquals(FlinkSpec.DeliveryGuarantee.AT_LEAST_ONCE, flink.deliveryGuarantee);
         assertEquals(Integer.valueOf(3), flink.outputPartitionsPerTopic);
+        assertEquals(FlinkSpec.OutputColumns.ALL, flink.outputColumns);
         // YAML numbers become option strings.
         assertEquals("5", flink.sinkOptions.get("properties.linger.ms"));
     }
@@ -87,6 +88,24 @@ public class FlinkWorkloadTest {
         assertEquals(List.of(1, 2, 4), points.stream().map(p -> p.flink().parallelism).toList());
         assertTrue(points.stream().allMatch(p -> p.flink().outputPartitionsPerTopic == 6));
         assertTrue(points.stream().allMatch(p -> p.flink().sql.equals("SELECT * FROM source")));
+    }
+
+    /** ALL against DIMSTER_ONLY in one run, recorded as a chart dimension. */
+    @Test
+    public void outputColumnsSweepsAndIsRecordedInTheWorkloadConfig() throws Exception {
+        List<TestPoint> points = expand(BASE + """
+                  flink:
+                    sql: SELECT * FROM source
+                scenarios:
+                  - name: output
+                    flink:
+                      outputColumns: [ALL, DIMSTER_ONLY]
+                """);
+        assertEquals(List.of(FlinkSpec.OutputColumns.ALL, FlinkSpec.OutputColumns.DIMSTER_ONLY),
+                points.stream().map(p -> p.flink().outputColumns).toList());
+        var config = new dev.dimster.TestResult.WorkloadConfig();
+        config.setFlink(points.get(1).flink());
+        assertEquals("DIMSTER_ONLY", config.flinkOutputColumns);
     }
 
     @Test
@@ -244,7 +263,8 @@ public class FlinkWorkloadTest {
     public void exampleWorkloadsExpand() throws Exception {
         var dir = new java.io.File("../run/workloads/flink-test");
         for (String name : List.of("quick-flink-filter-avro.yaml", "quick-flink-projection-json.yaml",
-                "flink-parallelism-sweep.yaml", "quick-flink-sink-fanout.yaml")) {
+                "flink-parallelism-sweep.yaml", "quick-flink-sink-fanout.yaml",
+                "quick-flink-dimster-only.yaml")) {
             Workload w = YAML.readValue(new java.io.File(dir, name), Workload.class);
             List<TestPoint> points = ScenarioExpander.expand(w.baseWorkload, w.scenarios, null, null, null,
                     w.runConfig);

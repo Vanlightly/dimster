@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -24,6 +25,10 @@ import static org.junit.Assert.assertTrue;
 public class DimsterSqlJobTest {
 
     private static FlinkJobSpec spec(String format, String sql, int pipelines) {
+        return spec(format, sql, pipelines, null);
+    }
+
+    private static FlinkJobSpec spec(String format, String sql, int pipelines, String outputColumns) {
         var columns = List.of(
                 new FlinkJobSpec.Column("event_id", "BIGINT NOT NULL"),
                 new FlinkJobSpec.Column("event_type", "STRING NOT NULL"),
@@ -35,7 +40,7 @@ public class DimsterSqlJobTest {
         }
         return new FlinkJobSpec("dimster-abc", sql, format, columns, pairs, "dimster-grp-flink-abc",
                 Map.of("bootstrap.servers", "localhost:9092"), 2, "AT_LEAST_ONCE", 10000,
-                Map.of(), Map.of(), Map.of());
+                Map.of(), Map.of(), Map.of(), outputColumns);
     }
 
     private static String plan(FlinkJobSpec spec) {
@@ -65,7 +70,7 @@ public class DimsterSqlJobTest {
         var spec = new FlinkJobSpec(base.jobName(), base.sql(), base.format(), base.columns(), base.pipelines(),
                 base.sourceGroupId(), base.kafkaProperties(), 2, base.deliveryGuarantee(),
                 base.checkpointIntervalMs(), base.config(),
-                Map.of("scan.parallelism", "1"), Map.of("sink.parallelism", "4"));
+                Map.of("scan.parallelism", "1"), Map.of("sink.parallelism", "4"), base.outputColumns());
         TableEnvironment tEnv = TableEnvironment.create(DimsterSqlJob.settings(spec));
         String plan = DimsterSqlJob.buildStatementSet(tEnv, spec).explain(ExplainDetail.JSON_EXECUTION_PLAN);
         JsonNode nodes = new ObjectMapper()
@@ -87,6 +92,32 @@ public class DimsterSqlJobTest {
         String plan = plan(spec("JSON",
                 "SELECT _dimster_ts, UPPER(event_type) AS event_type, duration_ms * 2 AS d, _dimster FROM source", 1));
         assertTrue(plan, plan.contains("UPPER"));
+    }
+
+    @Test
+    public void dimsterOnlySinkWritesOnlyDimsterFieldsButStillFilters() {
+        String plan = plan(spec("AVRO", "SELECT * FROM source WHERE event_type = 'purchase'", 1, "DIMSTER_ONLY"));
+        // Metadata columns are listed by their keys: headers and timestamp.
+        assertTrue(plan, plan.contains(
+                "Sink(table=[default_catalog.p0.sink], fields=[_dimster, _dimster_key, headers, timestamp])"));
+        assertTrue(plan, plan.contains("where=[(event_type = 'purchase')]"));
+        assertTrue(plan, plan.contains("EmitTimeHeaders*() AS headers"));
+    }
+
+    /** Documented behavior: expressions of the dropped columns are not evaluated. */
+    @Test
+    public void dimsterOnlyPrunesTheDroppedColumnsExpressions() {
+        String plan = plan(spec("JSON",
+                "SELECT _dimster, _dimster_ts, UPPER(event_type) AS event_type FROM source", 1, "DIMSTER_ONLY"));
+        assertTrue(plan, plan.contains("Sink(table=[default_catalog.p0.sink], fields=[_dimster, headers, timestamp])"));
+        assertFalse(plan, plan.contains("UPPER"));
+    }
+
+    @Test
+    public void dimsterOnlyStillRequiresTheDimsterFields() {
+        var e = assertThrows(IllegalArgumentException.class,
+                () -> plan(spec("AVRO", "SELECT _dimster, event_id FROM source", 1, "DIMSTER_ONLY")));
+        assertTrue(e.getMessage().contains("missing _dimster_ts"));
     }
 
     @Test
@@ -131,5 +162,13 @@ public class DimsterSqlJobTest {
         assertEquals(3, spec.parallelism());
         assertEquals("t-out", spec.pipelines().get(0).sinkTopic());
         assertEquals("INT NOT NULL", spec.columns().get(0).type());
+        // Absent means ALL.
+        assertFalse(spec.dimsterOnly());
+    }
+
+    @Test
+    public void unknownOutputColumnsIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> spec("AVRO", "SELECT * FROM source", 1, "SOME"));
     }
 }

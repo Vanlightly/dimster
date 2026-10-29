@@ -34,6 +34,8 @@ import java.util.Map;
  * @param config               extra Flink job configuration
  * @param sourceOptions        extra Kafka source table options
  * @param sinkOptions          extra Kafka sink table options
+ * @param outputColumns        {@code ALL} or {@code DIMSTER_ONLY} (the sink
+ *                             drops the query's data columns); null means {@code ALL}
  */
 public record FlinkJobSpec(
         String jobName,
@@ -48,7 +50,11 @@ public record FlinkJobSpec(
         long checkpointIntervalMs,
         Map<String, String> config,
         Map<String, String> sourceOptions,
-        Map<String, String> sinkOptions) {
+        Map<String, String> sinkOptions,
+        String outputColumns) {
+
+    private static final String ALL = "ALL";
+    private static final String DIMSTER_ONLY = "DIMSTER_ONLY";
 
     /** A source column: name and Flink SQL type, e.g. {@code BIGINT NOT NULL}. */
     public record Column(String name, String type) {}
@@ -66,6 +72,15 @@ public record FlinkJobSpec(
         config = config == null ? Map.of() : Map.copyOf(config);
         sourceOptions = sourceOptions == null ? Map.of() : Map.copyOf(sourceOptions);
         sinkOptions = sinkOptions == null ? Map.of() : Map.copyOf(sinkOptions);
+        outputColumns = outputColumns == null ? ALL : outputColumns;
+        if (!outputColumns.equals(ALL) && !outputColumns.equals(DIMSTER_ONLY)) {
+            throw new IllegalArgumentException("Unknown outputColumns: " + outputColumns);
+        }
+    }
+
+    /** Whether the sink writes only Dimster's fields, not the query's data columns. */
+    public boolean dimsterOnly() {
+        return DIMSTER_ONLY.equals(outputColumns);
     }
 
     public static FlinkJobSpec fromJson(String json) throws IOException {

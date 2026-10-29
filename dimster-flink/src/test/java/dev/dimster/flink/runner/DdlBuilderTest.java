@@ -19,7 +19,7 @@ public class DdlBuilderTest {
                 List.of(new FlinkJobSpec.Pipeline("dimster-abc-0000", "dimster-abc-0000-out")),
                 "dimster-grp-flink-abc",
                 Map.of("bootstrap.servers", "kafka:9092"),
-                2, guarantee, 10000, Map.of(), Map.of(), sinkOptions);
+                2, guarantee, 10000, Map.of(), Map.of(), sinkOptions, null);
     }
 
     private static final DdlBuilder.SchemaColumn HEADER = new DdlBuilder.SchemaColumn("_dimster", "BYTES NOT NULL");
@@ -73,6 +73,18 @@ public class DdlBuilderTest {
         String ddl = DdlBuilder.sinkDdl(spec("AVRO", "AT_LEAST_ONCE", Map.of()), 0, layout);
         assertTrue(ddl.contains("'key.fields' = '_dimster_key'"));
         assertTrue(ddl.contains("'value.fields-include' = 'EXCEPT_KEY'"));
+    }
+
+    @Test
+    public void dimsterOnlyLayoutKeepsOnlyDimsterFields() {
+        var city = new DdlBuilder.SchemaColumn("city", "VARCHAR(2147483647)");
+        var layout = DdlBuilder.sinkLayout(List.of(HEADER, city, KEY, TS), SOURCE).withoutDataColumns();
+        assertEquals(List.of("_dimster", "_dimster_key", "_dimster_ts"), layout.columnNames());
+
+        String ddl = DdlBuilder.sinkDdl(spec("AVRO", "AT_LEAST_ONCE", Map.of()), 0, layout);
+        assertFalse(ddl, ddl.contains("`city`"));
+        assertTrue(ddl, ddl.contains("'key.fields' = '_dimster_key'"));
+        assertTrue(ddl, ddl.contains("`_dimster_headers` MAP<STRING, BYTES> METADATA FROM 'headers'"));
     }
 
     @Test
